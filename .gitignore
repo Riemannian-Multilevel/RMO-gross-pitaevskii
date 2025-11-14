@@ -1,0 +1,7 @@
+CMakeFiles/
+doc/
+.idea/
+.DS_Store
+*.cmake
+compile_commands.json
+Makefile

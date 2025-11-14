@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.28)
+project(gpe)
+
+set(CMAKE_CXX_STANDARD 20)
+add_subdirectory(fmt)
+
+find_package(deal.II 9.6.0 REQUIRED
+        HINTS ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
+)
+#find_package(fmt CONFIG REQUIRED)
+find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
+
+deal_ii_initialize_cached_variables()
+
+# deal.II example programs with modifications
+add_executable(step-1 step-1.cc)
+deal_ii_setup_target(step-1)
+
+add_executable(step-2 step-2.cc)
+deal_ii_setup_target(step-2)
+target_link_libraries(step-2 Boost::program_options)
+
+add_executable(step-3 step-3.cc)
+deal_ii_setup_target(step-3)
+
+# Main GPE program with library and tests
+add_executable(main main.cc
+        mesh.h
+        dofs.h
+        assembly.h
+        lac.h)
+deal_ii_setup_target(main)
+target_link_libraries(main Boost::program_options fmt::fmt)
