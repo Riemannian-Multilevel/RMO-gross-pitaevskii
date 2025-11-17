@@ -220,12 +220,6 @@ public:
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
 
-    void update_with_solution(SparseMatrix<double>& M, const Vector<double>& u) const
-    {
-        // Note: does not reinitialize matrix, sparsity assumed the same between iterations/update calls
-        assemble_mass_phiphi(M, dof_handler, u);
-    }
-
     const DoFHandler<dim>& get_dof() const {
         return dof_handler;
     }
@@ -247,8 +241,10 @@ private:
 };
 
 template <int dim>
-void inverse_iteration(const GPE<dim>& Problem, const Vector<double>& x0)
+std::tuple<Vector<double>,double,double>
+inv_iteration(const GPE<dim>& Problem, const Vector<double>& x0, double beta, int max_iter = 25)
 {
+    // Define potential function
     auto V = [](const Point<dim>& p) {
         Point<dim> out;
         for (unsigned d = 0; d < dim; d++) {
@@ -256,14 +252,75 @@ void inverse_iteration(const GPE<dim>& Problem, const Vector<double>& x0)
         }
         return out;
     };
+
     // Generate sparsity pattern, weighed mass matrix, and stiffness matrix
-    GPE_Mass<double> Mass = Problem.mass(V);
+    const GPE_Mass<double> Mass = Problem.mass(V);
+    SparseMatrix A_0(Mass.S);
+    A_0.add(1.0, Mass.Mv);
+
+    // Begin inverse iteration
+    Vector<double> x(x0);
+    for (int i = 0; i < max_iter; i++) {
+        SparseMatrix A(A_0);
+        assemble_mass_phiphi(Mass.Mpp, Problem.get_dof(), x);
+        A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
+
+        // Invert A
+        Vector<double> y = solve_sparse(A, x, SolverMethod::GMRES);
+        double denom1 = x * y;
+        assert(denom1 > 0);
+        x  = y;
+        x /= denom1;
+
+        // Normalize in energy norm
+        Vector<double> tmp(x.size());
+        Mass.Mpp.vmult(tmp, x);
+        double denom2 = std::sqrt(x * tmp);
+        x /= denom2;
+    }
+
+    // Compute residual
+    SparseMatrix A(A_0);
+    assemble_mass_phiphi<dim>(Mass.Mpp, Problem.get_dof(), x);
+
+    Vector<double> res(x.size());
+    A.add(beta, Mass.Mpp);
+    A.vmult(res, x); // A*x
+
+    Vector<double> tmp(x);
+    tmp *= (x*res); // (x'*A*x)*x
+    res.add(-1.0, tmp); // A*x - (x'*A*x)*x
+
+    // Compute energy
+    SparseMatrix<double> B(A_0);
+    B *= 0.5;
+    B.add(0.25, Mass.Mpp);
+
+    Vector<double> tmp1(x.size());
+    B.vmult(tmp1, x);
+    double energy = x * tmp1;
+
+    return std::make_tuple(x, res.l2_norm(), energy);
 }
 
 template <int dim>
 void inverse_iteration_mg(const GPE<dim>& Problem, const Vector<double>& x0)
 {
+    throw std::logic_error("inverse_iteration_mg not implemented");
+}
 
+template <int dim>
+void experiment1(int n_levels, int degree, std::string left_str, std::string right_str, double beta, Ordering order)
+{
+    GPE<dim> Problem(n_levels, degree, str_to_point<1>(left_str), str_to_point<1>(right_str), order);
+    Problem.setup();
+
+    Vector<double> x0(Problem.get_dof().n_dofs());
+    x0 = 1;
+    auto results = inv_iteration<dim>(Problem, x0, beta);
+
+    std::cerr << "Residual: " << std::get<1>(results) << std::endl;
+    std::cerr << "Energy: " << std::get<2>(results) << std::endl;
 }
 
 int main(int argc, char* argv[])
@@ -272,6 +329,7 @@ int main(int argc, char* argv[])
     bool multigrid;
     Ordering order;
     std::string left_str, right_str;
+    double beta;
 
     try {
         po::options_description desc("Allowed options");
@@ -290,7 +348,9 @@ int main(int argc, char* argv[])
             ("left", po::value<std::string>()->default_value(""),
                 "left point of the mesh")
             ("right", po::value<std::string>()->default_value(""),
-                "right point of the mesh");
+                "right point of the mesh")
+            ("beta", po::value<double>()->default_value(100),
+                "non-linearity factor");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -310,6 +370,7 @@ int main(int argc, char* argv[])
         multigrid = vm["multigrid"].as<bool>();
         left_str  = vm["left"].as<std::string>();
         right_str = vm["right"].as<std::string>();
+        beta      = vm["beta"].as<double>();
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -328,8 +389,7 @@ int main(int argc, char* argv[])
                 left_str = "-10";
                 right_str = "10";
             }
-            GPE<1> Problem(n_levels, degree, str_to_point<1>(left_str), str_to_point<1>(right_str), order);
-            Problem.setup();
+            experiment1<1>(n_levels, degree, left_str, right_str, beta, order);
         }
         break;
     case 2:
@@ -338,8 +398,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10";
                 right_str = "10,10";
             }
-            GPE<2> Problem(n_levels, degree, str_to_point<2>(left_str), str_to_point<2>(right_str), order);
-            Problem.setup();
+            experiment1<2>(n_levels, degree, left_str, right_str, beta, order);
         }
         break;
     case 3:
@@ -348,8 +407,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10,-10";
                 right_str = "10,10,10";
             }
-            GPE<3> Problem(n_levels, degree, str_to_point<3>(left_str), str_to_point<3>(right_str), order);
-            Problem.setup();
+            experiment1<2>(n_levels, degree, left_str, right_str, beta, order);
         }
         break;
     default:

@@ -36,9 +36,9 @@ to_string(SolverMethod method)
 
 // TODO: preconditioners
 inline Vector<double>
-solve_sparse(SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
-    const unsigned n_iter = 1000, const double rel_tol = 1e-6,
-    const SolverMethod method = SolverMethod::GMRES)
+solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
+    const SolverMethod method = SolverMethod::GMRES,
+    const unsigned n_iter = 1000, const double rel_tol = 1e-6)
 {
     Vector<double> solution(system_rhs.size());
     dealii::SolverControl solver_control(n_iter, rel_tol * system_rhs.l2_norm());
