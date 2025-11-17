@@ -181,7 +181,7 @@ void distribute_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<di
 }
 
 template <int dim>
-void distribute_dofs_mg(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<dim>& element,
+void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<dim>& element,
                         Ordering order = Ordering::DEFAULT,
                         const std::vector<int>& levels = {})
 {

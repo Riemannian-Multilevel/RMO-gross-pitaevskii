@@ -1,3 +1,6 @@
 [submodule "fmt"]
 	path = fmt
 	url = https://github.com/fmtlib/fmt
+[submodule "gsl-lite"]
+	path = gsl-lite
+	url = https://github.com/gsl-lite/gsl-lite

@@ -33,7 +33,7 @@ Point<dim> str_to_point(const std::string& s, const char sep=',') {
     return p;
 }
 
-//!
+//! Retrieve and visualize sparsity pattern for a given DoF ordering
 //! @tparam dim Dimension of the domain
 //! @param handler DoFHandler
 //! @param element Finite element used
@@ -41,9 +41,9 @@ Point<dim> str_to_point(const std::string& s, const char sep=',') {
 //! @return
 template <int dim>
 SparsityPattern
-rectangle_dofs(DoFHandler<dim>& handler, const FE_Q<dim>& element, Ordering order)
+rectangle_dofs(const DoFHandler<dim>& handler)
 {
-    distribute_dofs(handler, element, order);
+    assert(handler.has_active_dofs());
     write_dof_locations(handler, fmt::format("rectangle_{}d_dof.gnuplot", handler.dimension));
 
     auto Sd = make_sparsity_pattern(handler);
@@ -54,7 +54,7 @@ rectangle_dofs(DoFHandler<dim>& handler, const FE_Q<dim>& element, Ordering orde
     return Sd;
 }
 
-//!
+//! Retrieve and visualize sparsity pattern for a given DoF ordering
 //! @tparam dim Dimension of the domain
 //! @param handler DoFHandler
 //! @param element Finite element used
@@ -62,17 +62,14 @@ rectangle_dofs(DoFHandler<dim>& handler, const FE_Q<dim>& element, Ordering orde
 //! @return
 template <int dim>
 std::vector<SparsityPattern>
-rectangle_dofs_mg(DoFHandler<dim>& handler, const FE_Q<dim>& element, Ordering order)
+rectangle_dofs_mg(const DoFHandler<dim>& handler)
 {
-    int n_levels = handler.n_levels();
-    std::vector<SparsityPattern> Sd_v;
-    std::vector<int> levels(n_levels);
-
-    std::iota(levels.begin(), levels.end(), 1);
-    distribute_dofs_mg(handler, element, order, levels);
+    assert(handler.has_level_dofs());
+    const int n_levels = handler.n_levels();
 
     // TODO: dof for every level (coloring?)
     // write_dof_locations(handler, fmt::format("rectangle_{}d_dof.gnuplot", handler.dimension));
+    std::vector<SparsityPattern> Sd_v;
 
     for (int i = 1; i <= n_levels; i++) {
         write_level_vertex_points(handler, i, fmt::format("rectangle_{}d_dof_l{}.gnuplot", handler.dimension, i));
@@ -109,6 +106,7 @@ Ordering select_order(const std::string& order_str)
     }
 }
 
+// TODO: SparsityPattern is stored for SparseMatrix (::get_sparsity_pattern() const)
 template <typename T>
 struct GPE_Mass
 {
@@ -129,25 +127,27 @@ public:
     //! @param degree Degree of the Lagrange finite element
     //! @param left_ Left end-point of the rectangular domain
     //! @param right_ Opposite end-point of the rectangular domain
-    //! @param multigrid_ Enable multigrid (default = falser)
+    //! @param multigrid_ Enable multigrid (default = false)
     //! @param order_ Ordering used for degrees of freedom
     GPE(const int n_levels_, const int degree, const Point<dim>& left_, const Point<dim>& right_,
         const Ordering order_ = Ordering::DEFAULT)
     :
         n_levels(n_levels_), order(order_), left(left_), right(right_),
+        // Flag to allow multigrid algorithms
         triangulation(Triangulation<dim>::limit_level_difference_at_vertices),
-    // DoFHandler<> has a deleted assignment operator, so initialize in the constructor
+        // DoFHandler<> has a deleted assignment operator, so initialize in the constructor
         element(degree), dof_handler(triangulation)
     {
         dimension = dim;
     }
 
-    void setup()
+    void step1()
     {
         // step 1 - make grid
-        std::cerr << "Dimension: " << dimension << std::endl;
         // rectangle consisting of precisely one cell
+        std::cerr << "Dimension: " << dimension << std::endl;
         dealii::GridGenerator::hyper_rectangle(triangulation, left, right);
+
         // the number of cells increases by a factor of 2^(dim x times)
         triangulation.refine_global(n_levels);
 
@@ -160,18 +160,32 @@ public:
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
 
+    void step2()
+    {
+        // step 2 - degrees of freedom
+        distribute_dofs(dof_handler, element, order);
+    }
+
+    void step2_mg()
+    {
+        // step 2 - degrees of freedom - applied to every level
+        std::vector<int> levels(n_levels);
+        std::iota(levels.begin(), levels.end(), 1);
+
+        // DoFHandler::distribute_dofs, DoFHandler::distribute_mg_dofs
+        distribute_mg_dofs(dof_handler, element, order, levels);
+    }
+
     template <typename Function>
     GPE_Mass<double>
-    mass(Function&& V) const
+    step3(Function&& V) const
     {
         // Step 2 - degrees of freedom
         //SparsityPattern      sparsity_pattern;
         //SparseMatrix<double> mass_matrix_weighed; // M_v, V(x)*phi_i*phi_j*dx
         //SparseMatrix<double> stiffness_matrix;    // S, grad phi_i * grad phi_j * dx
         GPE_Mass<double> Mass;
-        Mass.sparsity_pattern = rectangle_dofs(dof_handler, element, order);
-
-        assert(dof_handler.has_active_dofs());
+        Mass.sparsity_pattern = rectangle_dofs(dof_handler);
         std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
         // Step 3 - linear system
@@ -190,7 +204,7 @@ public:
 
     template <typename Function>
     std::vector<GPE_Mass<double> >
-    mass_mg(Function&& V) const
+    step3_mg(Function&& V) const
     {
         // Structure of arrays for multigrid
         //std::vector<SparseMatrix<double> > mass_matrix_weighed_v(n_levels);
@@ -198,10 +212,8 @@ public:
         std::vector<GPE_Mass<double> > Mass_v(n_levels);
 
         // Populate degrees of freedom on every level of the hierarchy
-        auto sparsity_pattern_v= rectangle_dofs_mg(dof_handler, element, order);
-
+        auto sparsity_pattern_v= rectangle_dofs_mg(dof_handler);
         assert(sparsity_pattern_v.size() == n_levels);
-        assert(dof_handler.has_level_dofs());
         std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
         // Iterate over cells in every level of the hierarchy
@@ -242,19 +254,10 @@ private:
 
 template <int dim>
 std::tuple<Vector<double>,double,double>
-inv_iteration(const GPE<dim>& Problem, const Vector<double>& x0, double beta, int max_iter = 25)
+inv_iteration(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
+    const Vector<double>& x0, double beta, int max_iter)
 {
-    // Define potential function
-    auto V = [](const Point<dim>& p) {
-        Point<dim> out;
-        for (unsigned d = 0; d < dim; d++) {
-            out[d] = std::pow(p[d],2);
-        }
-        return out;
-    };
-
     // Generate sparsity pattern, weighed mass matrix, and stiffness matrix
-    const GPE_Mass<double> Mass = Problem.mass(V);
     SparseMatrix A_0(Mass.S);
     A_0.add(1.0, Mass.Mv);
 
@@ -262,7 +265,7 @@ inv_iteration(const GPE<dim>& Problem, const Vector<double>& x0, double beta, in
     Vector<double> x(x0);
     for (int i = 0; i < max_iter; i++) {
         SparseMatrix A(A_0);
-        assemble_mass_phiphi(Mass.Mpp, Problem.get_dof(), x);
+        assemble_mass_phiphi(Mass.Mpp, dof_handler, x);
         A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
 
         // Invert A
@@ -281,7 +284,7 @@ inv_iteration(const GPE<dim>& Problem, const Vector<double>& x0, double beta, in
 
     // Compute residual
     SparseMatrix A(A_0);
-    assemble_mass_phiphi<dim>(Mass.Mpp, Problem.get_dof(), x);
+    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, x);
 
     Vector<double> res(x.size());
     A.add(beta, Mass.Mpp);
@@ -310,14 +313,31 @@ void inverse_iteration_mg(const GPE<dim>& Problem, const Vector<double>& x0)
 }
 
 template <int dim>
-void experiment1(int n_levels, int degree, std::string left_str, std::string right_str, double beta, Ordering order)
+void experiment1(int n_levels, int degree, std::string left_str, std::string right_str,
+    double beta, Ordering order, bool multigrid, int max_iter)
 {
-    GPE<dim> Problem(n_levels, degree, str_to_point<1>(left_str), str_to_point<1>(right_str), order);
-    Problem.setup();
+    // Set up grid and degrees of freedom
+    GPE<dim> Problem(n_levels, degree, str_to_point<dim>(left_str), str_to_point<dim>(right_str), order);
+    Problem.step1();
+    Problem.step2(); // TODO: if multigrid...
 
+    // Define potential function
+    auto V = [](const Point<dim>& p) {
+        Point<dim> out;
+        for (unsigned d = 0; d < dim; d++) {
+            out[d] = std::pow(p[d],2);
+        }
+        return out;
+    };
+    // Set up mass and stiffness matrices
+    GPE_Mass<double> Mass = Problem.step3(V); // TODO: if multigrid...
+
+    // Set initial value
     Vector<double> x0(Problem.get_dof().n_dofs());
-    x0 = 1;
-    auto results = inv_iteration<dim>(Problem, x0, beta);
+    x0 = 1.0;
+
+    // Run iteration, update M_pp in every step
+    auto results = inv_iteration<dim>(Mass, Problem.get_dof(), x0, beta, max_iter);
 
     std::cerr << "Residual: " << std::get<1>(results) << std::endl;
     std::cerr << "Energy: " << std::get<2>(results) << std::endl;
@@ -325,7 +345,7 @@ void experiment1(int n_levels, int degree, std::string left_str, std::string rig
 
 int main(int argc, char* argv[])
 {
-    int degree, n_levels, dimension;
+    int degree, n_levels, dimension, max_iter;
     bool multigrid;
     Ordering order;
     std::string left_str, right_str;
@@ -350,7 +370,9 @@ int main(int argc, char* argv[])
             ("right", po::value<std::string>()->default_value(""),
                 "right point of the mesh")
             ("beta", po::value<double>()->default_value(100),
-                "non-linearity factor");
+                "non-linearity factor")
+            ("max_iter", po::value<int>()->default_value(25),
+                "maximum number of iterations");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -371,6 +393,7 @@ int main(int argc, char* argv[])
         left_str  = vm["left"].as<std::string>();
         right_str = vm["right"].as<std::string>();
         beta      = vm["beta"].as<double>();
+        max_iter  = vm["max_iter"].as<int>();
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -389,7 +412,7 @@ int main(int argc, char* argv[])
                 left_str = "-10";
                 right_str = "10";
             }
-            experiment1<1>(n_levels, degree, left_str, right_str, beta, order);
+            experiment1<1>(n_levels, degree, left_str, right_str, beta, order, multigrid, max_iter);
         }
         break;
     case 2:
@@ -398,7 +421,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10";
                 right_str = "10,10";
             }
-            experiment1<2>(n_levels, degree, left_str, right_str, beta, order);
+            experiment1<2>(n_levels, degree, left_str, right_str, beta, order, multigrid, max_iter);
         }
         break;
     case 3:
@@ -407,7 +430,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10,-10";
                 right_str = "10,10,10";
             }
-            experiment1<2>(n_levels, degree, left_str, right_str, beta, order);
+            experiment1<3>(n_levels, degree, left_str, right_str, beta, order, multigrid, max_iter);
         }
         break;
     default:
