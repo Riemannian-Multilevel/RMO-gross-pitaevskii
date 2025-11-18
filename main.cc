@@ -62,10 +62,10 @@ rectangle_dofs(const DoFHandler<dim>& handler)
 //! @return
 template <int dim>
 std::vector<SparsityPattern>
-rectangle_dofs_mg(const DoFHandler<dim>& handler)
+rectangle_mg_dofs(const DoFHandler<dim>& handler)
 {
     assert(handler.has_level_dofs());
-    const int n_levels = handler.n_levels();
+    const int n_levels = handler.get_triangulation().n_levels();
 
     // TODO: dof for every level (coloring?)
     // write_dof_locations(handler, fmt::format("rectangle_{}d_dof.gnuplot", handler.dimension));
@@ -84,6 +84,7 @@ rectangle_dofs_mg(const DoFHandler<dim>& handler)
     return Sd_v;
 }
 
+// XXX: refactor to options.h
 Ordering select_order(const std::string& order_str)
 {
     if (order_str == "DEFAULT") {
@@ -106,14 +107,29 @@ Ordering select_order(const std::string& order_str)
     }
 }
 
-// TODO: SparsityPattern is stored for SparseMatrix (::get_sparsity_pattern() const)
+SolverMethod select_solver(const std::string& solver_str)
+{
+    if (solver_str == "GMRES") {
+        return SolverMethod::GMRES;
+    }
+    else if (solver_str == "MINRES") {
+        return SolverMethod::MINRES;
+    }
+    else if (solver_str == "CG") {
+        return SolverMethod::CG;
+    }
+    else {
+        throw std::runtime_error(solver_str + ": invalid solver");
+    }
+}
+
 template <typename T>
 struct GPE_Mass
 {
-    SparsityPattern sparsity_pattern;
     SparseMatrix<T> Mv;
     SparseMatrix<T> S;
     SparseMatrix<T> Mpp;
+    SparsityPattern sparsity_pattern;
 };
 
 //!
@@ -160,6 +176,7 @@ public:
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
 
+    // XXX: virtual function, overridden in MG_GPE
     void step2()
     {
         // step 2 - degrees of freedom
@@ -181,21 +198,20 @@ public:
     step3(Function&& V) const
     {
         // Step 2 - degrees of freedom
-        //SparsityPattern      sparsity_pattern;
-        //SparseMatrix<double> mass_matrix_weighed; // M_v, V(x)*phi_i*phi_j*dx
-        //SparseMatrix<double> stiffness_matrix;    // S, grad phi_i * grad phi_j * dx
         GPE_Mass<double> Mass;
-        Mass.sparsity_pattern = rectangle_dofs(dof_handler);
-        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
-
+        { // XXX: in-place construction of sparsity pattern?
+            const SparsityPattern sparsity_pattern = rectangle_dofs(dof_handler);
+            Mass.sparsity_pattern.copy_from(sparsity_pattern);
+            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+        }
         // Step 3 - linear system
         // Compute values of mass matrix
         Mass.Mv.reinit(Mass.sparsity_pattern);
-        assemble_mass_weighed(Mass.Mv, dof_handler, V);
+        assemble_mass_weighed(Mass.Mv, dof_handler, element, V);
 
         // Compute values of stiffness matrix
         Mass.S.reinit(Mass.sparsity_pattern);
-        assemble_stiffness(Mass.S, dof_handler);
+        assemble_stiffness(Mass.S, dof_handler, element);
 
         Mass.Mpp.reinit(Mass.sparsity_pattern);
         // values assembled with update() function
@@ -212,28 +228,39 @@ public:
         std::vector<GPE_Mass<double> > Mass_v(n_levels);
 
         // Populate degrees of freedom on every level of the hierarchy
-        auto sparsity_pattern_v= rectangle_dofs_mg(dof_handler);
-        assert(sparsity_pattern_v.size() == n_levels);
-        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+        {
+            auto sparsity_pattern_v= rectangle_mg_dofs(dof_handler);
+            assert(sparsity_pattern_v.size() == n_levels);
+            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
-        // Iterate over cells in every level of the hierarchy
-        for (int i = 0; i < sparsity_pattern_v.size(); i++) {
-            int mg_level = i+1;
-            Mass_v.at(i).sparsity_pattern = std::move(sparsity_pattern_v.at(i));
-
+            // Iterate over cells in every level of the hierarchy
+            for (int i = 0; i < n_levels; i++) {
+                // XXX: in-place construction of sparsity pattern?
+                Mass_v.at(i).sparsity_pattern.copy_from(sparsity_pattern_v.at(i));
+            }
+        }
+        for (int i = 0; i < n_levels; i++) {
             // compute values of mass matrix for level i
-            Mass_v.at(i).Mv.reinit(sparsity_pattern_v[i]);
-            assemble_mass_weighed(Mass_v.at(i).Mv, dof_handler, V, mg_level);
+            // TODO: multigrid dof_handler iteration
+            Mass_v.at(i).Mv.reinit(Mass_v.at(i).sparsity_pattern);
+            assemble_mass_weighed(Mass_v.at(i).Mv, dof_handler, element, V);
 
             // compute values of stiffness matrix for level i
-            Mass_v.at(i).S.reinit(sparsity_pattern_v[i]);
-            assemble_stiffness(Mass_v.at(i).S, dof_handler, mg_level);
+            // TODO: multigrid dof_handler iteration
+            Mass_v.at(i).S.reinit(Mass_v.at(i).sparsity_pattern);
+            assemble_stiffness(Mass_v.at(i).S, dof_handler, element);
         }
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
 
     const DoFHandler<dim>& get_dof() const {
         return dof_handler;
+    }
+    const FE_Q<dim>& get_element() const {
+        return element;
+    }
+    const Triangulation<dim>& get_triangulation() const {
+        return triangulation;
     }
 
 private:
@@ -254,22 +281,27 @@ private:
 
 template <int dim>
 std::tuple<Vector<double>,double,double>
-inv_iteration(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
-    const Vector<double>& x0, double beta, int max_iter)
+// TODO: step size argument (double)
+rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const FE_Q<dim>& element,
+    const Vector<double>& x0, double beta, SolverMethod solver, int max_iter, double reltol)
 {
     // Generate sparsity pattern, weighed mass matrix, and stiffness matrix
-    SparseMatrix A_0(Mass.S);
+    SparseMatrix<double> A_0;
+    A_0.reinit(Mass.S);
+    A_0.copy_from(Mass.S);
     A_0.add(1.0, Mass.Mv);
 
     // Begin inverse iteration
     Vector<double> x(x0);
     for (int i = 0; i < max_iter; i++) {
-        SparseMatrix A(A_0);
-        assemble_mass_phiphi(Mass.Mpp, dof_handler, x);
+        SparseMatrix<double> A;
+        A.reinit(A_0);
+        A.copy_from(A_0);
+        assemble_mass_phiphi(Mass.Mpp, dof_handler, element, x);
         A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
 
         // Invert A
-        Vector<double> y = solve_sparse(A, x, SolverMethod::GMRES);
+        Vector<double> y = solve_sparse(A, x, solver, max_iter, reltol);
         double denom1 = x * y;
         assert(denom1 > 0);
         x  = y;
@@ -283,8 +315,10 @@ inv_iteration(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
     }
 
     // Compute residual
-    SparseMatrix A(A_0);
-    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, x);
+    SparseMatrix<double> A;
+    A.reinit(A_0);
+    A.copy_from(A_0);
+    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, element, x);
 
     Vector<double> res(x.size());
     A.add(beta, Mass.Mpp);
@@ -295,7 +329,9 @@ inv_iteration(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
     res.add(-1.0, tmp); // A*x - (x'*A*x)*x
 
     // Compute energy
-    SparseMatrix<double> B(A_0);
+    SparseMatrix<double> B;
+    B.reinit(A_0);
+    B.copy_from(A_0);
     B *= 0.5;
     B.add(0.25, Mass.Mpp);
 
@@ -306,39 +342,58 @@ inv_iteration(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
     return std::make_tuple(x, res.l2_norm(), energy);
 }
 
-template <int dim>
-void inverse_iteration_mg(const GPE<dim>& Problem, const Vector<double>& x0)
-{
-    throw std::logic_error("inverse_iteration_mg not implemented");
-}
+// template <int dim>
+// void inverse_iteration_mg(const GPE<dim>&, const Vector<double>&)
+// {
+//     throw std::logic_error("inverse_iteration_mg not implemented");
+// }
 
 template <int dim>
-void experiment1(int n_levels, int degree, std::string left_str, std::string right_str,
-    double beta, Ordering order, bool multigrid, int max_iter)
+void experiment1(int n_levels, int degree, const std::string& left_str, const std::string& right_str,
+    double beta, Ordering order, bool multigrid, SolverMethod solver, int max_iter, double reltol)
 {
-    // Set up grid and degrees of freedom
+    // Set up grid
     GPE<dim> Problem(n_levels, degree, str_to_point<dim>(left_str), str_to_point<dim>(right_str), order);
     Problem.step1();
-    Problem.step2(); // TODO: if multigrid...
+
+    // Set up degrees of freedom (multigrid-dependent)
+    if (multigrid) {
+        Problem.step2_mg();
+    } else {
+        Problem.step2();
+    }
 
     // Define potential function
     auto V = [](const Point<dim>& p) {
-        Point<dim> out;
+        typename Point<dim>::value_type out = 0.0;
         for (unsigned d = 0; d < dim; d++) {
-            out[d] = std::pow(p[d],2);
+            out += p[d]*p[d];
         }
         return out;
     };
-    // Set up mass and stiffness matrices
-    GPE_Mass<double> Mass = Problem.step3(V); // TODO: if multigrid...
+
+    // Set up mass and stiffness matrices (multigrid-dependent)
+    if (multigrid) {
+        // TODO: populate matrices on every level
+        throw std::logic_error("step3_mg not implemented");
+    }
+    GPE_Mass Mass = Problem.step3(V);
 
     // Set initial value
     Vector<double> x0(Problem.get_dof().n_dofs());
     x0 = 1.0;
 
     // Run iteration, update M_pp in every step
-    auto results = inv_iteration<dim>(Mass, Problem.get_dof(), x0, beta, max_iter);
+    const DoFHandler<dim>& dof_handler = Problem.get_dof();
+    const FE_Q<dim>& element = Problem.get_element();
+    std::tuple<Vector<double>, double, double> results;
 
+    if (multigrid) {
+        // TODO: run iteration for all levels
+        throw std::logic_error("inverse_iteration_mg not implemented");
+    } else {
+        results = rgd_fixed_step<dim>(Mass, dof_handler, element, x0, beta, solver, max_iter, reltol);
+    }
     std::cerr << "Residual: " << std::get<1>(results) << std::endl;
     std::cerr << "Energy: " << std::get<2>(results) << std::endl;
 }
@@ -349,8 +404,10 @@ int main(int argc, char* argv[])
     bool multigrid;
     Ordering order;
     std::string left_str, right_str;
-    double beta;
+    SolverMethod solver;
+    double beta, reltol, step_size;
 
+    // TODO: add configuration file (cf. boost tutorial)
     try {
         po::options_description desc("Allowed options");
         desc.add_options()
@@ -371,8 +428,12 @@ int main(int argc, char* argv[])
                 "right point of the mesh")
             ("beta", po::value<double>()->default_value(100),
                 "non-linearity factor")
-            ("max_iter", po::value<int>()->default_value(25),
-                "maximum number of iterations");
+            ("solver", po::value<std::string>()->default_value("gmres"),
+                "sparse solver (gmres|minres|cg)")
+            ("max_iter", po::value<int>()->default_value(100),
+                "maximum number of iterations for sparse solver")
+            ("reltol", po::value<double>()->default_value(1e-6),
+                "relative tolerance for sparse solver");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -383,7 +444,9 @@ int main(int argc, char* argv[])
             return 0;
         }
         auto order_str = vm["ordering"].as<std::string>();
+        auto solver_str = vm["solver"].as<std::string>();
         std::transform(order_str.begin(), order_str.end(), order_str.begin(), ::toupper);
+        std::transform(solver_str.begin(), solver_str.end(), solver_str.begin(), ::toupper);
 
         order     = select_order(order_str);
         degree    = vm["degree"].as<int>();
@@ -393,7 +456,9 @@ int main(int argc, char* argv[])
         left_str  = vm["left"].as<std::string>();
         right_str = vm["right"].as<std::string>();
         beta      = vm["beta"].as<double>();
+        solver    = select_solver(solver_str);
         max_iter  = vm["max_iter"].as<int>();
+        reltol    = vm["reltol"].as<double>();
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -412,7 +477,7 @@ int main(int argc, char* argv[])
                 left_str = "-10";
                 right_str = "10";
             }
-            experiment1<1>(n_levels, degree, left_str, right_str, beta, order, multigrid, max_iter);
+            experiment1<1>(n_levels, degree, left_str, right_str, beta, order, multigrid, solver, max_iter, reltol);
         }
         break;
     case 2:
@@ -421,7 +486,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10";
                 right_str = "10,10";
             }
-            experiment1<2>(n_levels, degree, left_str, right_str, beta, order, multigrid, max_iter);
+            experiment1<2>(n_levels, degree, left_str, right_str, beta, order, multigrid, solver, max_iter, reltol);
         }
         break;
     case 3:
@@ -430,7 +495,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10,-10";
                 right_str = "10,10,10";
             }
-            experiment1<3>(n_levels, degree, left_str, right_str, beta, order, multigrid, max_iter);
+            experiment1<3>(n_levels, degree, left_str, right_str, beta, order, multigrid, solver, max_iter, reltol);
         }
         break;
     default:
