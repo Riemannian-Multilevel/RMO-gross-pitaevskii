@@ -239,16 +239,17 @@ public:
                 Mass_v.at(i).sparsity_pattern.copy_from(sparsity_pattern_v.at(i));
             }
         }
+        // Compute stiffness and weighed mass matrices
         for (int i = 0; i < n_levels; i++) {
             // compute values of mass matrix for level i
             // TODO: multigrid dof_handler iteration
-            Mass_v.at(i).Mv.reinit(Mass_v.at(i).sparsity_pattern);
-            assemble_mass_weighed(Mass_v.at(i).Mv, dof_handler, element, V);
+            Mass_v[i].Mv.reinit(Mass_v[i].sparsity_pattern);
+            assemble_mass_weighed(Mass_v[i].Mv, dof_handler, element, V);
 
             // compute values of stiffness matrix for level i
             // TODO: multigrid dof_handler iteration
-            Mass_v.at(i).S.reinit(Mass_v.at(i).sparsity_pattern);
-            assemble_stiffness(Mass_v.at(i).S, dof_handler, element);
+            Mass_v[i].S.reinit(Mass_v[i].sparsity_pattern);
+            assemble_stiffness(Mass_v[i].S, dof_handler, element);
         }
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
@@ -279,6 +280,14 @@ private:
     DoFHandler<dim>      dof_handler;
 };
 
+SparseMatrix<double> sp_copy(const SparseMatrix<double>& M)
+{
+    SparseMatrix<double> M_copy;
+    M_copy.reinit(M);
+    M_copy.copy_from(M);
+    return M_copy;
+}
+
 template <int dim>
 std::tuple<Vector<double>,double,double>
 // TODO: step size argument (double)
@@ -286,17 +295,13 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const
     const Vector<double>& x0, double beta, SolverMethod solver, int max_iter, double reltol)
 {
     // Generate sparsity pattern, weighed mass matrix, and stiffness matrix
-    SparseMatrix<double> A_0;
-    A_0.reinit(Mass.S);
-    A_0.copy_from(Mass.S);
+    SparseMatrix<double> A_0 = sp_copy(Mass.S);
     A_0.add(1.0, Mass.Mv);
 
     // Begin inverse iteration
     Vector<double> x(x0);
     for (int i = 0; i < max_iter; i++) {
-        SparseMatrix<double> A;
-        A.reinit(A_0);
-        A.copy_from(A_0);
+        SparseMatrix<double> A = sp_copy(A_0);
         assemble_mass_phiphi(Mass.Mpp, dof_handler, element, x);
         A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
 
@@ -315,9 +320,7 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const
     }
 
     // Compute residual
-    SparseMatrix<double> A;
-    A.reinit(A_0);
-    A.copy_from(A_0);
+    SparseMatrix<double> A = sp_copy(A_0);
     assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, element, x);
 
     Vector<double> res(x.size());
@@ -329,9 +332,7 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const
     res.add(-1.0, tmp); // A*x - (x'*A*x)*x
 
     // Compute energy
-    SparseMatrix<double> B;
-    B.reinit(A_0);
-    B.copy_from(A_0);
+    SparseMatrix<double> B = sp_copy(A_0);
     B *= 0.5;
     B.add(0.25, Mass.Mpp);
 

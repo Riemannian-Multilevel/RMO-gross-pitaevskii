@@ -8,36 +8,26 @@
 #include <deal.II/base/iterator_range.h>
 #include <deal.II/base/quadrature_lib.h>
 
-// TODO: specification of boundary values (Dirichlet or Neumann on part of the boundary)
-//       iterate over cells in a level of a multigrid hierarchy (possible refactoring)
-//! Mass matrix assembly, implementation based on tutorial/step-3
-//! @tparam dim Problem dimension
-//! @tparam Assembly
-//! @param system_matrix Matrix to be populated with entries
-//! @param dof_handler DOF object, contains triangulation and finite element
-//! @param element Finite element corresponding to DOF object
-//! @param flags Required update flags, typically set in Assembly object
-//! @param assemble Function object which iterates over local cells
-template <int dim, typename Assembly>
-// BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
-void assemble_matrix(dealii::SparseMatrix<double>& system_matrix, const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, dealii::UpdateFlags flags, Assembly&& assemble)
+namespace gpe
 {
-    const dealii::QGauss<dim> quadrature_formula(element.degree + 1);
-    dealii::FEValues<dim> fe_values(element, quadrature_formula, flags);
+using dealii::types::global_dof_index;
 
-    const unsigned int dofs_per_cell = element.n_dofs_per_cell();
-    dealii::FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
-    std::vector<dealii::types::global_dof_index> local_dof_indices(dofs_per_cell);
-
-    // Iterate over all active cells
-    for (const auto& cell : dof_handler.active_cell_iterators()) {
+template <int dim, typename CellIterator, typename Assembly>
+void assemble_system_impl(const CellIterator &begin, const CellIterator &end,
+    dealii::FEValues<dim> &fe_values,
+    dealii::SparseMatrix<double> &system_matrix,
+    dealii::FullMatrix<double> &cell_matrix,
+    std::vector<global_dof_index> &local_dof_indices,
+    Assembly&& assemble_cell)
+{
+    for (auto cell = begin; cell != end; ++cell) {
         fe_values.reinit(cell);
         cell_matrix = 0;
-        cell->get_dof_indices(local_dof_indices);
+        // Same code for active cells, or cells on a level in a multigrid hierarchy
+        cell->get_active_or_mg_dof_indices(local_dof_indices);
 
         // Pass on populated DoF indices to assemble M_phiphi
-        assemble(fe_values, cell_matrix, local_dof_indices);
+        assemble_cell(fe_values, cell_matrix, local_dof_indices);
 
         for (const unsigned int i : fe_values.dof_indices()) {
             for (const unsigned int j : fe_values.dof_indices()) {
@@ -46,10 +36,57 @@ void assemble_matrix(dealii::SparseMatrix<double>& system_matrix, const dealii::
         }
     }
 }
+// TODO: specification of boundary values (Dirichlet or Neumann on part of the boundary)
+//! Mass matrix assembly, implementation based on tutorial/step-3
+//! @tparam dim Problem dimension
+//! @tparam Assembly
+//! @param system_matrix Matrix to be populated with entries
+//! @param dof_handler DOF object, contains triangulation and finite element
+//! @param element Finite element corresponding to DOF object
+//! @param flags Required update flags, typically set in Assembly object
+//! @param assemble_cell Function object which iterates over local cells
+//! @param level Multigrid level (0 for active cells)
+template <int dim, typename Assembly>
+// BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
+void assemble_system(dealii::SparseMatrix<double>& system_matrix,
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::FE_Q<dim>& element, dealii::UpdateFlags flags,
+    Assembly&& assemble_cell, int level = 0)
+{
+    // Quadrature formula for the evaluation of the integrals on each cel
+    const dealii::QGauss<dim> quadrature_formula(element.degree + 1);
+    // Class which handles finite element, quadrature, and mapping objects
+    dealii::FEValues<dim> fe_values(element, quadrature_formula, flags);
 
+    // Compute contributions of each cell in a local dense matrix, to avoid
+    // updating a large sparse matrix in every step
+    // Consistent between active and multigrid approaches
+    const unsigned int dofs_per_cell = element.n_dofs_per_cell();
+    dealii::FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
+    std::vector<global_dof_index> local_dof_indices(dofs_per_cell);
+
+    if (level == 0) {
+        AssertDimension(system_matrix.m(), dof_handler.n_dofs());
+        AssertDimension(system_matrix.n(), dof_handler.n_dofs());
+
+        // Iterate over active cells
+        assemble_system_impl(dof_handler.begin(), dof_handler.end(),
+            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell);
+    } else {
+        AssertDimension(system_matrix.m(), dof_handler.n_dofs(level));
+        AssertDimension(system_matrix.n(), dof_handler.n_dofs(level));
+
+        // Iterate over multigrid cells on given level
+        assemble_system_impl(dof_handler.begin_mg(level), dof_handler.end_mg(level),
+            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell);
+    }
+}
+
+// TODO: optional assembly for right-hand side (separate function?)
 template <int dim>
-void assemble_mass(dealii::SparseMatrix<double>& system_matrix, const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element)
+void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::FE_Q<dim>& element, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -66,12 +103,13 @@ void assemble_mass(dealii::SparseMatrix<double>& system_matrix, const dealii::Do
             }
         }
     };
-    assemble_matrix(system_matrix, dof_handler, element, flags, f_mass);
+    assemble_system(system_matrix, dof_handler, element, flags, f_mass, level);
 }
 
 template <int dim>
-void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix, const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element)
+void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::FE_Q<dim>& element, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients | dealii::update_JxW_values);
 
@@ -88,12 +126,13 @@ void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix, const deali
             }
         }
     };
-    assemble_matrix(system_matrix, dof_handler, element, flags, f_stiffness);
+    assemble_system(system_matrix, dof_handler, element, flags, f_stiffness, level);
 }
 
 template <int dim, typename Function>
-void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix, const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, Function&& V)
+void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::FE_Q<dim>& element, Function&& V, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
 
@@ -112,12 +151,13 @@ void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix, const de
             }
         }
     };
-    assemble_matrix(system_matrix, dof_handler, element, flags, f_mass_weighed);
+    assemble_system(system_matrix, dof_handler, element, flags, f_mass_weighed, level);
 }
 
 template <int dim>
-void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix, const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, const dealii::Vector<double>& u)
+void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::FE_Q<dim>& element, const dealii::Vector<double>& u, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -142,7 +182,9 @@ void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix, const dealii::Do
             }
         }
     };
-    assemble_matrix(matrix, dof_handler, element, flags, f_mass_phiphi);
+    assemble_system(matrix, dof_handler, element, flags, f_mass_phiphi, level);
 }
+
+} // namespace gpe
 
 #endif //GPE_ASSEMBLY_H
