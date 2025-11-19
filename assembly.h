@@ -50,9 +50,9 @@ template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
 void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::DoFHandler<dim>& dof_handler,
-                     const dealii::FE_Q<dim>& element, dealii::UpdateFlags flags,
-                     Assembly&& assemble_cell, int level = 0)
+                     dealii::UpdateFlags flags, Assembly&& assemble_cell, int level = 0)
 {
+    const auto& element = dof_handler.get_fe();
     // Quadrature formula for the evaluation of the integrals on each cel
     const dealii::QGauss<dim> quadrature_formula(element.degree + 1);
     // Class which handles finite element, quadrature, and mapping objects
@@ -66,7 +66,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     std::vector<global_dof_index> local_dof_indices(dofs_per_cell);
 
     // Clear existing matrix entries
-    system_matrix = 0.0;
+    system_matrix = 0;  // system_matrix.reinit(system_matrix.get_sparsity_pattern())
 
     // Iterate over cells / degrees of freedom
     if (level == 0) {
@@ -89,8 +89,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
 // TODO: optional assembly for right-hand side (separate function?)
 template <int dim>
 void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, const int level = 0)
+    const dealii::DoFHandler<dim>& dof_handler, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -107,13 +106,12 @@ void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, element, flags, f_mass, level);
+    assemble_system(system_matrix, dof_handler, flags, f_mass, level);
 }
 
 template <int dim>
 void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, const int level = 0)
+    const dealii::DoFHandler<dim>& dof_handler, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients | dealii::update_JxW_values);
 
@@ -130,13 +128,13 @@ void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, element, flags, f_stiffness, level);
+    assemble_system(system_matrix, dof_handler, flags, f_stiffness, level);
 }
 
 template <int dim, typename Function>
 void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, Function&& V, const int level = 0)
+    Function&& V, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
 
@@ -155,13 +153,13 @@ void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, element, flags, f_mass_weighed, level);
+    assemble_system(system_matrix, dof_handler, flags, f_mass_weighed, level);
 }
 
 template <int dim>
 void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, const dealii::Vector<double>& u, const int level = 0)
+    const dealii::Vector<double>& u, const int level = 0)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -185,7 +183,7 @@ void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
             }
         }
     };
-    assemble_system(matrix, dof_handler, element, flags, f_mass_phiphi, level);
+    assemble_system(matrix, dof_handler, flags, f_mass_phiphi, level);
 }
 
 } // namespace gpe

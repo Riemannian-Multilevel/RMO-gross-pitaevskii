@@ -126,14 +126,28 @@ SolverMethod select_solver(const std::string& solver_str)
 template <typename T>
 struct GPE_Mass
 {
-    explicit GPE_Mass(SparsityPattern sp)
-        : M(sp), Mv(sp), S(sp), Mpp(sp), sparsity_pattern(sp) {}
+    explicit GPE_Mass(const SparsityPattern &sparsity_)
+        // avoid issues with deleted copy/move constructors of SparsityPattern
+        // SparseMatrix has defined move constructors, and we store them directly
+        : sparsity(std::make_shared<dealii::SparsityPattern>())
+    {
+        // make an internal copy of the sparsity pattern
+        sparsity->copy_from(sparsity_);
+
+        // now initialize all matrices with this *owned* pattern
+        M.reinit(*sparsity);
+        Mv.reinit(*sparsity);
+        S.reinit(*sparsity);
+        Mpp.reinit(*sparsity);
+    }
+
     SparseMatrix<T> M;
     SparseMatrix<T> Mv;
     SparseMatrix<T> S;
     SparseMatrix<T> Mpp;
+
 private:
-    SparsityPattern sparsity_pattern;
+    std::shared_ptr<SparsityPattern> sparsity;
 };
 
 //!
@@ -161,7 +175,7 @@ public:
         dimension = dim;
     }
 
-    void step1()
+    void step1(std::string prefix = "domain")
     {
         // step 1 - make grid
         // rectangle consisting of precisely one cell
@@ -207,12 +221,11 @@ public:
 
         // Step 3 - linear system
         // Compute values of mass matrix
-        assemble_mass(Mass.M, dof_handler, element);
-        assemble_mass_weighed(Mass.Mv, dof_handler, element, V);
+        assemble_mass(Mass.M, dof_handler);
+        assemble_mass_weighed(Mass.Mv, dof_handler, V);
 
         // Compute values of stiffness matrix
-        assemble_stiffness(Mass.S, dof_handler, element);
-
+        assemble_stiffness(Mass.S, dof_handler);
         return Mass; // XXX: or store in class object
     }
 
@@ -238,11 +251,11 @@ public:
         // Compute stiffness and weighed mass matrices
         for (int i = 0; i < n_levels; i++) {
             // compute values of mass matrix for level i
-            assemble_mass(Mass_v[i].M, dof_handler, element);
-            assemble_mass_weighed(Mass_v[i].Mv, dof_handler, element, V);
+            assemble_mass(Mass_v[i].M, dof_handler);
+            assemble_mass_weighed(Mass_v[i].Mv, dof_handler, V);
 
             // compute values of stiffness matrix for level i
-            assemble_stiffness(Mass_v[i].S, dof_handler, element);
+            assemble_stiffness(Mass_v[i].S, dof_handler);
         }
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
@@ -281,22 +294,39 @@ SparseMatrix<double> sp_copy(const SparseMatrix<double>& M)
     return M_copy;
 }
 
+//!
+//! @tparam dim Problem dimension
+//! @param Mass Finite element matrix object (mass, stiffness, weighed mass)
+//! @param dof_handler DoF object for assembling weighed mass matrices
+//! @param element
+//! @param x0
+//! @param beta
+//! @param h
+//! @param solver
+//! @param max_iter
+//! @param max_iter_inner
+//! @param reltol
+//! @return
 template <int dim>
 std::tuple<Vector<double>,double,double>
 // TODO: step size argument (double)
-rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const FE_Q<dim>& element,
-    const Vector<double>& x0, double beta,
+rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
+    const Vector<double>& x0, double beta, double h,
     SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
 {
+    // TODO: switch to gsl-lite
+    assert(h > 0);
+    assert(reltol > 0);
+
     // Generate sparsity pattern, weighed mass matrix, and stiffness matrix
     SparseMatrix<double> A_0 = sp_copy(Mass.S);
     A_0.add(1.0, Mass.Mv);
 
-    // Begin inverse iteration
+    // Begin RGD iteration
     Vector<double> x(x0);
     for (int i = 0; i < max_iter; i++) {
         SparseMatrix<double> A = sp_copy(A_0);
-        assemble_mass_phiphi(Mass.Mpp, dof_handler, element, x);
+        assemble_mass_phiphi(Mass.Mpp, dof_handler,  x);
         A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
 
         // Invert A
@@ -315,7 +345,7 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const
 
     // Compute residual
     SparseMatrix<double> A = sp_copy(A_0);
-    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, element, x);
+    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, x);
 
     Vector<double> res(x.size());
     A.add(beta, Mass.Mpp);
@@ -334,27 +364,19 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler, const
     B.vmult(tmp1, x);
     double energy = x * tmp1;
 
-    return std::make_tuple(x, res.l2_norm(), energy);
+    // TODO: residual in the energy norm
+    return std::make_tuple(x, res.l2_norm() / tmp.l2_norm(), energy);
 }
-
-// template <int dim>
-// void inverse_iteration_mg(const GPE<dim>&, const Vector<double>&)
-// {
-//     throw std::logic_error("inverse_iteration_mg not implemented");
-// }
 
 template <int dim>
 void experiment1(int n_levels, int degree,
     const std::string& left_str, const std::string& right_str,
-    double beta, Ordering order, bool multigrid,
+    double beta, double h, Ordering order, bool multigrid,
     SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
 {
     // Set up grid
     GPE<dim> Problem(n_levels, degree, str_to_point<dim>(left_str), str_to_point<dim>(right_str), order);
     Problem.step1();
-
-    // Set up degrees of freedom (multigrid-dependent)
-    multigrid ? Problem.step2_mg() : Problem.step2();
 
     // Define potential function
     auto V = [](const Point<dim>& p) {
@@ -365,30 +387,33 @@ void experiment1(int n_levels, int degree,
         return out;
     };
 
-    // Set up mass and stiffness matrices (multigrid-dependent)
+    // Set up mass and stiffness matrices
     std::vector<GPE_Mass<double> > Mass_v;
+
     if (multigrid) {
+        Problem.step2_mg();  // degrees of freedom
         Mass_v = Problem.step3_mg(V);
     } else {
+        Problem.step2();
         Mass_v.emplace_back(Problem.step3(V));
     }
 
-    // Set initial value
-    // TODO: for each level in the multigrid hierarchy - n_dofs(level)
-    Vector<double> x0(Problem.get_dof().n_dofs());
-    x0 = 1.0;
-
     // Run iteration, update M_phiphi in every step
     const DoFHandler<dim>& dof_handler = Problem.get_dof();
-    const FE_Q<dim>& element = Problem.get_element();
     std::tuple<Vector<double>, double, double> results;
 
     if (multigrid) {
         // TODO: run iteration for all levels
+        //       initial value for each level in the multigrid hierarchy - n_dofs(level)
         throw std::logic_error("inverse_iteration_mg not implemented");
-    } else {
-        results = rgd_fixed_step<dim>(Mass_v[0], dof_handler, element, x0,
-            beta, solver, max_iter, max_iter_inner, reltol);
+    }
+    else {
+        // Set initial value
+        Vector<double> x0(Problem.get_dof().n_dofs());
+        x0 = 1.0;
+
+        results = rgd_fixed_step<dim>(Mass_v[0], dof_handler, x0, beta, h,
+            solver, max_iter, max_iter_inner, reltol);
     }
     std::cerr << "Residual: " << std::get<1>(results) << std::endl;
     std::cerr << "Energy: " << std::get<2>(results) << std::endl;
@@ -431,7 +456,9 @@ int main(int argc, char* argv[])
             ("max_iter_inner", po::value<int>()->default_value(100),
                 "maximum number of iterations for sparse solver")
             ("reltol", po::value<double>()->default_value(1e-6),
-                "relative tolerance for sparse solver");
+                "relative tolerance for sparse solver")
+            ("step_size", po::value<double>()->default_value(1.0),
+                "step size for RGD");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -458,6 +485,7 @@ int main(int argc, char* argv[])
         max_iter  = vm["max_iter"].as<int>();
         max_iter_inner = vm["max_iter_inner"].as<int>();
         reltol    = vm["reltol"].as<double>();
+        step_size = vm["step_size"].as<double>();
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -468,15 +496,16 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // XX: use std::variant / std::visit
+    // XXX: use std::variant / std::visit
     switch (dimension) {
     case 1:
         {
+            // Default endpoints of rectangle
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10";
                 right_str = "10";
             }
-            experiment1<1>(n_levels, degree, left_str, right_str, beta,
+            experiment1<1>(n_levels, degree, left_str, right_str, beta, step_size,
                 order, multigrid, solver, max_iter, max_iter_inner, reltol);
         }
         break;
@@ -486,7 +515,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10";
                 right_str = "10,10";
             }
-            experiment1<2>(n_levels, degree, left_str, right_str, beta,
+            experiment1<2>(n_levels, degree, left_str, right_str, beta, step_size,
                 order, multigrid, solver, max_iter, max_iter_inner, reltol);
         }
         break;
@@ -496,7 +525,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10,-10";
                 right_str = "10,10,10";
             }
-            experiment1<3>(n_levels, degree, left_str, right_str, beta,
+            experiment1<3>(n_levels, degree, left_str, right_str, beta, step_size,
                 order, multigrid, solver, max_iter, max_iter_inner, reltol);
         }
         break;
