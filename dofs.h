@@ -71,7 +71,6 @@ void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
                                const unsigned int level,
                                const std::string &filename)
 {
-    AssertIndexRange(level, dof_handler.get_triangulation().n_global_levels());
     const auto &fe = dof_handler.get_fe();
     AssertThrow(fe.dofs_per_vertex == 1 && fe.degree == 1,
                 dealii::ExcMessage("This helper assumes FE_Q(1) with one DoF per vertex."));
@@ -124,7 +123,6 @@ template <int dim>
 dealii::SparsityPattern
 make_sparsity_pattern_mg(const unsigned int level, const dealii::DoFHandler<dim>& dof_handler)
 {
-    AssertIndexRange(level, dof_handler.get_triangulation().n_global_levels());
     dealii::DynamicSparsityPattern dynamic_sparsity_pattern(
         dof_handler.n_dofs(level), dof_handler.n_dofs(level));
 
@@ -216,7 +214,7 @@ void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q
             renumber_dofs<dim>(dof_handler, order);
             return;
         }
-        // TODO: assumes unique indices in levels[] (assertion in debug mode)
+        // TODO: assumes unique indices in levels[] in range (0,n]
         for (int i : levels) {
             renumber_dofs<dim>(dof_handler, order, i);
         }

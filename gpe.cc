@@ -77,7 +77,10 @@ public:
         dealii::GridGenerator::hyper_rectangle(triangulation, left, right);
 
         // the number of cells increases by a factor of 2^(dim x times)
-        triangulation.refine_global(n_levels);
+        // -> n_levels equals the number of refinements + 1
+        triangulation.refine_global(n_levels-1);
+        AssertDimension(n_levels, triangulation.n_levels());
+
         std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
@@ -135,11 +138,11 @@ public:
         // Compute stiffness and weighed mass matrices
         for (int i = 0; i < n_levels; i++) {
             // compute values of mass matrix for level i
-            assemble_mass(Mass_v[i].M, dof_handler);
-            assemble_mass_weighed(Mass_v[i].Mv, dof_handler, V);
+            assemble_mass(Mass_v[i].M, dof_handler, i);
+            assemble_mass_weighed(Mass_v[i].Mv, dof_handler, V, i);
 
             // compute values of stiffness matrix for level i
-            assemble_stiffness(Mass_v[i].S, dof_handler);
+            assemble_stiffness(Mass_v[i].S, dof_handler, i);
         }
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
@@ -176,6 +179,14 @@ sp_copy(const SparseMatrix<double>& M)
     return M_copy;
 }
 
+template <typename Matrix>
+double energy_norm(const Vector<double>& x, const Matrix& M)
+{
+    Vector<double> tmp(x.size());
+    M.vmult(tmp, x);
+    return std::sqrt(x * tmp);
+}
+
 //! Riemannian gradient descent for the GPE energy minimization
 //! @tparam dim Problem dimension
 //! @param Mass Finite element matrix object (mass, stiffness, weighed mass)
@@ -193,7 +204,7 @@ std::tuple<Vector<double>,double,double>
 // TODO: move gradient methods to separate header
 rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
     const Vector<double>& x0, double beta, double h,
-    SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
+    SolverMethod solver, int max_iter, int max_iter_inner, double reltol, int level = 0)
 {
     // TODO: switch to gsl-lite or deal-ii assertions
     assert(h > 0);
@@ -207,7 +218,7 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handle
     Vector<double> x(x0);
     for (int i = 0; i < max_iter; i++) {
         SparseMatrix<double> A = sp_copy(A_0);
-        assemble_mass_phiphi(Mass.Mpp, dof_handler,  x);
+        assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler,  x, level);
         A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
 
         // Invert A
@@ -229,7 +240,7 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handle
 
     // Compute residual
     SparseMatrix<double> A = sp_copy(A_0);
-    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, x);
+    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, x, level);
 
     Vector<double> res(x.size());
     A.add(beta, Mass.Mpp);
@@ -250,7 +261,9 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handle
 
     // TODO: residual in the energy norm
     return std::make_tuple(x, res.l2_norm() / tmp.l2_norm(), energy);
+    //return std::make_tuple(x, energy_norm(res, Mass.M) / energy_norm(tmp, Mass.M), energy);
 }
+
 
 template <int dim>
 void experiment1(int n_levels, int degree,
@@ -283,23 +296,30 @@ void experiment1(int n_levels, int degree,
 
     // Run iteration, update M_phiphi in every step
     const DoFHandler<dim>& dof_handler = Problem.get_dof();
-    std::tuple<Vector<double>, double, double> results;
 
     if (multigrid) {
-        // TODO: run iteration for all levels
-        //       initial value for each level in the multigrid hierarchy - n_dofs(level)
-        throw std::logic_error("inverse_iteration_mg not implemented");
+        for (int i = 0; i < n_levels; i++) {
+            Vector<double> x0(Problem.get_dof().n_dofs(i));
+            x0 = 1.0;
+
+            std::tuple<Vector<double>, double, double> results;
+            results = rgd_fixed_step<dim>(Mass_v[0], dof_handler, x0, beta, h,
+                                          solver, max_iter, max_iter_inner, reltol, i);
+            std::cerr << fmt::format("Residual, level {}: {}", i, std::get<1>(results)) << std::endl;
+            std::cerr << fmt::format("Energy, level {}: {}", i, std::get<2>(results)) << std::endl;
+        }
     }
     else {
         // Set initial value
         Vector<double> x0(Problem.get_dof().n_dofs());
         x0 = 1.0;
 
+        std::tuple<Vector<double>, double, double> results;
         results = rgd_fixed_step<dim>(Mass_v[0], dof_handler, x0, beta, h,
-            solver, max_iter, max_iter_inner, reltol);
+                                      solver, max_iter, max_iter_inner, reltol);
+        std::cerr << "Residual: " << std::get<1>(results) << std::endl;
+        std::cerr << "Energy: " << std::get<2>(results) << std::endl;
     }
-    std::cerr << "Residual: " << std::get<1>(results) << std::endl;
-    std::cerr << "Energy: " << std::get<2>(results) << std::endl;
 }
 
 int main(int argc, char* argv[])
@@ -318,9 +338,9 @@ int main(int argc, char* argv[])
             ("help", "produce help message")
             ("degree", po::value<int>()->default_value(1),
              "polynomial degree for finite element")
-            ("levels", po::value<int>()->default_value(2),
+            ("levels", po::value<int>()->default_value(3),
              "number of times to globally refine the mesh")
-            ("multigrid", po::value<bool>()->default_value(false),
+            ("multigrid", po::bool_switch(&multigrid),
              "enable multigrid")
             ("dimension", po::value<int>()->default_value(2),
              "problem dimension")

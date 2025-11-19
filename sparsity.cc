@@ -24,14 +24,14 @@ dofs_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
 {
     assert(handler.has_active_dofs());
     write_dof_locations(handler, fmt::format("{}_{}d_dof.gnuplot", prefix, handler.dimension));
-    std::vector<SparsityPattern> Sd_v;
+    std::vector<SparsityPattern> Sd_v(1);
 
     auto Sd = make_sparsity_pattern(handler);
     {
         std::ofstream out(fmt::format("{}_{}d_sparsity.svg", prefix, handler.dimension));
         Sd.print_svg(out);
     }
-    Sd_v.emplace_back(Sd);
+    Sd_v[0].copy_from(Sd);
     return Sd_v;
 }
 
@@ -48,14 +48,14 @@ dofs_mg_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
 
     // TODO: dof for every level (coloring?)
     // write_dof_locations(handler, fmt::format("{}_{}d_dof.gnuplot", prefix, handler.dimension));
-    std::vector<SparsityPattern> Sd_v;
+    std::vector<SparsityPattern> Sd_v(n_levels);
 
-    for (int i = 1; i <= n_levels; i++) {
+    for (int i = 0; i < n_levels; i++) {
         write_level_vertex_points(handler, i, fmt::format("{}_{}d_dof_l{}.gnuplot", prefix, handler.dimension, i));
     }
-    for (int i = 1; i <= n_levels; ++i) {
+    for (int i = 0; i < n_levels; ++i) {
         auto Sd = make_sparsity_pattern_mg(i, handler);
-        Sd_v.push_back(Sd);
+        Sd_v[i].copy_from(Sd);
 
         std::ofstream out(fmt::format("{}_{}d_sparsity_l{}.svg", prefix, handler.dimension, i));
         Sd.print_svg(out);
@@ -81,21 +81,23 @@ public:
         std::cerr << "Dimension: " << dim << std::endl;
         dealii::GridGenerator::hyper_rectangle(triangulation, left, right);
         // the number of cells increases by a factor of 2^(dim x times)
-        triangulation.refine_global(n_levels);
+        triangulation.refine_global(n_levels-1);
 
         // visualize grid
         grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, exportFormat::GNUPLOT);
         if (dim == 2) {
             grid2file(fmt::format("rectangle_{}d.svg",dim), triangulation, exportFormat::SVG);
         }
-        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
-        std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
+        AssertDimension(n_levels, triangulation.n_levels());
     }
 
     [[maybe_unused]] std::vector<SparsityPattern> dofs()
     {
         // step 2 - degrees of freedom
         distribute_dofs(dof_handler, element, order);
+
+        std::cerr << "Number of active cells: " << triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
 
         return dofs_sparsity(dof_handler);
     }
@@ -109,6 +111,10 @@ public:
         // DoFHandler::distribute_dofs, DoFHandler::distribute_mg_dofs
         distribute_mg_dofs(dof_handler, element, order, levels);
 
+        std::cerr << "Number of levels: " << n_levels << std::endl;
+        for (int i = 0; i < n_levels; i++) {
+            std::cerr << "Number of cells (level " << i << "): " << triangulation.n_cells(i) << std::endl;
+        }
         return dofs_mg_sparsity(dof_handler);
     }
 
@@ -151,9 +157,9 @@ int main(int argc, char** argv)
             ("help", "produce help message")
             ("degree", po::value<int>()->default_value(1),
              "polynomial degree for finite element")
-            ("levels", po::value<int>()->default_value(2),
+            ("levels", po::value<int>()->default_value(3),
              "number of times to globally refine the mesh")
-            ("multigrid", po::value<bool>()->default_value(false),
+            ("multigrid", po::bool_switch(&multigrid),
              "enable multigrid")
             ("dimension", po::value<int>()->default_value(2),
              "problem dimension")
