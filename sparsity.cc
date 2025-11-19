@@ -50,14 +50,16 @@ dofs_mg_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
     // write_dof_locations(handler, fmt::format("{}_{}d_dof.gnuplot", prefix, handler.dimension));
     std::vector<SparsityPattern> Sd_v(n_levels);
 
-    for (int i = 0; i < n_levels; i++) {
-        write_level_vertex_points(handler, i, fmt::format("{}_{}d_dof_l{}.gnuplot", prefix, handler.dimension, i));
+    for (int level = 0; level < n_levels; level++) {
+        write_level_vertex_points(handler, level, fmt::format("{}_{}d_dof_l{}.gnuplot",
+            prefix, handler.dimension, level));
     }
-    for (int i = 0; i < n_levels; ++i) {
-        auto Sd = make_sparsity_pattern_mg(i, handler);
-        Sd_v[i].copy_from(Sd);
+    for (int level = 0; level < n_levels; ++level) {
+        auto Sd = make_sparsity_pattern_mg(level, handler);
+        Sd_v[level].copy_from(Sd);
 
-        std::ofstream out(fmt::format("{}_{}d_sparsity_l{}.svg", prefix, handler.dimension, i));
+        std::ofstream out(fmt::format("{}_{}d_sparsity_l{}.svg",
+            prefix, handler.dimension, level));
         Sd.print_svg(out);
     }
     return Sd_v;
@@ -91,6 +93,7 @@ public:
         AssertDimension(n_levels, triangulation.n_levels());
     }
 
+    // TODO: MGLevelObject vs. std::vector
     [[maybe_unused]] std::vector<SparsityPattern> dofs()
     {
         // step 2 - degrees of freedom
@@ -102,6 +105,7 @@ public:
         return dofs_sparsity(dof_handler);
     }
 
+    // TODO: MGLevelObject vs. std::vector
     [[maybe_unused]] std::vector<SparsityPattern> dofs_mg()
     {
         // step 2 - degrees of freedom - ordering applied to every level

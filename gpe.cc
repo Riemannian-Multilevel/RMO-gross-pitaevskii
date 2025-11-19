@@ -79,9 +79,8 @@ public:
         // the number of cells increases by a factor of 2^(dim x times)
         // -> n_levels equals the number of refinements + 1
         triangulation.refine_global(n_levels-1);
-        AssertDimension(n_levels, triangulation.n_levels());
 
-        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
+        AssertDimension(n_levels, triangulation.n_levels());
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
 
@@ -109,6 +108,7 @@ public:
         std::vector<GPE_Mass<double> > Mass_v;
         // In-place construction of sparsity pattern
         Mass_v.emplace_back(make_sparsity_pattern(dof_handler));
+        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
         // Step 3 - linear system
@@ -129,20 +129,22 @@ public:
         //std::vector<SparseMatrix<double> > mass_matrix_weighed_v(n_levels);
         //std::vector<SparseMatrix<double> > stiffness_matrix_v(n_levels);
         std::vector<GPE_Mass<double> > Mass_v;
-        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
         // Iterate over cells in every level of the hierarchy
-        for (int i = 0; i < n_levels; i++) {
-            Mass_v.emplace_back(make_sparsity_pattern_mg(i, dof_handler));
+        for (int level = 0; level < n_levels; level++) {
+            Mass_v.emplace_back(make_sparsity_pattern_mg(level, dof_handler));
         }
         // Compute stiffness and weighed mass matrices
-        for (int i = 0; i < n_levels; i++) {
-            // compute values of mass matrix for level i
-            assemble_mass(Mass_v[i].M, dof_handler, i);
-            assemble_mass_weighed(Mass_v[i].Mv, dof_handler, V, i);
+        for (int level = 0; level < n_levels; level++) {
+            std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
+            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
 
-            // compute values of stiffness matrix for level i
-            assemble_stiffness(Mass_v[i].S, dof_handler, i);
+            // compute values of mass matrix for level
+            assemble_mass(Mass_v[level].M, dof_handler, level);
+            assemble_mass_weighed(Mass_v[level].Mv, dof_handler, V, level);
+
+            // compute values of stiffness matrix for level
+            assemble_stiffness(Mass_v[level].S, dof_handler, level);
         }
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
@@ -202,9 +204,9 @@ double energy_norm(const Vector<double>& x, const Matrix& M)
 template <int dim>
 std::tuple<Vector<double>,double,double>
 // TODO: move gradient methods to separate header
-rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
-    const Vector<double>& x0, double beta, double h,
-    SolverMethod solver, int max_iter, int max_iter_inner, double reltol, int level = 0)
+energy_rgd(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
+               const Vector<double>& x0, double beta, double h, unsigned int level,
+               SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
 {
     // TODO: switch to gsl-lite or deal-ii assertions
     assert(h > 0);
@@ -264,7 +266,6 @@ rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handle
     //return std::make_tuple(x, energy_norm(res, Mass.M) / energy_norm(tmp, Mass.M), energy);
 }
 
-
 template <int dim>
 void experiment1(int n_levels, int degree,
     const std::string& left_str, const std::string& right_str,
@@ -298,15 +299,16 @@ void experiment1(int n_levels, int degree,
     const DoFHandler<dim>& dof_handler = Problem.get_dof();
 
     if (multigrid) {
-        for (int i = 0; i < n_levels; i++) {
-            Vector<double> x0(Problem.get_dof().n_dofs(i));
+        for (int level = 0; level < n_levels; level++) {
+            Vector<double> x0(Problem.get_dof().n_dofs(level));
             x0 = 1.0;
 
             std::tuple<Vector<double>, double, double> results;
-            results = rgd_fixed_step<dim>(Mass_v[0], dof_handler, x0, beta, h,
-                                          solver, max_iter, max_iter_inner, reltol, i);
-            std::cerr << fmt::format("Residual, level {}: {}", i, std::get<1>(results)) << std::endl;
-            std::cerr << fmt::format("Energy, level {}: {}", i, std::get<2>(results)) << std::endl;
+            results = energy_rgd<dim>(Mass_v[level], dof_handler, x0, beta, h, level,
+                                          solver, max_iter, max_iter_inner, reltol);
+            std::cerr << fmt::format("Residual, level {}: {}", level, std::get<1>(results)) << std::endl;
+            std::cerr << fmt::format("Energy, level {}: {}", level, std::get<2>(results)) << std::endl;
+            std::cerr << std::endl;
         }
     }
     else {
@@ -315,7 +317,7 @@ void experiment1(int n_levels, int degree,
         x0 = 1.0;
 
         std::tuple<Vector<double>, double, double> results;
-        results = rgd_fixed_step<dim>(Mass_v[0], dof_handler, x0, beta, h,
+        results = energy_rgd<dim>(Mass_v[0], dof_handler, x0, beta, h, invalid_unsigned_int,
                                       solver, max_iter, max_iter_inner, reltol);
         std::cerr << "Residual: " << std::get<1>(results) << std::endl;
         std::cerr << "Energy: " << std::get<2>(results) << std::endl;
@@ -350,7 +352,7 @@ int main(int argc, char* argv[])
                 "left point of the mesh")
             ("right", po::value<std::string>()->default_value(""),
                 "right point of the mesh")
-            ("beta", po::value<double>()->default_value(100),
+            ("beta", po::value<double>()->default_value(100.0),
                 "non-linearity factor")
             ("solver", po::value<std::string>()->default_value("gmres"),
                 "sparse solver (gmres|minres|cg)")

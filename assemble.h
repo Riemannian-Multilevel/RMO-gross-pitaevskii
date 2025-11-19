@@ -11,6 +11,7 @@
 namespace gpe
 {
 using dealii::types::global_dof_index;
+using dealii::numbers::invalid_unsigned_int;
 
 template <int dim, typename CellRange, typename Assembly>
 void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_values,
@@ -48,7 +49,8 @@ template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
 void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::DoFHandler<dim>& dof_handler,
-                     dealii::UpdateFlags flags, Assembly&& assemble_cell, int level = 0)
+                     dealii::UpdateFlags flags, Assembly&& assemble_cell,
+                     unsigned int level = invalid_unsigned_int)
 {
     const auto& element = dof_handler.get_fe();
     // Quadrature formula for the evaluation of the integrals on each cel
@@ -67,7 +69,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     system_matrix = 0;  // system_matrix.reinit(system_matrix.get_sparsity_pattern())
 
     // Iterate over cells / degrees of freedom
-    if (level == 0) {
+    if (level == invalid_unsigned_int) {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs());
         AssertDimension(system_matrix.n(), dof_handler.n_dofs());
 
@@ -87,7 +89,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
 // TODO: optional assembly for right-hand side (separate function?)
 template <int dim>
 void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler, const int level = 0)
+    const dealii::DoFHandler<dim>& dof_handler, unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -109,7 +111,7 @@ void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
 
 template <int dim>
 void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler, const int level = 0)
+    const dealii::DoFHandler<dim>& dof_handler, unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients | dealii::update_JxW_values);
 
@@ -132,7 +134,7 @@ void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
 template <int dim, typename Function>
 void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    Function&& V, const int level = 0)
+    Function&& V, unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
 
@@ -157,7 +159,7 @@ void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
 template <int dim>
 void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::Vector<double>& u, const int level = 0)
+    const dealii::Vector<double>& u, unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
