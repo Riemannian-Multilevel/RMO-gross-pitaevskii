@@ -15,6 +15,7 @@ set(COMMON_HEADERS
         dofs.h
         assemble.h
         lac.h
+        util.h
 )
 deal_ii_initialize_cached_variables()
 
@@ -35,7 +36,7 @@ deal_ii_setup_target(sparsity)
 target_link_libraries(sparsity Boost::program_options fmt::fmt)
 
 # Main GPE program with library and tests
-add_executable(main main.cc)
-target_sources(main PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(main)
-target_link_libraries(main Boost::program_options fmt::fmt)
+add_executable(gpe gpe.cc)
+target_sources(gpe PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(gpe)
+target_link_libraries(gpe Boost::program_options fmt::fmt)

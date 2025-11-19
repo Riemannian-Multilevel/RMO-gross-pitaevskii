@@ -216,7 +216,7 @@ void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q
             renumber_dofs<dim>(dof_handler, order);
             return;
         }
-        // TODO: assumes unique indices in levels[]
+        // TODO: assumes unique indices in levels[] (assertion in debug mode)
         for (int i : levels) {
             renumber_dofs<dim>(dof_handler, order, i);
         }

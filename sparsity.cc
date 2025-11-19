@@ -1,9 +1,9 @@
 #include "mesh.h"
 #include "dofs.h"
+#include "util.h"
 
 #include <fmt/format.h>
 #include <iostream>
-#include <sstream>
 
 #include <boost/program_options.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
@@ -17,18 +17,22 @@ using namespace dealii;
 //! @param handler DoFHandler
 //! @return
 template <int dim>
-SparsityPattern
+// Use vector with one entry for interoperability with dofs_mg_sparsity
+// (SparsityPattern has no copy or move constructors)
+std::vector<SparsityPattern>
 dofs_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
 {
     assert(handler.has_active_dofs());
     write_dof_locations(handler, fmt::format("{}_{}d_dof.gnuplot", prefix, handler.dimension));
+    std::vector<SparsityPattern> Sd_v;
 
     auto Sd = make_sparsity_pattern(handler);
     {
         std::ofstream out(fmt::format("{}_{}d_sparsity.svg", prefix, handler.dimension));
         Sd.print_svg(out);
     }
-    return Sd;
+    Sd_v.emplace_back(Sd);
+    return Sd_v;
 }
 
 //! Retrieve and visualize sparsity pattern for a given DoF ordering
@@ -59,28 +63,79 @@ dofs_mg_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
     return Sd_v;
 }
 
-// TODO: class structure
 template <int dim>
-void make_rectangle(const int degree, const int n_levels, const Point<dim>& left, const Point<dim>& right)
+class GPE_Sparsity
 {
-    Triangulation<dim> triangulation(Triangulation<dim>::limit_level_difference_at_vertices); // multigrid compatibility
-    const FE_Q<dim>    element(degree); // element for defining degrees of freedom (degree 1 -> vertices are DoFs)
-    DoFHandler<dim>    dof_handler(triangulation);  // associate triangulation to DoF object
+public:
+    GPE_Sparsity(const int n_levels_, const int degree,
+        const Point<dim>& left_, const Point<dim>& right_,
+        const Ordering order_ = Ordering::DEFAULT)
+    :
+        n_levels(n_levels_), order(order_), left(left_), right(right_),
+        triangulation(Triangulation<dim>::limit_level_difference_at_vertices), element(degree), dof_handler(triangulation)
+    {}
 
     // generate rectangular domain
-    std::cerr << "Dimension: " << dim << std::endl;
-    dealii::GridGenerator::hyper_rectangle(triangulation, left, right);
-    // the number of cells increases by a factor of 2^(dim x times)
-    triangulation.refine_global(n_levels);
+    void make_rectangle()
+    {
+        std::cerr << "Dimension: " << dim << std::endl;
+        dealii::GridGenerator::hyper_rectangle(triangulation, left, right);
+        // the number of cells increases by a factor of 2^(dim x times)
+        triangulation.refine_global(n_levels);
 
-    // visualize grid
-    grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, exportFormat::GNUPLOT);
-    if (dim == 2) {
-        grid2file(fmt::format("rectangle_{}d.svg",dim), triangulation, exportFormat::SVG);
+        // visualize grid
+        grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, exportFormat::GNUPLOT);
+        if (dim == 2) {
+            grid2file(fmt::format("rectangle_{}d.svg",dim), triangulation, exportFormat::SVG);
+        }
+        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
-    std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
-    std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
-}
+
+    [[maybe_unused]] std::vector<SparsityPattern> dofs()
+    {
+        // step 2 - degrees of freedom
+        distribute_dofs(dof_handler, element, order);
+
+        return dofs_sparsity(dof_handler);
+    }
+
+    [[maybe_unused]] std::vector<SparsityPattern> dofs_mg()
+    {
+        // step 2 - degrees of freedom - ordering applied to every level
+        std::vector<int> levels(n_levels);
+        std::iota(levels.begin(), levels.end(), 1);
+
+        // DoFHandler::distribute_dofs, DoFHandler::distribute_mg_dofs
+        distribute_mg_dofs(dof_handler, element, order, levels);
+
+        return dofs_mg_sparsity(dof_handler);
+    }
+
+    void run(bool multigrid)
+    {
+        this->make_rectangle();
+        if (multigrid)
+            this->dofs_mg();
+        else
+            this->dofs();
+    }
+
+private:
+    // Problem parameters
+    int n_levels;
+    int dimension;
+    Ordering order;
+
+    // Rectangle bounds
+    Point<dim> left;
+    Point<dim> right;
+
+    // Finite element containers
+    Triangulation<dim>   triangulation; // copy stored by dof_handler
+    const FE_Q<dim>      element;       // copy stored by dof_handler
+    DoFHandler<dim>      dof_handler;
+};
 
 int main(int argc, char** argv)
 {
@@ -107,7 +162,7 @@ int main(int argc, char** argv)
             ("left", po::value<std::string>()->default_value(""),
                 "left point of the mesh")
             ("right", po::value<std::string>()->default_value(""),
-                "right point of the mesh")
+                "right point of the mesh");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -137,5 +192,35 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // TODO: populate DoFs according to order, print sparsity patterns
+    switch (dimension) {
+    case 1:
+        {
+            if (left_str.empty() || right_str.empty()) {
+                left_str = "-10"; right_str = "10";
+            }
+            GPE_Sparsity<1> Problem(n_levels, degree, str_to_point<1>(left_str), str_to_point<1>(right_str), order);
+            Problem.run(multigrid);
+        }
+        break;
+    case 2:
+        {
+            if (left_str.empty() || right_str.empty()) {
+                left_str = "-10,-10"; right_str = "10,10";
+            }
+            GPE_Sparsity<2> Problem(n_levels, degree, str_to_point<2>(left_str), str_to_point<2>(right_str), order);
+            Problem.run(multigrid);
+        }
+        break;
+    case 3:
+        {
+            if (left_str.empty() || right_str.empty()) {
+                left_str = "-10,-10,-10"; right_str = "10,10,10";
+            }
+            GPE_Sparsity<3> Problem(n_levels, degree, str_to_point<3>(left_str), str_to_point<3>(right_str), order);
+            Problem.run(multigrid);
+        }
+        break;
+    default:
+        throw std::invalid_argument("dimension must be 1, 2 or 3");
+    }
 }
