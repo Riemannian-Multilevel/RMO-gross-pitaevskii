@@ -33,96 +33,6 @@ Point<dim> str_to_point(const std::string& s, const char sep=',') {
     return p;
 }
 
-//! Retrieve and visualize sparsity pattern for a given DoF ordering
-//! @tparam dim Dimension of the domain
-//! @param handler DoFHandler
-//! @param element Finite element used
-//! @param order DoF renumbering
-//! @return
-template <int dim>
-SparsityPattern
-dofs_sparsity(const DoFHandler<dim>& handler)
-{
-    assert(handler.has_active_dofs());
-    write_dof_locations(handler, fmt::format("rectangle_{}d_dof.gnuplot", handler.dimension));
-
-    auto Sd = make_sparsity_pattern(handler);
-    {
-        std::ofstream out(fmt::format("rectangle_{}d_sparsity.svg", handler.dimension));
-        Sd.print_svg(out);
-    }
-    return Sd;
-}
-
-//! Retrieve and visualize sparsity pattern for a given DoF ordering
-//! @tparam dim Dimension of the domain
-//! @param handler DoFHandler
-//! @param element Finite element used
-//! @param order DoF renumbering
-//! @return
-template <int dim>
-std::vector<SparsityPattern>
-dofs_mg_sparsity(const DoFHandler<dim>& handler)
-{
-    assert(handler.has_level_dofs());
-    const int n_levels = handler.get_triangulation().n_levels();
-
-    // TODO: dof for every level (coloring?)
-    // write_dof_locations(handler, fmt::format("rectangle_{}d_dof.gnuplot", handler.dimension));
-    std::vector<SparsityPattern> Sd_v;
-
-    for (int i = 1; i <= n_levels; i++) {
-        write_level_vertex_points(handler, i, fmt::format("rectangle_{}d_dof_l{}.gnuplot", handler.dimension, i));
-    }
-    for (int i = 1; i <= n_levels; ++i) {
-        auto Sd = make_sparsity_pattern_mg(handler, i);
-        Sd_v.push_back(Sd);
-
-        std::ofstream out(fmt::format("rectangle_{}d_sparsity_l{}.svg", handler.dimension, i));
-        Sd.print_svg(out);
-    }
-    return Sd_v;
-}
-
-// XXX: refactor to options.h
-Ordering select_order(const std::string& order_str)
-{
-    if (order_str == "DEFAULT") {
-        return Ordering::DEFAULT;
-    }
-    else if (order_str == "RANDOM") {
-        return Ordering::RANDOM;
-    }
-    else if (order_str == "CUTHILL_MCKEE") {
-        return Ordering::CUTHILL_MCKEE;
-    }
-    else if (order_str == "KING") {
-        return Ordering::KING;
-    }
-    else if (order_str == "MIN_DEG") {
-        return Ordering::MIN_DEG;
-    }
-    else {
-        throw std::runtime_error(order_str + ": invalid ordering");
-    }
-}
-
-SolverMethod select_solver(const std::string& solver_str)
-{
-    if (solver_str == "GMRES") {
-        return SolverMethod::GMRES;
-    }
-    else if (solver_str == "MINRES") {
-        return SolverMethod::MINRES;
-    }
-    else if (solver_str == "CG") {
-        return SolverMethod::CG;
-    }
-    else {
-        throw std::runtime_error(solver_str + ": invalid solver");
-    }
-}
-
 template <typename T>
 struct GPE_Mass
 {
@@ -161,7 +71,6 @@ public:
     //! @param degree Degree of the Lagrange finite element
     //! @param left_ Left end-point of the rectangular domain
     //! @param right_ Opposite end-point of the rectangular domain
-    //! @param multigrid_ Enable multigrid (default = false)
     //! @param order_ Ordering used for degrees of freedom
     GPE(const int n_levels_, const int degree, const Point<dim>& left_, const Point<dim>& right_,
         const Ordering order_ = Ordering::DEFAULT)
@@ -175,7 +84,7 @@ public:
         dimension = dim;
     }
 
-    void step1(std::string prefix = "domain")
+    void step1()
     {
         // step 1 - make grid
         // rectangle consisting of precisely one cell
@@ -184,12 +93,6 @@ public:
 
         // the number of cells increases by a factor of 2^(dim x times)
         triangulation.refine_global(n_levels);
-
-        // visualize grid
-        grid2file(fmt::format("rectangle_{}d.gnuplot",dimension), triangulation, exportFormat::GNUPLOT);
-        if (dimension == 2) {
-            grid2file(fmt::format("rectangle_{}d.svg",dimension), triangulation, exportFormat::SVG);
-        }
         std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
@@ -216,7 +119,7 @@ public:
     step3(Function&& V) const
     {
         // In-place construction of sparsity pattern
-        GPE_Mass<double> Mass(dofs_sparsity(dof_handler));
+        GPE_Mass<double> Mass(make_sparsity_pattern(dof_handler));
         std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
         // Step 3 - linear system
@@ -237,17 +140,13 @@ public:
         //std::vector<SparseMatrix<double> > mass_matrix_weighed_v(n_levels);
         //std::vector<SparseMatrix<double> > stiffness_matrix_v(n_levels);
         std::vector<GPE_Mass<double> > Mass_v;
+        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
-        // Populate degrees of freedom on every level of the hierarchy
-        {
-            auto sparsity_pattern_v= dofs_mg_sparsity(dof_handler);
-            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
-
-            // Iterate over cells in every level of the hierarchy
-            for (int i = 0; i < n_levels; i++) {
-                Mass_v.emplace_back(sparsity_pattern_v[i]);
-            }
+        // Iterate over cells in every level of the hierarchy
+        for (int i = 0; i < n_levels; i++) {
+            Mass_v.emplace_back(make_sparsity_pattern_mg(i, dof_handler));
         }
+
         // Compute stiffness and weighed mass matrices
         for (int i = 0; i < n_levels; i++) {
             // compute values of mass matrix for level i
@@ -286,7 +185,11 @@ private:
     DoFHandler<dim>      dof_handler;
 };
 
-SparseMatrix<double> sp_copy(const SparseMatrix<double>& M)
+//!
+//! @param M Sparse matrix
+//! @return Copy of input sparse matrix
+SparseMatrix<double>
+sp_copy(const SparseMatrix<double>& M)
 {
     SparseMatrix<double> M_copy;
     M_copy.reinit(M);
@@ -294,23 +197,22 @@ SparseMatrix<double> sp_copy(const SparseMatrix<double>& M)
     return M_copy;
 }
 
-//!
+//! Riemannian gradient descent for the GPE energy minimization
 //! @tparam dim Problem dimension
 //! @param Mass Finite element matrix object (mass, stiffness, weighed mass)
 //! @param dof_handler DoF object for assembling weighed mass matrices
-//! @param element
-//! @param x0
-//! @param beta
-//! @param h
-//! @param solver
-//! @param max_iter
-//! @param max_iter_inner
-//! @param reltol
+//! @param x0 Starting value
+//! @param beta Non-linearity factor for GPE
+//! @param h Step-size for Riemannian gradient descent (RGD)
+//! @param solver Used sparse solver (gmres|minres|cg)
+//! @param max_iter Maximum number of RGD iterations
+//! @param max_iter_inner Maximum number of sparse solver iterations
+//! @param reltol Relative tolerance for sparse solver
 //! @return
 template <int dim>
 std::tuple<Vector<double>,double,double>
 // TODO: step size argument (double)
-rgd_fixed_step(GPE_Mass<double>& Mass, const DoFHandler<dim>& dof_handler,
+rgd_fixed_step(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
     const Vector<double>& x0, double beta, double h,
     SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
 {
@@ -389,7 +291,7 @@ void experiment1(int n_levels, int degree,
 
     // Set up mass and stiffness matrices
     std::vector<GPE_Mass<double> > Mass_v;
-
+    // TODO: consolidate active/multigrid cases
     if (multigrid) {
         Problem.step2_mg();  // degrees of freedom
         Mass_v = Problem.step3_mg(V);

@@ -10,6 +10,12 @@ find_package(deal.II 9.6.0 REQUIRED
 #find_package(fmt CONFIG REQUIRED)
 find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 
+set(COMMON_HEADERS
+        mesh.h
+        dofs.h
+        assemble.h
+        lac.h
+)
 deal_ii_initialize_cached_variables()
 
 # deal.II example programs with modifications
@@ -23,11 +29,13 @@ target_link_libraries(step-2 Boost::program_options)
 add_executable(step-3 step-3.cc)
 deal_ii_setup_target(step-3)
 
+add_executable(sparsity sparsity.cc)
+target_sources(sparsity PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(sparsity)
+target_link_libraries(sparsity Boost::program_options fmt::fmt)
+
 # Main GPE program with library and tests
-add_executable(main main.cc
-        mesh.h
-        dofs.h
-        assemble.h
-        lac.h)
+add_executable(main main.cc)
+target_sources(main PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(main)
 target_link_libraries(main Boost::program_options fmt::fmt)

@@ -19,6 +19,19 @@ enum class SolverMethod
     CG
 };
 
+inline SolverMethod select_solver(const std::string& solver_str)
+{
+    if (solver_str == "GMRES") {
+        return SolverMethod::GMRES;
+    } else if (solver_str == "MINRES") {
+        return SolverMethod::MINRES;
+    } else if (solver_str == "CG") {
+        return SolverMethod::CG;
+    } else {
+        throw std::runtime_error(solver_str + ": invalid solver");
+    }
+}
+
 inline std::string
 to_string(SolverMethod method)
 {

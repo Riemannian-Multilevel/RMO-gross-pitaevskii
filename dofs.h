@@ -27,6 +27,23 @@ enum class Ordering
     MIN_DEG
 };
 
+inline Ordering select_order(const std::string& order_str)
+{
+    if (order_str == "DEFAULT") {
+        return Ordering::DEFAULT;
+    } else if (order_str == "RANDOM") {
+        return Ordering::RANDOM;
+    } else if (order_str == "CUTHILL_MCKEE") {
+        return Ordering::CUTHILL_MCKEE;
+    } else if (order_str == "KING") {
+        return Ordering::KING;
+    } else if (order_str == "MIN_DEG") {
+        return Ordering::MIN_DEG;
+    } else {
+        throw std::runtime_error(order_str + ": invalid ordering");
+    }
+}
+
 //!
 //! @tparam dim
 //! @param dof_handler
@@ -100,12 +117,12 @@ make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler)
 
 //!
 //! @tparam dim Dimension of the domain
-//! @param dof_handler
 //! @param level Level in multigrid hierarchy
+//! @param dof_handler
 //! @return
 template <int dim>
 dealii::SparsityPattern
-make_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler, const unsigned int level)
+make_sparsity_pattern_mg(const unsigned int level, const dealii::DoFHandler<dim>& dof_handler)
 {
     AssertIndexRange(level, dof_handler.get_triangulation().n_global_levels());
     dealii::DynamicSparsityPattern dynamic_sparsity_pattern(

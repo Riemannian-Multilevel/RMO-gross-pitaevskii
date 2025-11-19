@@ -40,9 +40,7 @@ void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_valu
 //! @tparam dim Problem dimension
 //! @tparam Assembly
 //! @param system_matrix Matrix to be populated with entries
-//! @param sparsity_pattern
 //! @param dof_handler DOF object, contains triangulation and finite element
-//! @param element Finite element corresponding to DOF object
 //! @param flags Required update flags, typically set in Assembly object
 //! @param assemble_cell Function object which iterates over local cells
 //! @param level Multigrid level (0 for active cells)
