@@ -12,15 +12,14 @@ namespace gpe
 {
 using dealii::types::global_dof_index;
 
-template <int dim, typename CellIterator, typename Assembly>
-void assemble_system_impl(const CellIterator &begin, const CellIterator &end,
-    dealii::FEValues<dim> &fe_values,
+template <int dim, typename CellRange, typename Assembly>
+void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_values,
     dealii::SparseMatrix<double> &system_matrix,
     dealii::FullMatrix<double> &cell_matrix,
     std::vector<global_dof_index> &local_dof_indices,
     Assembly&& assemble_cell)
 {
-    for (auto cell = begin; cell != end; ++cell) {
+    for (const auto& cell : cells) {
         fe_values.reinit(cell);
         cell_matrix = 0;
         // Same code for active cells, or cells on a level in a multigrid hierarchy
@@ -41,6 +40,7 @@ void assemble_system_impl(const CellIterator &begin, const CellIterator &end,
 //! @tparam dim Problem dimension
 //! @tparam Assembly
 //! @param system_matrix Matrix to be populated with entries
+//! @param sparsity_pattern
 //! @param dof_handler DOF object, contains triangulation and finite element
 //! @param element Finite element corresponding to DOF object
 //! @param flags Required update flags, typically set in Assembly object
@@ -49,9 +49,9 @@ void assemble_system_impl(const CellIterator &begin, const CellIterator &end,
 template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
 void assemble_system(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::FE_Q<dim>& element, dealii::UpdateFlags flags,
-    Assembly&& assemble_cell, int level = 0)
+                     const dealii::DoFHandler<dim>& dof_handler,
+                     const dealii::FE_Q<dim>& element, dealii::UpdateFlags flags,
+                     Assembly&& assemble_cell, int level = 0)
 {
     // Quadrature formula for the evaluation of the integrals on each cel
     const dealii::QGauss<dim> quadrature_formula(element.degree + 1);
@@ -65,19 +65,23 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     dealii::FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
     std::vector<global_dof_index> local_dof_indices(dofs_per_cell);
 
+    // Clear existing matrix entries
+    system_matrix = 0.0;
+
+    // Iterate over cells / degrees of freedom
     if (level == 0) {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs());
         AssertDimension(system_matrix.n(), dof_handler.n_dofs());
 
         // Iterate over active cells
-        assemble_system_impl(dof_handler.begin(), dof_handler.end(),
+        assemble_system_impl(dof_handler.active_cell_iterators(),
             fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell);
     } else {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs(level));
         AssertDimension(system_matrix.n(), dof_handler.n_dofs(level));
 
         // Iterate over multigrid cells on given level
-        assemble_system_impl(dof_handler.begin_mg(level), dof_handler.end_mg(level),
+        assemble_system_impl(dof_handler.mg_cell_iterators_on_level(level),
             fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell);
     }
 }
@@ -97,7 +101,7 @@ void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
             for (const unsigned int i : fe_values.dof_indices()) {
                 for (const unsigned int j : fe_values.dof_indices()) {
                     cell_matrix(i, j) += (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                        fe_values.shape_values(j, q_index) * // phi_j(x_q)
+                        fe_values.shape_value(j, q_index) * // phi_j(x_q)
                         fe_values.JxW(q_index)); // dx
                 }
             }
@@ -166,7 +170,6 @@ void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
     {
         for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
             double u_x = 0.0;
-
             for (const unsigned int i : fe_values.dof_indices()) {
                 u_x += u(local_dof_indices[i]) * fe_values.shape_value(i, q_index);
             }
