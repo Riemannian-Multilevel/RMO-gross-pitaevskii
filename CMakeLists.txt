@@ -27,7 +27,7 @@ deal_ii_setup_target(step-3)
 add_executable(main main.cc
         mesh.h
         dofs.h
-        assembly.h
+        assemble.h
         lac.h)
 deal_ii_setup_target(main)
 target_link_libraries(main Boost::program_options fmt::fmt)

@@ -3,7 +3,7 @@
 //
 #include "mesh.h"
 #include "dofs.h"
-#include "assembly.h"
+#include "assemble.h"
 #include "lac.h"
 
 #include <iostream>
