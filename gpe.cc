@@ -108,8 +108,6 @@ public:
         std::vector<GPE_Mass<double> > Mass_v;
         // In-place construction of sparsity pattern
         Mass_v.emplace_back(make_sparsity_pattern(dof_handler));
-        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
-        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
         // Step 3 - linear system
         // Compute values of mass matrix
@@ -136,9 +134,6 @@ public:
         }
         // Compute stiffness and weighed mass matrices
         for (int level = 0; level < n_levels; level++) {
-            std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
-            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
-
             // compute values of mass matrix for level
             assemble_mass(Mass_v[level].M, dof_handler, level);
             assemble_mass_weighed(Mass_v[level].Mv, dof_handler, V, level);
@@ -149,10 +144,14 @@ public:
         return Mass_v; // XXX: or store in class (mg specialized?) object
     }
 
-    const DoFHandler<dim>& get_dof() const {
+    const DoFHandler<dim>& get_dof() const
+    {
         return dof_handler;
     }
-
+    const Triangulation<dim>& get_triangulation() const
+    {
+        return triangulation;
+    }
 private:
     // Problem parameters
     int n_levels;
@@ -182,11 +181,48 @@ sp_copy(const SparseMatrix<double>& M)
 }
 
 template <typename Matrix>
-double energy_norm(const Vector<double>& x, const Matrix& M)
+[[maybe_unused]] double
+energy_residual(const Vector<double>& x, const Matrix& A_0, const Matrix& M, const Matrix& Mpp, double beta)
 {
-    Vector<double> tmp(x.size());
-    M.vmult(tmp, x);
-    return std::sqrt(x * tmp);
+    SparseMatrix<double> A = sp_copy(A_0);
+    A.add(beta, Mpp);
+
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+    double mass = x * Mx;      // should be ~ 1 (energy constraint)
+
+    Vector<double> Ax(x.size());
+    A.vmult(Ax, x);
+    double lambda = x * Ax;   // Rayleigh quotient
+
+    Vector<double> r(Ax);
+    r.add(-lambda, Mx);        // r = A x - lambda M x
+    //double res = r.l2_norm(); // or M-norm, see below
+
+    Vector<double> Mr(r.size());
+    M.vmult(Mr, r);
+    double res = r * Mr;
+
+    std::cerr << "Mass = " << mass << ", lambda = " << lambda << ", residual = " << res
+        << std::endl;
+    return res;
+}
+
+template <typename Matrix>
+[[maybe_unused]] double
+energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
+{
+    // Compute energy (factor out?)
+    SparseMatrix<double> B = sp_copy(A_0);
+    B *= 0.5;
+    B.add(0.25, Mpp);
+
+    Vector<double> Bx(x.size());
+    B.vmult(Bx, x);
+    double E = x * Bx;
+
+    std::cerr << "Energy = " << E << std::endl;
+    return E;
 }
 
 //! Riemannian gradient descent for the GPE energy minimization
@@ -202,11 +238,11 @@ double energy_norm(const Vector<double>& x, const Matrix& M)
 //! @param reltol Relative tolerance for sparse solver
 //! @return
 template <int dim>
-std::tuple<Vector<double>,double,double>
-// TODO: move gradient methods to separate header
+Vector<double>
+// TODO: move gradient/energy methods to separate header
 energy_rgd(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
-               const Vector<double>& x0, double beta, double h, unsigned int level,
-               SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
+           const Vector<double>& x0, double beta, double h, SolverMethod solver,
+           int max_iter, int max_iter_inner, double reltol, unsigned int level = invalid_unsigned_int)
 {
     // TODO: switch to gsl-lite or deal-ii assertions
     assert(h > 0);
@@ -217,53 +253,44 @@ energy_rgd(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
     A_0.add(1.0, Mass.Mv);
 
     // Begin RGD iteration
-    Vector<double> x(x0);
+    Vector x(x0);
+    // TODO: unnecessary copies g, z
     for (int i = 0; i < max_iter; i++) {
+        // A = A_0 + beta * M_phiphi
         SparseMatrix<double> A = sp_copy(A_0);
         assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler,  x, level);
-        A.add(beta, Mass.Mpp);  // A = A_0 + beta * M_phiphi
+        A.add(beta, Mass.Mpp);
 
-        // Invert A
+        // Solve linear system
         Vector<double> y = solve_sparse(A, x, solver, max_iter_inner, reltol);
         double denom1 = x * y; // x' A^-1 x
         assert(denom1 > 0);
 
+        // z <- A^{-1}x / (x' A^{-1}x)
         Vector<double> z(y);
-        z /= denom1; // A^-1 x / (x' A^-1 x)
-        z.add(-1.0, x); // x - z
+        z /= denom1;
 
-        // Normalize in energy norm
-        x.add(-h, z); // x - h(x - z)
-        Vector<double> tmp(x.size());
-        Mass.M.vmult(tmp, x);
-        double denom2 = std::sqrt(x * tmp);
-        x /= denom2; // (x - h(x - z)) / ||x - h(x-z)||_M
+        // g <- x - z
+        Vector<double> g(x);
+        g.add(-1.0, z);
+
+        // x <- x - h g
+        x.add(-h, g);
+
+        // x <- x / ||x||_M
+        Vector<double> Mx(x.size());
+        Mass.M.vmult(Mx, x);
+        x /= std::sqrt(x * Mx);
     }
 
-    // Compute residual
-    SparseMatrix<double> A = sp_copy(A_0);
-    assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler, x, level);
-
-    Vector<double> res(x.size());
-    A.add(beta, Mass.Mpp);
-    A.vmult(res, x); // A*x
-
-    Vector<double> tmp(x);
-    tmp *= (x*res); // (x'*A*x)*x
-    res.add(-1.0, tmp); // A*x - (x'*A*x)*x
-
-    // Compute energy
-    SparseMatrix<double> B = sp_copy(A_0);
-    B *= 0.5;
-    B.add(0.25, Mass.Mpp);
-
-    Vector<double> tmp1(x.size());
-    B.vmult(tmp1, x);
-    double energy = x * tmp1;
-
-    // TODO: residual in the energy norm
-    return std::make_tuple(x, res.l2_norm() / tmp.l2_norm(), energy);
-    //return std::make_tuple(x, energy_norm(res, Mass.M) / energy_norm(tmp, Mass.M), energy);
+    // TODO: check residual / termination criterium every N steps
+    {
+        // Print energy and related values
+        assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler,  x, level);
+        energy_residual(x, A_0, Mass.M, Mass.Mpp, beta);
+        energy(x, A_0, Mass.Mpp);
+    }
+    return x;
 }
 
 template <int dim>
@@ -297,30 +324,32 @@ void experiment1(int n_levels, int degree,
 
     // Run iteration, update M_phiphi in every step
     const DoFHandler<dim>& dof_handler = Problem.get_dof();
+    const Triangulation<dim>& triangulation = Problem.get_triangulation();
 
     if (multigrid) {
         for (int level = 0; level < n_levels; level++) {
+            std::cerr << "Level: " << level << std::endl;
+            std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
+            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
+
             Vector<double> x0(Problem.get_dof().n_dofs(level));
             x0 = 1.0;
 
-            std::tuple<Vector<double>, double, double> results;
-            results = energy_rgd<dim>(Mass_v[level], dof_handler, x0, beta, h, level,
-                                          solver, max_iter, max_iter_inner, reltol);
-            std::cerr << fmt::format("Residual, level {}: {}", level, std::get<1>(results)) << std::endl;
-            std::cerr << fmt::format("Energy, level {}: {}", level, std::get<2>(results)) << std::endl;
+            Vector<double> x = energy_rgd<dim>(Mass_v[level], dof_handler, x0, beta, h, solver,
+                max_iter, max_iter_inner, reltol, level);
             std::cerr << std::endl;
         }
     }
     else {
+        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+
         // Set initial value
         Vector<double> x0(Problem.get_dof().n_dofs());
         x0 = 1.0;
 
-        std::tuple<Vector<double>, double, double> results;
-        results = energy_rgd<dim>(Mass_v[0], dof_handler, x0, beta, h, invalid_unsigned_int,
-                                      solver, max_iter, max_iter_inner, reltol);
-        std::cerr << "Residual: " << std::get<1>(results) << std::endl;
-        std::cerr << "Energy: " << std::get<2>(results) << std::endl;
+        Vector<double> x = energy_rgd<dim>(Mass_v[0], dof_handler, x0, beta, h, solver,
+            max_iter, max_iter_inner, reltol);
     }
 }
 

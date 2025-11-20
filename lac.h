@@ -78,7 +78,7 @@ solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& sy
         throw std::invalid_argument("Unknown SolverMethod");
     }
 
-    std::cout << solver_control.last_step()
+    std::cerr << solver_control.last_step()
               << " " + to_string(method) + " iterations needed to obtain convergence." << std::endl;
     return solution;
 }
