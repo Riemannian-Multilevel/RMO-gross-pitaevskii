@@ -29,8 +29,8 @@ void output_results(const Vector<double>& solution, const DoFHandler<dim>& dof_h
 {
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
-    data_out.add_data_vector(solution, "solution");
-    data_out.build_patches();
+    data_out.add_data_vector(solution, "psi");
+    data_out.build_patches(dof_handler.get_fe().degree);
 
     std::ofstream output(filename);
     switch (format) {
@@ -39,6 +39,9 @@ void output_results(const Vector<double>& solution, const DoFHandler<dim>& dof_h
         break;
     case exportFormat::VTK:
         data_out.write_vtk(output);
+        break;
+    case exportFormat::VTU:
+        data_out.write_vtu(output);
         break;
     case exportFormat::GNUPLOT:
         data_out.write_gnuplot(output);
@@ -99,8 +102,8 @@ void experiment1(int n_levels, int degree, const std::string& left_str, const st
             Vector<double> x = energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
                 update_mpp_level, x0, beta, h, solver, options, 5);
 
-            output_results(x, dof_handler, exportFormat::VTK,
-                fmt::format("solution_{}d_lvl{}.vtk", dim, level));
+            output_results(x, dof_handler, exportFormat::VTU,
+                fmt::format("solution_{}d_lvl{}.vtu", dim, level));
             std::cerr << std::endl;
         }
     }
@@ -121,7 +124,7 @@ void experiment1(int n_levels, int degree, const std::string& left_str, const st
         Vector<double> x = energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,
                 update_mpp, x0, beta, h, solver, options, 5);
 
-        output_results(x, dof_handler, exportFormat::VTK, fmt::format("solution_{}d.vtk",dim));
+        output_results(x, dof_handler, exportFormat::VTU, fmt::format("solution_{}d.vtu",dim));
     }
 }
 

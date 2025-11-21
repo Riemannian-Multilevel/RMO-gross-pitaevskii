@@ -15,6 +15,7 @@ enum class exportFormat
 {
     SVG,
     VTK,
+    VTU,
     GNUPLOT
 };
 
