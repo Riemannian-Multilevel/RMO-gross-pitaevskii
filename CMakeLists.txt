@@ -22,17 +22,17 @@ set(COMMON_HEADERS
 deal_ii_initialize_cached_variables()
 
 # deal.II example programs with modifications
-add_executable(step-1 step-1.cc)
+add_executable(step-1 examples/step-1.cc)
 deal_ii_setup_target(step-1)
 
-add_executable(step-2 step-2.cc)
+add_executable(step-2 examples/step-2.cc)
 deal_ii_setup_target(step-2)
 target_link_libraries(step-2 Boost::program_options)
 
-add_executable(step-3 step-3.cc)
+add_executable(step-3 examples/step-3.cc)
 deal_ii_setup_target(step-3)
 
-add_executable(step-4 step-4.cc)
+add_executable(step-4 examples/step-4.cc)
 deal_ii_setup_target(step-4)
 
 add_executable(sparsity sparsity.cc)
