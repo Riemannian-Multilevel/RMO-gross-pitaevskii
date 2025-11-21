@@ -1,7 +1,9 @@
 #ifndef GPE_LAC_H
 #define GPE_LAC_H
 
+#include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
+
 #include <deal.II/lac/solver_control.h>
 #include <deal.II/lac/solver_gmres.h>  // for general matrices
 #include <deal.II/lac/solver_cg.h>     // for symmetric positive definite matrices
@@ -11,6 +13,21 @@ namespace gpe
 {
 using dealii::Vector;
 using dealii::SparseMatrix;
+using dealii::SparsityPattern;
+using dealii::Vector;
+using dealii::Point;
+
+//!
+//! @param M Sparse matrix
+//! @return Copy of input sparse matrix
+SparseMatrix<double>
+sp_copy(const SparseMatrix<double>& M)
+{
+    SparseMatrix<double> M_copy;
+    M_copy.reinit(M);
+    M_copy.copy_from(M);
+    return M_copy;
+}
 
 enum class SolverMethod
 {
@@ -50,10 +67,12 @@ to_string(SolverMethod method)
 template <typename PreconditionerType>
 Vector<double>
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
-    const SolverMethod method = SolverMethod::GMRES, const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
+    const SolverMethod method = SolverMethod::GMRES,
+    const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
     const unsigned max_iter = 1000, const double reltol = 1e-6)
 {
     Vector<double> solution(system_rhs.size());
+    // TODO: use M-norm for tolerance?
     dealii::SolverControl solver_control(max_iter, reltol * system_rhs.l2_norm());
 
     switch (method) {

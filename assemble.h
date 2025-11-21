@@ -13,6 +13,7 @@ namespace gpe
 using dealii::types::global_dof_index;
 using dealii::numbers::invalid_unsigned_int;
 
+// TODO: parallelize with WorkStream
 template <int dim, typename CellRange, typename Assembly>
 void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_values,
     dealii::SparseMatrix<double> &system_matrix,
@@ -66,6 +67,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     std::vector<global_dof_index> local_dof_indices(dofs_per_cell);
 
     // Clear existing matrix entries
+    // XXX: optional parameter if (reinit) ... (default true)
     system_matrix = 0;  // system_matrix.reinit(system_matrix.get_sparsity_pattern())
 
     // Iterate over cells / degrees of freedom
@@ -156,6 +158,37 @@ void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
     assemble_system(system_matrix, dof_handler, flags, f_mass_weighed, level);
 }
 
+// A0 = stiffness + mass_weighed
+template <int dim, typename Function>
+void assemble_A0(dealii::SparseMatrix<double>& system_matrix,
+    const dealii::DoFHandler<dim>& dof_handler,
+    Function&& V, unsigned int level = invalid_unsigned_int)
+{
+    dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients
+        | dealii::update_JxW_values | dealii::update_quadrature_points);
+
+    auto f_A0 = [V](const dealii::FEValues<dim>& fe_values,
+        dealii::FullMatrix<double>& cell_matrix, auto&&...)
+    {
+        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
+            dealii::Point<dim> x = fe_values.quadrature_point(q_index);
+
+            for (const unsigned int i : fe_values.dof_indices()) {
+                for (const unsigned int j : fe_values.dof_indices()) {
+                    cell_matrix(i, j) += V(x) * (fe_values.shape_value(i, q_index) * // phi_i(x_q)
+                        fe_values.shape_value(j, q_index) * // phi_j(x_q)
+                        fe_values.JxW(q_index)); // dx
+                    cell_matrix(i, j) += (fe_values.shape_grad(i, q_index) * // grad phi_i(x_q)
+                        fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
+                        fe_values.JxW(q_index)); // dx
+                }
+            }
+        }
+    };
+    assemble_system(system_matrix, dof_handler, flags, f_A0, level);
+}
+
+// TODO: optimizations (symmetry, caching, matrix-free operator)
 template <int dim>
 void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
     const dealii::DoFHandler<dim>& dof_handler,

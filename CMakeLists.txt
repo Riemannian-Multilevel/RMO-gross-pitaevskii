@@ -16,6 +16,8 @@ set(COMMON_HEADERS
         assemble.h
         lac.h
         util.h
+        energy.h
+        gpe.h
 )
 deal_ii_initialize_cached_variables()
 
@@ -30,13 +32,16 @@ target_link_libraries(step-2 Boost::program_options)
 add_executable(step-3 step-3.cc)
 deal_ii_setup_target(step-3)
 
+add_executable(step-4 step-4.cc)
+deal_ii_setup_target(step-4)
+
 add_executable(sparsity sparsity.cc)
 target_sources(sparsity PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(sparsity)
 target_link_libraries(sparsity Boost::program_options fmt::fmt)
 
 # Main GPE program with library and tests
-add_executable(gpe gpe.cc)
-target_sources(gpe PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(gpe)
-target_link_libraries(gpe Boost::program_options fmt::fmt)
+add_executable(main main.cc)
+target_sources(main PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(main)
+target_link_libraries(main Boost::program_options fmt::fmt)
