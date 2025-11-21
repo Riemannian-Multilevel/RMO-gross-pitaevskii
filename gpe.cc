@@ -18,6 +18,7 @@ namespace po = boost::program_options;
 using namespace gpe;
 using namespace dealii;
 
+// TODO: only store M, A_0 and Mpp
 template <typename T>
 struct GPE_Mass
 {
@@ -180,32 +181,40 @@ sp_copy(const SparseMatrix<double>& M)
     return M_copy;
 }
 
-template <typename Matrix>
-[[maybe_unused]] double
-energy_residual(const Vector<double>& x, const Matrix& A_0, const Matrix& M, const Matrix& Mpp, double beta)
+struct GPE_Control
 {
-    SparseMatrix<double> A = sp_copy(A_0);
-    A.add(beta, Mpp);
+    double mass;
+    double lambda;
+    double residual;
+    double rg_norm;
+};
 
+template <typename Matrix>
+void energy_residual(GPE_Control& control, const Vector<double>& x, const Vector<double>& g,
+                     const Matrix& A, const Matrix& M)
+{
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
-    double mass = x * Mx;      // should be ~ 1 (energy constraint)
+    control.mass = x * Mx;      // should be ~ 1 (energy constraint)
 
     Vector<double> Ax(x.size());
     A.vmult(Ax, x);
-    double lambda = x * Ax;   // Rayleigh quotient
+    control.lambda = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
 
     Vector<double> r(Ax);
-    r.add(-lambda, Mx);        // r = A x - lambda M x
+    r.add(-control.lambda, Mx);        // r = A x - lambda M x
     //double res = r.l2_norm(); // or M-norm, see below
 
     Vector<double> Mr(r.size());
     M.vmult(Mr, r);
-    double res = r * Mr;
+    control.residual = std::sqrt(r * Mr);
 
-    std::cerr << "Mass = " << mass << ", lambda = " << lambda << ", residual = " << res
+    Vector<double> Mg(g.size());
+    M.vmult(Mg, g);
+    control.rg_norm = std::sqrt(g * Mg);
+
+    std::cerr << "Mass = " << control.mass << ", lambda = " << control.lambda << ", residual = " << control.residual
         << std::endl;
-    return res;
 }
 
 template <typename Matrix>
@@ -225,6 +234,15 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
     return E;
 }
 
+struct GdOptions
+{
+    double tol_rel;  // relative tolerance for outer loop (residual)
+    double tol_lmb;  // tolerance for rayleigh quotients
+    double tol_eig;  // tolerance for M-residual
+    int max_iter;    // maximum GD iterations
+    int max_inner;   // maximum sparse solver iterations
+};
+
 //! Riemannian gradient descent for the GPE energy minimization
 //! @tparam dim Problem dimension
 //! @param Mass Finite element matrix object (mass, stiffness, weighed mass)
@@ -233,16 +251,15 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
 //! @param beta Non-linearity factor for GPE
 //! @param h Step-size for Riemannian gradient descent (RGD)
 //! @param solver Used sparse solver (gmres|minres|cg)
-//! @param max_iter Maximum number of RGD iterations
-//! @param max_iter_inner Maximum number of sparse solver iterations
-//! @param reltol Relative tolerance for sparse solver
+//! @param options Termination criteria
 //! @return
 template <int dim>
 Vector<double>
 // TODO: move gradient/energy methods to separate header
+//       SolverOptions for inner solve
 energy_rgd(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
            const Vector<double>& x0, double beta, double h, SolverMethod solver,
-           int max_iter, int max_iter_inner, double reltol, unsigned int level = invalid_unsigned_int)
+           const GdOptions& options, int check_every = 5, unsigned int level = invalid_unsigned_int)
 {
     // TODO: switch to gsl-lite or deal-ii assertions
     assert(h > 0);
@@ -254,20 +271,24 @@ energy_rgd(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
 
     // Begin RGD iteration
     Vector x(x0);
+    GPE_Control control{};  // initialize fields to 0
+    PreconditionIdentity precondition{};
+
     // TODO: unnecessary copies g, z
-    for (int i = 0; i < max_iter; i++) {
+    for (int it = 0; it < options.max_iter; it++) {
         // A = A_0 + beta * M_phiphi
         SparseMatrix<double> A = sp_copy(A_0);
         assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler,  x, level);
         A.add(beta, Mass.Mpp);
 
         // Solve linear system
-        Vector<double> y = solve_sparse(A, x, solver, max_iter_inner, reltol);
-        double denom1 = x * y; // x' A^-1 x
-        assert(denom1 > 0);
+        Vector<double> y = solve_sparse(A, x, solver,
+            precondition, options.max_inner, options.tol_rel);
 
         // z <- A^{-1}x / (x' A^{-1}x)
         Vector<double> z(y);
+        double denom1 = x * y; // x' A^-1 x
+        Assert(denom1 > 0, "x' A^{-1} x <= 0");
         z /= denom1;
 
         // g <- x - z
@@ -281,14 +302,13 @@ energy_rgd(GPE_Mass<double>& Mass, const dealii::DoFHandler<dim>& dof_handler,
         Vector<double> Mx(x.size());
         Mass.M.vmult(Mx, x);
         x /= std::sqrt(x * Mx);
-    }
 
-    // TODO: check residual / termination criterium every N steps
-    {
-        // Print energy and related values
-        assemble_mass_phiphi<dim>(Mass.Mpp, dof_handler,  x, level);
-        energy_residual(x, A_0, Mass.M, Mass.Mpp, beta);
-        energy(x, A_0, Mass.Mpp);
+        // Check termination criteria every N steps
+        // TODO: check M-norm residual and rayleigh quotient (control.lambda)
+        if (it % check_every == 0) {
+            GPE_Control control_prev = control;
+            energy_residual(control, x, g, A, Mass.M);
+        }
     }
     return x;
 }
@@ -297,7 +317,7 @@ template <int dim>
 void experiment1(int n_levels, int degree,
     const std::string& left_str, const std::string& right_str,
     double beta, double h, Ordering order, bool multigrid,
-    SolverMethod solver, int max_iter, int max_iter_inner, double reltol)
+    SolverMethod solver, const GdOptions& options)
 {
     // Define potential function
     auto V = [](const Point<dim>& p) {
@@ -335,8 +355,8 @@ void experiment1(int n_levels, int degree,
             Vector<double> x0(Problem.get_dof().n_dofs(level));
             x0 = 1.0;
 
-            Vector<double> x = energy_rgd<dim>(Mass_v[level], dof_handler, x0, beta, h, solver,
-                max_iter, max_iter_inner, reltol, level);
+            Vector<double> x = energy_rgd<dim>(Mass_v[level], dof_handler, x0, beta,
+                h, solver, options, 5, level);
             std::cerr << std::endl;
         }
     }
@@ -348,19 +368,20 @@ void experiment1(int n_levels, int degree,
         Vector<double> x0(Problem.get_dof().n_dofs());
         x0 = 1.0;
 
-        Vector<double> x = energy_rgd<dim>(Mass_v[0], dof_handler, x0, beta, h, solver,
-            max_iter, max_iter_inner, reltol);
+        Vector<double> x = energy_rgd<dim>(Mass_v[0], dof_handler, x0, beta,
+            h, solver, options, 5);
     }
 }
 
 int main(int argc, char* argv[])
 {
-    int degree, n_levels, dimension, max_iter, max_iter_inner;
+    int degree, n_levels, dimension;
     bool multigrid;
     Ordering order;
     std::string left_str, right_str;
     SolverMethod solver;
-    double beta, reltol, step_size;
+    double beta, step_size;
+    GdOptions options{};
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -387,10 +408,14 @@ int main(int argc, char* argv[])
                 "sparse solver (gmres|minres|cg)")
             ("max_iter", po::value<int>()->default_value(25),
                 "maximum number of iterations")
-            ("max_iter_inner", po::value<int>()->default_value(100),
+            ("max_inner", po::value<int>()->default_value(100),
                 "maximum number of iterations for sparse solver")
+            ("eigtol", po::value<double>()->default_value(1e-4),
+                "relative tolerance for M-residual")
             ("reltol", po::value<double>()->default_value(1e-6),
                 "relative tolerance for sparse solver")
+            ("lmbtol", po::value<double>()->default_value(1e-8),
+                "relative tolerance for rayleigh quotient")
             ("step_size", po::value<double>()->default_value(1.0),
                 "step size for RGD");
 
@@ -416,10 +441,12 @@ int main(int argc, char* argv[])
         right_str = vm["right"].as<std::string>();
         beta      = vm["beta"].as<double>();
         solver    = select_solver(solver_str);
-        max_iter  = vm["max_iter"].as<int>();
-        max_iter_inner = vm["max_iter_inner"].as<int>();
-        reltol    = vm["reltol"].as<double>();
         step_size = vm["step_size"].as<double>();
+        options.max_iter  = vm["max_iter"].as<int>();
+        options.max_inner = vm["max_inner"].as<int>();
+        options.tol_rel   = vm["reltol"].as<double>();
+        options.tol_eig   = vm["eigtol"].as<double>();
+        options.tol_lmb   = vm["lmbtol"].as<double>();
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -439,7 +466,7 @@ int main(int argc, char* argv[])
                 left_str = "-10"; right_str = "10";
             }
             experiment1<1>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, multigrid, solver, max_iter, max_iter_inner, reltol);
+                           order, multigrid, solver, options);
         }
         break;
     case 2:
@@ -449,7 +476,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10"; right_str = "10,10";
             }
             experiment1<2>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, multigrid, solver, max_iter, max_iter_inner, reltol);
+                           order, multigrid, solver, options);
         }
         break;
     case 3:
@@ -459,7 +486,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10,-10"; right_str = "10,10,10";
             }
             experiment1<3>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, multigrid, solver, max_iter, max_iter_inner, reltol);
+                           order, multigrid, solver, options);
         }
         break;
     default:

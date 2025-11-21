@@ -47,10 +47,10 @@ to_string(SolverMethod method)
     }
 }
 
-// TODO: preconditioners
-inline Vector<double>
+template <typename PreconditionerType>
+Vector<double>
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
-    const SolverMethod method = SolverMethod::GMRES,
+    const SolverMethod method = SolverMethod::GMRES, const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
     const unsigned max_iter = 1000, const double reltol = 1e-6)
 {
     Vector<double> solution(system_rhs.size());
@@ -60,18 +60,19 @@ solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& sy
     case SolverMethod::GMRES:
         {
             dealii::SolverGMRES solver(solver_control);
-            solver.solve(system_matrix, solution, system_rhs, dealii::PreconditionIdentity());
+            solver.solve(system_matrix, solution, system_rhs, preconditioner);
         }
         break;
     case SolverMethod::MINRES:
         {
             dealii::SolverMinRes solver(solver_control);
-            solver.solve(system_matrix, solution, system_rhs, dealii::PreconditionIdentity());
+            solver.solve(system_matrix, solution, system_rhs, preconditioner);
         }
+        break;
     case SolverMethod::CG:
         {
             dealii::SolverCG solver(solver_control);
-            solver.solve(system_matrix, solution, system_rhs, dealii::PreconditionIdentity());
+            solver.solve(system_matrix, solution, system_rhs, preconditioner);
         }
         break;
     default:
