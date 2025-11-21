@@ -11,40 +11,21 @@
 
 namespace gpe
 {
-enum class exportFormat
-{
-    SVG,
-    VTK,
-    VTU,
-    GNUPLOT
-};
 
 //!
 //! @tparam dim Dimension of the grid
-//! @param s Output file name
+//! @param filename Output file name
 //! @param triangulation Triangulation<> object containing the grid
 //! @param format Output file format
 template <int dim>
-void grid2file(const std::string& s, const dealii::Triangulation<dim>& triangulation,
-               const exportFormat format)
+void grid2file(const std::string& filename, const dealii::Triangulation<dim>& triangulation,
+    const dealii::GridOut::OutputFormat format)
 {
-    std::ofstream out(s);
+    std::ofstream out(filename);
     const dealii::GridOut grid_out;
 
-    switch (format) {
-    case exportFormat::SVG:
-        grid_out.write_svg(triangulation, out);
-        break;
-    case exportFormat::VTK:
-        grid_out.write_vtk(triangulation, out);
-        break;
-    case exportFormat::GNUPLOT:
-        grid_out.write_gnuplot(triangulation, out);
-        break;
-    default:
-        throw std::invalid_argument("unknown format");
-    }
-    std::cout << "Grid written to " + s << std::endl;
+    grid_out.write(triangulation, out, format);
+    std::cout << "Grid written to " + filename << std::endl;
 }
 
 //! Write a VTK file for the 2d grid, colored by refinement
@@ -54,7 +35,7 @@ void grid2file(const std::string& s, const dealii::Triangulation<dim>& triangula
 //! @param triangulation Triangulation<> object containing the grid
 inline void grid2svg(const std::string& s, const dealii::Triangulation<2>& triangulation)
 {
-    grid2file(s, triangulation, exportFormat::SVG);
+    grid2file(s, triangulation, dealii::GridOut::OutputFormat::svg);
 }
 
 } // namespace gpe

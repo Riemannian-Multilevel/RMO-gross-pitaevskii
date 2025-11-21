@@ -86,9 +86,9 @@ public:
         triangulation.refine_global(n_levels-1);
 
         // visualize grid
-        grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, exportFormat::GNUPLOT);
+        grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, GridOut::OutputFormat::gnuplot);
         if (dim == 2) {
-            grid2file(fmt::format("rectangle_{}d.svg",dim), triangulation, exportFormat::SVG);
+            grid2file(fmt::format("rectangle_{}d.svg",dim), triangulation, GridOut::OutputFormat::svg);
         }
         AssertDimension(n_levels, triangulation.n_levels());
     }
@@ -134,7 +134,6 @@ public:
 private:
     // Problem parameters
     int n_levels;
-    int dimension;
     Ordering order;
 
     // Rectangle bounds
