@@ -98,9 +98,7 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 //! @return
 template <int dim, typename Function>
 Vector<double>
-// TODO: move gradient/energy methods to separate header
-//       SolverOptions for inner solve
-//       Take lambda to update Mpp instead of exposing DoFHandler/assemble implementation details
+// TODO: SolverOptions for inner solve
 energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
            Function&& update_mpp, const Vector<double>& x0,
            double beta, double h, SolverMethod solver,

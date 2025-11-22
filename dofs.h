@@ -198,8 +198,11 @@ void distribute_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<di
 template <int dim>
 void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<dim>& element,
                         Ordering order = Ordering::DEFAULT,
-                        const std::vector<int>& levels = {})
+                        const std::vector<bool>& levels = {})
 {
+    if (levels.size()) {
+        AssertDimension(levels.size(), dof_handler.get_triangulation().n_levels());
+    }
     // Distribute degrees of freedom according to (default or other) ordering,
     // such that a basis of V_h can be enumerated in a deterministic way
     dof_handler.distribute_dofs(element);
@@ -210,13 +213,13 @@ void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q
     // Reorder degrees of freedom for improved conditioning of system matrix
     // (default: order vertices, faces, ... by refinement level)
     if (order != Ordering::DEFAULT) {
+        // A level is either reordered, or not (bool vector)
+        for (unsigned i = 0; i < levels.size(); i++) {
+            if (levels[i])
+                renumber_dofs<dim>(dof_handler, order, i);
+        }
         if (levels.empty()) {
             renumber_dofs<dim>(dof_handler, order);
-            return;
-        }
-        // TODO: assumes unique indices in levels[] in range (0,n]
-        for (int i : levels) {
-            renumber_dofs<dim>(dof_handler, order, i);
         }
     }
 }

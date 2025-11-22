@@ -83,8 +83,7 @@ public:
     void dofs_mg()
     {
         // step 2 - degrees of freedom - ordering applied to every level
-        std::vector<int> levels(n_levels);
-        std::iota(levels.begin(), levels.end(), 0);
+        std::vector<bool> levels(n_levels, true);
 
         // DoFHandler::distribute_dofs, DoFHandler::distribute_mg_dofs
         distribute_mg_dofs(dof_handler, element, order, levels);
