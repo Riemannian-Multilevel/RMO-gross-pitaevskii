@@ -70,12 +70,25 @@ void experiment1(int n_levels, int degree, const std::string& left_str, const st
 
     // Set up mass and stiffness matrices
     std::vector<GPE_Mass<double> > Mass_v;
+    AffineConstraints<double> constraints;
+
     if (multigrid) {
+        // Populate degrees of freedom for each level
         Problem.dofs_mg();
-        Mass_v = Problem.assemble_mg(V);
+        // Dirichlet boundary conditions
+        constraints = Problem.boundary();
+
+        for (int level = 0; level < n_levels; level++) {
+            Mass_v.emplace_back(Problem.assemble(V, constraints, level));
+        }
     } else {
+        // Populate degrees of freedom for most refined level
         Problem.dofs();
-        Mass_v = Problem.assemble(V);
+        // Dirichlet boundary conditions
+        // TODO: multigrid degrees of freedom
+        constraints = Problem.boundary();
+
+        Mass_v.emplace_back(Problem.assemble(V, constraints));
     }
 
     // Run iteration, update M_phiphi in every step
@@ -93,13 +106,13 @@ void experiment1(int n_levels, int degree, const std::string& left_str, const st
             x0 = 1.0;
 
             // Function object for updating M_phiphi
-            auto update_mpp_level = [&dof_handler, level](SparseMatrix<double>& Mpp, const Vector<double>& x)
+            auto update_mpp_level = [&dof_handler, &constraints, level](SparseMatrix<double>& Mpp, const Vector<double>& x)
             {
-                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level);
+                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, constraints, level);
             };
-
-            Vector<double> x = energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
-                update_mpp_level, x0, beta, h, solver, options, 5);
+            Vector<double> x = gp_energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
+                                                  update_mpp_level, x0, constraints,
+                                                  beta, h, solver, options, 5);
 
             output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
                 fmt::format("solution_{}d_lvl{}.vtu", dim, level));
@@ -119,9 +132,9 @@ void experiment1(int n_levels, int degree, const std::string& left_str, const st
         {
             assemble_mass_phiphi<dim>(Mpp, dof_handler, x);
         };
-
-        Vector<double> x = energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,
-                update_mpp, x0, beta, h, solver, options, 5);
+        Vector<double> x = gp_energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,
+                                              update_mpp, x0, constraints,
+                                              beta, h, solver, options, 5);
 
         output_results(x, dof_handler, DataOutBase::OutputFormat::vtu, fmt::format("solution_{}d.vtu",dim));
     }
@@ -152,6 +165,8 @@ int main(int argc, char* argv[])
              "problem dimension")
             ("order", po::value<std::string>()->default_value("default"),
              "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
+            ("constraints", po::value<std::string>()->default_value("neumann"),
+                "boundary constraints (neumann|dirichlet)")
             ("left", po::value<std::string>()->default_value(""),
                 "left point of the mesh")
             ("right", po::value<std::string>()->default_value(""),

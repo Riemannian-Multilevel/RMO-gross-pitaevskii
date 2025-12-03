@@ -1,10 +1,13 @@
 #ifndef GPE_GPE_H
 #define GPE_GPE_H
 
+#include <deal.II/numerics/matrix_creator.h>
+
 #include "lac.h"
 #include "mesh.h"
 #include "dofs.h"
 #include "assemble.h"
+#include <deal.II/numerics/vector_tools.h>
 
 namespace gpe
 {
@@ -13,9 +16,9 @@ namespace gpe
 template <typename T>
 struct GPE_Mass
 {
-    explicit GPE_Mass(const dealii::SparsityPattern &sparsity_)
-        // avoid issues with deleted copy/move constructors of SparsityPattern
-        // SparseMatrix has defined move constructors, so we store them directly
+    // avoid issues with deleted copy/move constructors of SparsityPattern
+    // SparseMatrix has defined move constructors, so we store them directly
+    explicit GPE_Mass(const dealii::SparsityPattern& sparsity_)
         : sparsity(std::make_shared<dealii::SparsityPattern>())
     {
         // make an internal copy of the sparsity pattern
@@ -35,7 +38,6 @@ private:
     std::shared_ptr<SparsityPattern> sparsity;
 };
 
-//!
 //! @tparam dim
 template <int dim>
 class GPE
@@ -74,6 +76,20 @@ public:
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
 
+    dealii::AffineConstraints<double>
+    boundary() const
+    {
+        dealii::AffineConstraints<double> constraints;
+        dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+        unsigned int n_components = 1;
+
+        dealii::Functions::ZeroFunction<dim> boundary_function(n_components);
+        dealii::VectorTools::interpolate_boundary_values(dof_handler, 0, boundary_function, constraints);
+
+        constraints.close();
+        return constraints;
+    }
+
     void dofs()
     {
         // step 2 - degrees of freedom
@@ -90,44 +106,21 @@ public:
     }
 
     template <typename Function>
-    std::vector<GPE_Mass<double> >
-    assemble(Function&& V) const
+    GPE_Mass<double>
+    assemble(Function&& V, const dealii::AffineConstraints<double>& constraints,
+        unsigned int level = dealii::numbers::invalid_unsigned_int) const
     {
-        // Use vector with one entry for interoperability with assemble_mg()
-        std::vector<GPE_Mass<double> > Mass_v;
         // In-place construction of sparsity pattern
-        Mass_v.emplace_back(make_sparsity_pattern(dof_handler));
+        // Handles multigrid transparently
+        GPE_Mass<double> Mass(make_sparsity_pattern(dof_handler, level));
 
         // Compute values of mass matrix
-        assemble_mass(Mass_v[0].M, dof_handler);
+        assemble_mass(Mass.M, dof_handler, constraints, level);
 
         // Compute values of stiffness + weighed mass matrix
-        assemble_A0(Mass_v[0].A_0, dof_handler, V);
+        assemble_A0(Mass.A_0, dof_handler, V, constraints, level);
 
-        return Mass_v; // XXX: or store in class object
-    }
-
-    template <typename Function>
-    std::vector<GPE_Mass<double> >
-    assemble_mg(Function&& V) const
-    {
-        // Structure of arrays for multigrid
-        //std::vector<SparseMatrix<double> > mass_matrix_weighed_v(n_levels);
-        //std::vector<SparseMatrix<double> > stiffness_matrix_v(n_levels);
-        std::vector<GPE_Mass<double> > Mass_v;
-
-        // Iterate over cells in every level of the hierarchy
-        for (int level = 0; level < n_levels; level++) {
-            Mass_v.emplace_back(make_sparsity_pattern_mg(level, dof_handler));
-        }
-        for (int level = 0; level < n_levels; level++) {
-            // Compute values of mass matrix for level
-            assemble_mass(Mass_v[level].M, dof_handler, level);
-
-            // Compute values of stiffness + weighed mass matrix
-            assemble_A0(Mass_v[level].A_0, dof_handler, V, level);
-        }
-        return Mass_v; // XXX: or store in class (mg specialized?) object
+        return Mass; // XXX: or store in class object
     }
 
     const dealii::DoFHandler<dim>& get_dof() const

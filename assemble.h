@@ -13,13 +13,14 @@ namespace gpe
 using dealii::types::global_dof_index;
 using dealii::numbers::invalid_unsigned_int;
 
-// TODO: parallelize with WorkStream
+// TODO: parallelize assembly with WorkStream over cells
+//       (distribute to system matrix remains serial)
 template <int dim, typename CellRange, typename Assembly>
 void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_values,
     dealii::SparseMatrix<double> &system_matrix,
     dealii::FullMatrix<double> &cell_matrix,
     std::vector<global_dof_index> &local_dof_indices,
-    Assembly&& assemble_cell)
+    Assembly&& assemble_cell, const dealii::AffineConstraints<double>& constraints)
 {
     for (const auto& cell : cells) {
         fe_values.reinit(cell);
@@ -27,9 +28,15 @@ void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_valu
         // Same code for active cells, or cells on a level in a multigrid hierarchy
         cell->get_active_or_mg_dof_indices(local_dof_indices);
 
-        // Pass on populated DoF indices to assemble M_phiphi
+        // Pass on populated DoF indices to assemble matrix
         assemble_cell(fe_values, cell_matrix, local_dof_indices);
 
+        // Apply affine boundary conditions
+        if (constraints.n_constraints()) {
+            constraints.distribute_local_to_global(cell_matrix, local_dof_indices, system_matrix);
+            continue;
+        }
+        // Unconstrained case (Neumann conditions)
         for (const unsigned int i : fe_values.dof_indices()) {
             for (const unsigned int j : fe_values.dof_indices()) {
                 system_matrix.add(local_dof_indices[i], local_dof_indices[j], cell_matrix(i, j));
@@ -37,7 +44,7 @@ void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_valu
         }
     }
 }
-// TODO: specification of boundary values (Dirichlet or Neumann on part of the boundary)
+
 //! Mass matrix assembly, implementation based on tutorial/step-3
 //! @tparam dim Problem dimension
 //! @tparam Assembly
@@ -46,11 +53,13 @@ void assemble_system_impl(const CellRange& cells, dealii::FEValues<dim> &fe_valu
 //! @param flags Required update flags, typically set in Assembly object
 //! @param assemble_cell Function object which iterates over local cells
 //! @param level Multigrid level (0 for active cells)
+//! @param constraints Affine constraints applied to matrix rows and columns
 template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
 void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::DoFHandler<dim>& dof_handler,
                      dealii::UpdateFlags flags, Assembly&& assemble_cell,
+                     const dealii::AffineConstraints<double>& constraints = dealii::AffineConstraints<double>(),
                      unsigned int level = invalid_unsigned_int)
 {
     const auto& element = dof_handler.get_fe();
@@ -77,21 +86,23 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
 
         // Iterate over active cells
         assemble_system_impl(dof_handler.active_cell_iterators(),
-            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell);
+            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell, constraints);
     } else {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs(level));
         AssertDimension(system_matrix.n(), dof_handler.n_dofs(level));
 
         // Iterate over multigrid cells on given level
         assemble_system_impl(dof_handler.mg_cell_iterators_on_level(level),
-            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell);
+            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell, constraints);
     }
 }
 
 // TODO: optional assembly for right-hand side (separate function?)
 template <int dim>
 void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler, unsigned int level = invalid_unsigned_int)
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::AffineConstraints<double>& constraints = dealii::AffineConstraints<double>(),
+    unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -108,12 +119,14 @@ void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, flags, f_mass, level);
+    assemble_system(system_matrix, dof_handler, flags, f_mass, constraints, level);
 }
 
 template <int dim>
 void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler, unsigned int level = invalid_unsigned_int)
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::AffineConstraints<double>& constraints = dealii::AffineConstraints<double>(),
+    unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients | dealii::update_JxW_values);
 
@@ -130,13 +143,14 @@ void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, flags, f_stiffness, level);
+    assemble_system(system_matrix, dof_handler, flags, f_stiffness, constraints, level);
 }
 
 template <int dim, typename Function>
 void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    Function&& V, unsigned int level = invalid_unsigned_int)
+    Function&& V, const dealii::AffineConstraints<double>& constraints = dealii::AffineConstraints<double>(),
+    unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
 
@@ -155,14 +169,15 @@ void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, flags, f_mass_weighed, level);
+    assemble_system(system_matrix, dof_handler, flags, f_mass_weighed, constraints, level);
 }
 
 // A0 = stiffness + mass_weighed
 template <int dim, typename Function>
 void assemble_A0(dealii::SparseMatrix<double>& system_matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    Function&& V, unsigned int level = invalid_unsigned_int)
+    Function&& V, const dealii::AffineConstraints<double>& constraints = dealii::AffineConstraints<double>(),
+    unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients
         | dealii::update_JxW_values | dealii::update_quadrature_points);
@@ -185,14 +200,15 @@ void assemble_A0(dealii::SparseMatrix<double>& system_matrix,
             }
         }
     };
-    assemble_system(system_matrix, dof_handler, flags, f_A0, level);
+    assemble_system(system_matrix, dof_handler, flags, f_A0, constraints, level);
 }
 
 // TODO: optimizations (symmetry, caching, matrix-free operator)
 template <int dim>
 void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
     const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::Vector<double>& u, unsigned int level = invalid_unsigned_int)
+    const dealii::Vector<double>& u, const dealii::AffineConstraints<double>& constraints = dealii::AffineConstraints<double>(),
+    unsigned int level = invalid_unsigned_int)
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
@@ -216,7 +232,7 @@ void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
             }
         }
     };
-    assemble_system(matrix, dof_handler, flags, f_mass_phiphi, level);
+    assemble_system(matrix, dof_handler, flags, f_mass_phiphi, constraints, level);
 }
 
 } // namespace gpe

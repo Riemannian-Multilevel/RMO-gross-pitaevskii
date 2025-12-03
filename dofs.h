@@ -95,39 +95,32 @@ void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
 //!
 //! @tparam dim Dimension of the domain
 //! @param dof_handler
+//! @param level
 //! @return
 template <int dim>
 dealii::SparsityPattern
-make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler)
+make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
+    unsigned int level = dealii::numbers::invalid_unsigned_int)
 {
+    unsigned int n;
+    if (level != dealii::numbers::invalid_unsigned_int) {
+        // multigrid case
+        n = dof_handler.n_dofs(level);
+    } else {
+        n = dof_handler.n_dofs();
+    }
+
     // Since the bandwidth of the system matrix is unknown beforehand, or
     // with a pessimistic upper bound, we use `DynamicSparsityPattern` to allocate
     // positions and then copy it to CSR format (`SparsityPattern`).
-    dealii::DynamicSparsityPattern dynamic_sparsity_pattern(
-        dof_handler.n_dofs(), dof_handler.n_dofs());
+    dealii::DynamicSparsityPattern dynamic_sparsity_pattern(n, n);
 
-    dealii::DoFTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern);
-
-    dealii::SparsityPattern sparsity_pattern;
-    sparsity_pattern.copy_from(dynamic_sparsity_pattern);
-
-    return sparsity_pattern;
-}
-
-//!
-//! @tparam dim Dimension of the domain
-//! @param level Level in multigrid hierarchy
-//! @param dof_handler
-//! @return
-template <int dim>
-dealii::SparsityPattern
-make_sparsity_pattern_mg(const unsigned int level, const dealii::DoFHandler<dim>& dof_handler)
-{
-    dealii::DynamicSparsityPattern dynamic_sparsity_pattern(
-        dof_handler.n_dofs(level), dof_handler.n_dofs(level));
-
-    // Write the sparsity structure of the matrix belonging to the specified level
-    dealii::MGTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern, level);
+    if (level != dealii::numbers::invalid_unsigned_int) {
+        // multigrid case
+        dealii::MGTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern, level);
+    } else {
+        dealii::DoFTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern);
+    }
 
     dealii::SparsityPattern sparsity_pattern;
     sparsity_pattern.copy_from(dynamic_sparsity_pattern);
@@ -143,7 +136,9 @@ make_sparsity_pattern_mg(const unsigned int level, const dealii::DoFHandler<dim>
 //! @param order A valid member of gpe::Ordering
 //! @param level Ordering for a specified level in multigrid
 template <int dim>
-void renumber_dofs(dealii::DoFHandler<dim>& dof_handler, Ordering order = Ordering::CUTHILL_MCKEE, int level = -1)
+void renumber_dofs(dealii::DoFHandler<dim>& dof_handler,
+    const Ordering order = Ordering::CUTHILL_MCKEE,
+    unsigned int level = dealii::numbers::invalid_unsigned_int)
 {
     // TODO: further orderings for multilevel, check level index range
     switch (order) {
@@ -151,26 +146,26 @@ void renumber_dofs(dealii::DoFHandler<dim>& dof_handler, Ordering order = Orderi
         break;
 
     case Ordering::RANDOM:
-        level == -1
+        level == dealii::numbers::invalid_unsigned_int
             ? dealii::DoFRenumbering::random(dof_handler)
             : dealii::DoFRenumbering::random(dof_handler, level);
         break;
 
     case Ordering::CUTHILL_MCKEE:
         // TODO: use_constraints for global reordering
-        level == -1
+        level == dealii::numbers::invalid_unsigned_int
             ? dealii::DoFRenumbering::Cuthill_McKee(dof_handler, false, false)
             : dealii::DoFRenumbering::Cuthill_McKee(dof_handler, static_cast<unsigned int>(level), false);
         break;
 
     case Ordering::KING:
-        level == -1
+        level == dealii::numbers::invalid_unsigned_int
             ? dealii::DoFRenumbering::boost::king_ordering(dof_handler)
             : throw std::logic_error("KING ordering not implemented for multilevel");
         break;
 
     case Ordering::MIN_DEG:
-        level == -1
+        level == dealii::numbers::invalid_unsigned_int
             ? dealii::DoFRenumbering::boost::minimum_degree(dof_handler)
             : throw std::logic_error("MIN_DEG ordering not implemented for multilevel");
         break;

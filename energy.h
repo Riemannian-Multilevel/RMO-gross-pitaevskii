@@ -89,6 +89,7 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 //! @param M
 //! @param Mpp
 //! @param x0 Starting value
+//! @param constraints
 //! @param beta Non-linearity factor for GPE
 //! @param h Step-size for Riemannian gradient descent (RGD)
 //! @param solver Used sparse solver (gmres|minres|cg)
@@ -99,10 +100,11 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 template <int dim, typename Function>
 Vector<double>
 // TODO: SolverOptions for inner solve
-energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
-           Function&& update_mpp, const Vector<double>& x0,
-           double beta, double h, SolverMethod solver,
-           const GdOptions& options, int check_every = 5)
+gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
+              Function&& update_mpp, const Vector<double>& x0,
+              const dealii::AffineConstraints<double>& constraints,
+              double beta, double h, SolverMethod solver,
+              const GdOptions& options, int check_every = 5)
 {
     Assert(h > 0, dealii::ExcInternalError("Step size must be positive"));
 
@@ -118,9 +120,13 @@ energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Spars
         update_mpp(Mpp, x);
         A.add(beta, Mpp);
 
-        // Solve linear system
+        // Solve linear system (boundary constraints assumed applied to A_0, M, Mpp)
         Vector<double> y = solve_sparse(A, x, solver,
             precondition, options.max_inner, options.tol_inner);
+
+        // Dirichlet boundary conditions for solution
+        // TODO: apply by-level for multigrid case
+        constraints.distribute(y);
 
         // z <- A^{-1}x / (x' A^{-1}x)
         Vector<double> z(y);

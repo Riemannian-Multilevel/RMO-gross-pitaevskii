@@ -13,6 +13,7 @@ namespace gpe
 {
 using dealii::Vector;
 using dealii::SparseMatrix;
+using dealii::FullMatrix;
 using dealii::SparsityPattern;
 using dealii::Vector;
 using dealii::Point;
