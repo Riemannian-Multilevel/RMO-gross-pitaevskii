@@ -77,17 +77,52 @@ public:
     }
 
     dealii::AffineConstraints<double>
-    boundary() const
+    boundary(BoundaryCondition condition, std::set<dealii::types::boundary_id> dirichlet_ids = {0}) const
     {
         dealii::AffineConstraints<double> constraints;
         dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-        unsigned int n_components = 1;
 
-        dealii::Functions::ZeroFunction<dim> boundary_function(n_components);
-        dealii::VectorTools::interpolate_boundary_values(dof_handler, 0, boundary_function, constraints);
+        switch (condition) {
+            case BoundaryCondition::NEUMANN:
+                // Natural boundary conditions
+                break;
 
+            case BoundaryCondition::DIRICHLET:
+                // Dirichlet boundary (zero-valued)
+                dealii::Functions::ZeroFunction<dim> boundary_function(element.n_components());
+
+                for (const auto id: dirichlet_ids) {
+                    dealii::VectorTools::interpolate_boundary_values(dof_handler, id, boundary_function, constraints);
+                }
+                break;
+
+            default:
+                throw std::invalid_argument("Unknown boundary condition");
+        }
         constraints.close();
         return constraints;
+    }
+
+    dealii::MGConstrainedDoFs
+    boundary_mg(BoundaryCondition condition, std::set<dealii::types::boundary_id> dirichlet_ids = {0}) const
+    {
+        dealii::MGConstrainedDoFs mg_constrained_dofs;
+        mg_constrained_dofs.initialize(dof_handler);
+
+        switch (condition) {
+            case BoundaryCondition::NEUMANN:
+                // Natural boundary conditions, hanging nodes only
+                break;
+
+            case BoundaryCondition::DIRICHLET:
+                // Dirichlet boundary (zero-valued)
+                mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, dirichlet_ids);
+                break;
+
+            default:
+                throw std::invalid_argument("Unknown boundary condition");
+        }
+        return mg_constrained_dofs;
     }
 
     void dofs()

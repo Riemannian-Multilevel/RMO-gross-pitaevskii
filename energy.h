@@ -60,8 +60,9 @@ struct GdOptions
     double tol_inner;     // relative tolerance for inner solver
     double tol_lambda;    // tolerance for rayleigh quotients
     double tol_residual;  // tolerance for M-residual
-    int max_iter;    // maximum GD iterations
-    int max_inner;   // maximum sparse solver iterations
+    double step_size;     // fixed step-size used in iteration steps
+    int max_iter;         // maximum GD iterations
+    int max_inner;        // maximum sparse solver iterations
 };
 
 template <typename Matrix>
@@ -89,10 +90,9 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 //! @param M
 //! @param Mpp
 //! @param x0 Starting value
-//! @param constraints
 //! @param beta Non-linearity factor for GPE
-//! @param h Step-size for Riemannian gradient descent (RGD)
 //! @param solver Used sparse solver (gmres|minres|cg)
+//! @param step_size Step-size for Riemannian gradient descent (RGD)
 //! @param update_mpp
 //! @param options Termination criteria
 //! @param check_every Number of iterations after which to check termination criteria
@@ -102,15 +102,13 @@ Vector<double>
 // TODO: SolverOptions for inner solve
 gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
               Function&& update_mpp, const Vector<double>& x0,
-              const dealii::AffineConstraints<double>& constraints,
-              double beta, double h, SolverMethod solver,
-              const GdOptions& options, int check_every = 5)
+              double beta, SolverMethod solver, const GdOptions& options, int check_every = 5)
 {
-    Assert(h > 0, dealii::ExcInternalError("Step size must be positive"));
+    Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
 
     // Begin RGD iteration
     Vector x(x0);
-    GdControl ctrl{};
+    GdControl control{};
     dealii::PreconditionIdentity precondition{};
 
     // TODO: unnecessary copies g, z
@@ -124,10 +122,6 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         Vector<double> y = solve_sparse(A, x, solver,
             precondition, options.max_inner, options.tol_inner);
 
-        // Dirichlet boundary conditions for solution
-        // TODO: apply by-level for multigrid case
-        constraints.distribute(y);
-
         // z <- A^{-1}x / (x' A^{-1}x)
         Vector<double> z(y);
         double denom1 = x * y; // x' A^-1 x
@@ -139,7 +133,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         g.add(-1.0, z);
 
         // x <- x - h g
-        x.add(-h, g);
+        x.add(-options.step_size, g);
 
         // x <- x / ||x||_M
         Vector<double> Mx(x.size());
@@ -149,13 +143,13 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         // Check termination criteria every N steps
         if (it % check_every == 0 || it == options.max_iter - 1) {
             // Update control structure
-            if (energy_terminate_iteration(M, A, x, g, ctrl, options)) {
+            if (energy_terminate_iteration(M, A, x, g, control, options)) {
                 break;
             }
             // Print newly computed values
             const double E = energy(x, A_0, Mpp);
-            std::cerr << "Mass = " << ctrl.mass << ", lambda = " << ctrl.lmb
-                      << ", residual = " << ctrl.residual << ", energy = " << E
+            std::cerr << "Mass = " << control.mass << ", lambda = " << control.lmb
+                      << ", residual = " << control.residual << ", energy = " << E
                       << std::endl;
         }
     }

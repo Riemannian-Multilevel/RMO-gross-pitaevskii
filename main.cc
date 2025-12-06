@@ -51,92 +51,158 @@ void output_hdf5(const Vector<double>& solution, const DoFHandler<dim>& dof_hand
 }
 
 template <int dim>
-void experiment1(int n_levels, int degree, const std::string& left_str, const std::string& right_str,
-    double beta, double h, Ordering order, bool multigrid,
-    SolverMethod solver, const GdOptions& options)
+struct GPE_Options
 {
-    // Define potential function
-    auto V = [](const Point<dim>& p) {
-        typename Point<dim>::value_type out = 0.0;
-        for (unsigned d = 0; d < dim; d++) {
-            out += p[d]*p[d];
-        }
-        return out;
-    };
+    Point<dim> left;    // bottom-left rectangle point
+    Point<dim> right;   // upper-right rectangle point
+    double beta;        // non-linearity factor
+    int n_levels;       // number of levels in finite element discretization
+    int degree;         // degree of shape functions
+    Ordering order;     // ordering for degrees of freedom
+};
 
-    // Set up grid
-    GPE<dim> Problem(n_levels, degree, str_to_point<dim>(left_str), str_to_point<dim>(right_str), order);
-    Problem.make_rectangle();
-
-    // Set up mass and stiffness matrices
-    std::vector<GPE_Mass<double> > Mass_v;
-    AffineConstraints<double> constraints;
-
-    if (multigrid) {
-        // Populate degrees of freedom for each level
-        Problem.dofs_mg();
-        // Dirichlet boundary conditions
-        constraints = Problem.boundary();
-
-        for (int level = 0; level < n_levels; level++) {
-            Mass_v.emplace_back(Problem.assemble(V, constraints, level));
-        }
-    } else {
-        // Populate degrees of freedom for most refined level
-        Problem.dofs();
-        // Dirichlet boundary conditions
-        // TODO: multigrid degrees of freedom
-        constraints = Problem.boundary();
-
-        Mass_v.emplace_back(Problem.assemble(V, constraints));
+template <int dim, typename Function>
+class Experiment1
+{
+public:
+    Experiment1(GPE_Options<dim> options_) : options(options_)
+    {
+        problem = GPE<dim>(options.n_levels, options.degree,
+            options.left, options.right, options.order);
+        problem.make_rectangle();
     }
 
-    // Run iteration, update M_phiphi in every step
-    const DoFHandler<dim>& dof_handler = Problem.get_dof();
-    const Triangulation<dim>& triangulation = Problem.get_triangulation();
+    // Populate matrix A_0 = M_V + S, fixed for iteration on every level,
+    // based on imposed boundary conditions
+    void mass_matrix(Function&& V, BoundaryCondition condition)
+    {
+        problem.dofs();
+        Mass_v.clear();
 
-    if (multigrid) {
-        for (int level = 0; level < n_levels; level++) {
+        constraints = problem.boundary(condition, {0});
+        Mass_v.emplace_back(problem.assemble(V, constraints));
+    }
+
+    void mass_matrix_mg(Function&& V, BoundaryCondition condition)
+    {
+        problem.dofs_mg();
+        Mass_v.clear();
+
+        mg_constrained_dofs = problem.boundary_mg(condition, {0});
+
+        for (int level = 0; level < options.n_levels; level++) {
+            const AffineConstraints<double> &level_constraints =
+                mg_constrained_dofs.get_level_constraints(level);
+
+            Mass_v.emplace_back(problem.assemble(V, level_constraints, level));
+        }
+    }
+
+    Vector<double>
+    solve(const Vector<double>& x0, GdOptions& options_rgd, SolverMethod solver) const
+    {
+        Vector<double> x(x0);
+        const DoFHandler<dim>& dof_handler = problem.get_dofs();
+        const Triangulation<dim>& triangulation = dof_handler.get_triangulation();
+
+        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+
+        // Function object for updating M_phiphi + boundary conditions
+        auto update_mpp = [this, dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
+        {
+            constraints.distribute(x);
+
+            assemble_mass_phiphi<dim>(Mpp, dof_handler, x, constraints);
+        };
+
+        x = gp_energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,update_mpp, x0,
+                               options.beta, solver, options_rgd, 5);
+
+        output_results(x, dof_handler, DataOutBase::OutputFormat::vtu, fmt::format("solution_{}d.vtu",dim));
+        return x;
+    }
+
+    // TODO: MGLevelObject (minimal and maximum level)
+    std::vector<Vector<double> >
+    solve_mg(const std::vector<Vector<double> >& x0_v, GdOptions& options_rgd, SolverMethod solver) const
+    {
+        std::vector<Vector<double> > x_v;
+        const DoFHandler<dim>& dof_handler = problem.get_dofs();
+        const Triangulation<dim>& triangulation = dof_handler.get_triangulation();
+
+        for (int level = 0; level < options.n_levels; level++) {
             std::cerr << "Level: " << level << std::endl;
             std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
             std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
 
-            // Set initial value on level
-            Vector<double> x0(Problem.get_dof().n_dofs(level));
-            x0 = 1.0;
+            // Retrieve initial value on level
+            Vector<double> x0(x0_v[level]);
 
-            // Function object for updating M_phiphi
-            auto update_mpp_level = [&dof_handler, &constraints, level](SparseMatrix<double>& Mpp, const Vector<double>& x)
+            // Function object for updating M_phiphi + boundary conditions
+            auto update_mpp_level = [this, level, dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
             {
-                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, constraints, level);
+                // Impose boundary conditions on current solution (dirichlet + hanging nodes)
+                const AffineConstraints<double> &level_constraints = mg_constrained_dofs.get_level_constraints(level);
+                level_constraints.distribute(x);
+
+                // Update weighed matrix for current solution
+                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level_constraints, level);
             };
-            Vector<double> x = gp_energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
-                                                  update_mpp_level, x0, constraints,
-                                                  beta, h, solver, options, 5);
+
+            auto x = gp_energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
+                update_mpp_level, x0, options.beta, solver, options_rgd, 5);
+            x_v.emplace_back(x);
 
             output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
                 fmt::format("solution_{}d_lvl{}.vtu", dim, level));
             std::cerr << std::endl;
         }
+        return x_v;
     }
-    else {
-        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
-        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
 
-        // Set initial value
-        Vector<double> x0(Problem.get_dof().n_dofs());
-        x0 = 1.0;
-
-        // Function object for updating M_phiphi
-        auto update_mpp = [&dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
-        {
-            assemble_mass_phiphi<dim>(Mpp, dof_handler, x);
+    void run(bool multigrid)
+    {
+        // Define potential function
+        auto V = [](const Point<dim>& p) {
+            typename Point<dim>::value_type out = 0.0;
+            for (unsigned d = 0; d < dim; d++) {
+                out += p[d]*p[d];
+            }
+            return out;
         };
-        Vector<double> x = gp_energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,
-                                              update_mpp, x0, constraints,
-                                              beta, h, solver, options, 5);
+    }
 
-        output_results(x, dof_handler, DataOutBase::OutputFormat::vtu, fmt::format("solution_{}d.vtu",dim));
+private:
+    // Problem parameters
+    GPE_Options<dim> options;
+    GPE<dim> problem;
+
+    // Mass matrices for every level
+    std::vector<GPE_Mass<double> > Mass_v;
+
+    // Constraints for active level or multigrid
+    AffineConstraints<double> constraints;
+    MGConstrainedDoFs mg_constrained_dofs;
+};
+
+// TODO: Write experiment inside a class
+template <int dim>
+void experiment1(GPE_Options<dim> options_gpe, BoundaryCondition boundary, bool multigrid,
+    SolverMethod solver, const GdOptions& options_rgd)
+{
+
+
+    // TODO: options
+
+    // Run iteration, update M_phiphi in every step
+    if (multigrid) {
+
+
+
+    } else {
+
+
     }
 }
 
@@ -149,6 +215,7 @@ int main(int argc, char* argv[])
     SolverMethod solver;
     double beta, step_size;
     GdOptions options{};
+    BoundaryCondition boundary;
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -198,10 +265,13 @@ int main(int argc, char* argv[])
         }
         auto order_str = vm["order"].as<std::string>();
         auto solver_str = vm["solver"].as<std::string>();
+        auto boundary_str = vm["boundary"].as<std::string>();
         std::transform(order_str.begin(), order_str.end(), order_str.begin(), ::toupper);
         std::transform(solver_str.begin(), solver_str.end(), solver_str.begin(), ::toupper);
+        std::transform(boundary_str.begin(), boundary_str.end(), boundary_str.begin(), ::toupper);
 
         order     = select_order(order_str);
+        boundary  = select_boundary_condition(boundary_str);
         degree    = vm["degree"].as<int>();
         n_levels  = vm["levels"].as<int>();
         dimension = vm["dimension"].as<int>();
@@ -235,7 +305,7 @@ int main(int argc, char* argv[])
                 left_str = "-10"; right_str = "10";
             }
             experiment1<1>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, multigrid, solver, options);
+                           order, boundary, multigrid, solver, options);
         }
         break;
     case 2:
@@ -245,7 +315,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10"; right_str = "10,10";
             }
             experiment1<2>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, multigrid, solver, options);
+                           order, boundary, multigrid, solver, options);
         }
         break;
     case 3:
@@ -255,7 +325,7 @@ int main(int argc, char* argv[])
                 left_str = "-10,-10,-10"; right_str = "10,10,10";
             }
             experiment1<3>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, multigrid, solver, options);
+                           order, boundary, multigrid, solver, options);
         }
         break;
     default:

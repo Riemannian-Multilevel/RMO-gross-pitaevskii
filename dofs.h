@@ -27,21 +27,43 @@ enum class Ordering
     MIN_DEG
 };
 
-inline Ordering select_order(const std::string& order_str)
+inline Ordering
+select_order(const std::string& order_str)
 {
     if (order_str == "DEFAULT") {
         return Ordering::DEFAULT;
-    } else if (order_str == "RANDOM") {
-        return Ordering::RANDOM;
-    } else if (order_str == "CUTHILL_MCKEE") {
-        return Ordering::CUTHILL_MCKEE;
-    } else if (order_str == "KING") {
-        return Ordering::KING;
-    } else if (order_str == "MIN_DEG") {
-        return Ordering::MIN_DEG;
-    } else {
-        throw std::runtime_error(order_str + ": invalid ordering");
     }
+    if (order_str == "RANDOM") {
+        return Ordering::RANDOM;
+    }
+    if (order_str == "CUTHILL_MCKEE") {
+        return Ordering::CUTHILL_MCKEE;
+    }
+    if (order_str == "KING") {
+        return Ordering::KING;
+    }
+    if (order_str == "MIN_DEG") {
+        return Ordering::MIN_DEG;
+    }
+    throw std::runtime_error(order_str + ": invalid ordering");
+}
+
+enum class BoundaryCondition
+{
+    NEUMANN,
+    DIRICHLET
+};
+
+inline BoundaryCondition
+select_boundary_condition(const std::string& boundary_str)
+{
+    if (boundary_str == "NEUMANN") {
+        return BoundaryCondition::NEUMANN;
+    }
+    if (boundary_str == "DIRICHLET") {
+        return BoundaryCondition::DIRICHLET;
+    }
+    throw std::runtime_error(boundary_str + ": invalid boundary condition");
 }
 
 //!
