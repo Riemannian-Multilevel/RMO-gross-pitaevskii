@@ -61,7 +61,7 @@ struct GPE_Options
     Ordering order;     // ordering for degrees of freedom
 };
 
-template <int dim, typename Function>
+template <int dim>
 class Experiment1
 {
 public:
@@ -74,6 +74,7 @@ public:
 
     // Populate matrix A_0 = M_V + S, fixed for iteration on every level,
     // based on imposed boundary conditions
+    template <typename Function>
     void mass_matrix(Function&& V, BoundaryCondition condition)
     {
         problem.dofs();
@@ -81,8 +82,11 @@ public:
 
         constraints = problem.boundary(condition, {0});
         Mass_v.emplace_back(problem.assemble(V, constraints));
+
+        has_active_constraints = true;
     }
 
+    template <typename Function>
     void mass_matrix_mg(Function&& V, BoundaryCondition condition)
     {
         problem.dofs_mg();
@@ -91,78 +95,64 @@ public:
         mg_constrained_dofs = problem.boundary_mg(condition, {0});
 
         for (int level = 0; level < options.n_levels; level++) {
-            const AffineConstraints<double> &level_constraints =
-                mg_constrained_dofs.get_level_constraints(level);
+            const AffineConstraints<double> &level_constraints = mg_constrained_dofs.get_level_constraints(level);
 
             Mass_v.emplace_back(problem.assemble(V, level_constraints, level));
         }
+        has_mg_constraints = true;
     }
 
     Vector<double>
-    solve(const Vector<double>& x0, GdOptions& options_rgd, SolverMethod solver) const
+    solve(const Vector<double>& x0, GdOptions options_rgd, SolverMethod solver) const
     {
-        Vector<double> x(x0);
+        Assert(has_active_constraints, ExcInternalError("Experiment1::solve(): call mass_matrix() before solve()."));
+        AssertDimension(Mass_v.size(), 1);
+
         const DoFHandler<dim>& dof_handler = problem.get_dofs();
-        const Triangulation<dim>& triangulation = dof_handler.get_triangulation();
 
-        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
-        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
-
-        // Function object for updating M_phiphi + boundary conditions
-        auto update_mpp = [this, dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
+        // Update weighed matrix for current solution + boundary conditions
+        auto update_mpp = [this, &dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
         {
-            constraints.distribute(x);
-
-            assemble_mass_phiphi<dim>(Mpp, dof_handler, x, constraints);
+            assemble_mass_phiphi<dim>(Mpp, &dof_handler, x, constraints);
         };
 
-        x = gp_energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,update_mpp, x0,
-                               options.beta, solver, options_rgd, 5);
-
-        output_results(x, dof_handler, DataOutBase::OutputFormat::vtu, fmt::format("solution_{}d.vtu",dim));
-        return x;
+        // Iteration for solving non-linear eigenvalue problem + boundary conditions
+        return gp_energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,
+                                  update_mpp, x0, constraints, options.beta,
+                                  solver, options_rgd, 5);
     }
 
-    // TODO: MGLevelObject (minimal and maximum level)
-    std::vector<Vector<double> >
-    solve_mg(const std::vector<Vector<double> >& x0_v, GdOptions& options_rgd, SolverMethod solver) const
+    // TODO: more or less the same as solve()
+    Vector<double>
+    solve_mg(Vector<double> x0, GdOptions options_rgd, SolverMethod solver, int level) const
     {
-        std::vector<Vector<double> > x_v;
+        Assert(has_mg_constraints,  ExcInternalError("Experiment1::solve_mg(): call mass_matrix_mg() before solve_mg()."));
+        AssertIndexRange(level, options.n_levels);
+        AssertDimension(Mass_v.size(), options.n_levels);
+
+        // Impose boundary conditions on current solution (dirichlet + hanging nodes)
         const DoFHandler<dim>& dof_handler = problem.get_dofs();
-        const Triangulation<dim>& triangulation = dof_handler.get_triangulation();
+        const AffineConstraints<double> &level_constraints = mg_constrained_dofs.get_level_constraints(level);
 
-        for (int level = 0; level < options.n_levels; level++) {
-            std::cerr << "Level: " << level << std::endl;
-            std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
-            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
+        // Update weighed matrix for current solution + boundary conditions
+        auto update_mpp_level = [this, &dof_handler, level, &level_constraints](
+            SparseMatrix<double>& Mpp, const Vector<double>& x)
+        {
+            assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level_constraints, level);
+        };
 
-            // Retrieve initial value on level
-            Vector<double> x0(x0_v[level]);
-
-            // Function object for updating M_phiphi + boundary conditions
-            auto update_mpp_level = [this, level, dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
-            {
-                // Impose boundary conditions on current solution (dirichlet + hanging nodes)
-                const AffineConstraints<double> &level_constraints = mg_constrained_dofs.get_level_constraints(level);
-                level_constraints.distribute(x);
-
-                // Update weighed matrix for current solution
-                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level_constraints, level);
-            };
-
-            auto x = gp_energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
-                update_mpp_level, x0, options.beta, solver, options_rgd, 5);
-            x_v.emplace_back(x);
-
-            output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
-                fmt::format("solution_{}d_lvl{}.vtu", dim, level));
-            std::cerr << std::endl;
-        }
-        return x_v;
+        // Iteration for solving non-linear eigenvalue problem + boundary conditions
+        return gp_energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
+                                  update_mpp_level, x0, level_constraints,
+                                  options.beta, solver, options_rgd, 5);
     }
 
-    void run(bool multigrid)
+    // Begin iteration with constant starting value and squared potential x -> x^2
+    void run(bool multigrid, double x0d, GdOptions options_rgd, SolverMethod solver) const
     {
+        const auto dof_handler = problem.get_dof();
+        const auto triangulation = problem.get_triangulation();
+
         // Define potential function
         auto V = [](const Point<dim>& p) {
             typename Point<dim>::value_type out = 0.0;
@@ -171,6 +161,46 @@ public:
             }
             return out;
         };
+
+        if (multigrid) {
+            // Initialize mass and stiffness matrix
+            if (!has_mg_constraints) {
+                this-mass_matrix_mg();
+            }
+            for (int level = 0; level < options.n_levels; level++) {
+                std::cerr << "Level: " << level << std::endl;
+                std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
+                std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
+
+                // Define starting value
+                Vector<double> x0(dof_handler.n_dofs(level));
+                x0 = x0d;
+                // Run gradient descent for multigrid level
+                Vector<double> x = this->solve_mg(x0, options_rgd, solver, level);
+
+                // Plot results
+                output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
+                    fmt::format("solution_{}d_lvl{}.vtu", dim, level));
+                std::cerr << std::endl;
+            }
+        }
+        else {
+            if (!has_active_constraints) {
+                this-mass_matrix();
+            }
+            std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
+            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+
+            // Define starting value
+            Vector<double> x0(dof_handler.n_dofs());
+            x0 = x0d;
+            // Run gradient descent
+            Vector<double> x = this->solve(x0, options_rgd, solver);
+
+            // Plot results
+            output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
+                fmt::format("solution_{}d.vtu",dim));
+        }
     }
 
 private:
@@ -184,27 +214,11 @@ private:
     // Constraints for active level or multigrid
     AffineConstraints<double> constraints;
     MGConstrainedDoFs mg_constrained_dofs;
+
+    // Consistency checks
+    bool has_mg_constraints = false;
+    bool has_active_constraints = false;
 };
-
-// TODO: Write experiment inside a class
-template <int dim>
-void experiment1(GPE_Options<dim> options_gpe, BoundaryCondition boundary, bool multigrid,
-    SolverMethod solver, const GdOptions& options_rgd)
-{
-
-
-    // TODO: options
-
-    // Run iteration, update M_phiphi in every step
-    if (multigrid) {
-
-
-
-    } else {
-
-
-    }
-}
 
 int main(int argc, char* argv[])
 {

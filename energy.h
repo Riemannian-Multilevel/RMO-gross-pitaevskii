@@ -86,13 +86,13 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 
 //! Riemannian gradient descent for the GPE energy minimization
 //! @tparam dim Problem dimension
-//! @param A_0
-//! @param M
-//! @param Mpp
+//! @param A_0 Sum of (potential) weighed mass matrix and stiffness matrix
+//! @param M Mass matrix
+//! @param Mpp Weighed mass matrix, updated in every iteration step
 //! @param x0 Starting value
+//! @param constraints Object for applying FE constraints to the solution
 //! @param beta Non-linearity factor for GPE
 //! @param solver Used sparse solver (gmres|minres|cg)
-//! @param step_size Step-size for Riemannian gradient descent (RGD)
 //! @param update_mpp
 //! @param options Termination criteria
 //! @param check_every Number of iterations after which to check termination criteria
@@ -102,7 +102,9 @@ Vector<double>
 // TODO: SolverOptions for inner solve
 gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
               Function&& update_mpp, const Vector<double>& x0,
-              double beta, SolverMethod solver, const GdOptions& options, int check_every = 5)
+              const dealii::AffineConstraints<double>& constraints,
+              double beta, SolverMethod solver,
+              const GdOptions& options, int check_every = 5)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
 
@@ -112,9 +114,15 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     dealii::PreconditionIdentity precondition{};
 
     // TODO: unnecessary copies g, z
+    //       dealii::Function with value() and grad_value()
     for (int it = 0; it < options.max_iter; it++) {
         // A = A_0 + beta * M_phiphi
         SparseMatrix<double> A = sp_copy(A_0);
+
+        // Apply constraints to incumbent solution
+        constraints.distribute(x);
+
+        // Update mass matrix
         update_mpp(Mpp, x);
         A.add(beta, Mpp);
 
