@@ -77,9 +77,14 @@ public:
     }
 
     const dealii::DoFHandler<dim>&
-        get_dof() const
+        get_dofs() const
     {
         return dof_handler;
+    }
+    const dealii::MGConstrainedDoFs&
+        get_mg_dofs() const
+    {
+        return mg_constrained_dofs;
     }
     const dealii::Triangulation<dim>&
         get_triangulation() const

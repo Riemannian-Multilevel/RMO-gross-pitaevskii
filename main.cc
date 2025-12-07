@@ -6,6 +6,8 @@
 #include "util.h"
 
 #include <deal.II/numerics/data_out.h>
+#include <deal.II/multigrid/mg_transfer.h>
+#include <deal.II/numerics/fe_field_function.h>
 #include <iostream>
 #include <fmt/format.h>
 
@@ -84,12 +86,12 @@ public:
     void matrix(Function&& V, LevelMatrix& lm) const
     {
         // Construct sparsity pattern
-        lm.reinit(make_sparsity_pattern(problem.get_dof()));
+        lm.reinit(make_sparsity_pattern(problem.get_dofs()));
 
         // Assemble matrix + boundary conditions
         const AffineConstraints<double>& constraints = problem.get_constraints();
-        assemble_mass(lm.M, problem.get_dof(), constraints);
-        assemble_A0(lm.A0, problem.get_dof(), V, constraints);
+        assemble_mass(lm.M, problem.get_dofs(), constraints);
+        assemble_A0(lm.A0, problem.get_dofs(), V, constraints);
     }
 
     // Begin iteration with constant starting value
@@ -97,7 +99,7 @@ public:
     [[maybe_unused]] Vector<double>
     run(Function&& V, const double x0d, GdOptions options_rgd, SolverMethod solver, int n_check_res = 5) const
     {
-        const DoFHandler<dim>& dof_handler = problem.get_dof();
+        const DoFHandler<dim>& dof_handler = problem.get_dofs();
         const Triangulation<dim>& triangulation = problem.get_triangulation();
 
         // Compute solution on most refined (active) level
@@ -130,7 +132,11 @@ public:
     void output(const Vector<double>& x)
     {
         using DataOutBase::OutputFormat::vtu;
-        output_results(x, problem.get_dof(), vtu, fmt::format("solution_{}d.vtu", dim));
+        output_results(x, problem.get_dofs(), vtu, fmt::format("solution_{}d.vtu", dim));
+    }
+    const DoFHandler<dim>& get_dofs() const
+    {
+        return problem.get_dofs();
     }
 
 private:
@@ -141,14 +147,21 @@ private:
 
 // TODO: inherit from GPE base class
 template <int dim>
-class GPE_Solve_MG
+class GPE_Solve_MR
 {
 public:
-    GPE_Solve_MG(Point<dim> left_, Point<dim> right_, double beta_, const GPE_Options& options_)
-        : problem(left_, right_, options_), beta(beta_)
+    GPE_Solve_MR(Point<dim> left_, Point<dim> right_, double beta_, const GPE_Options& options_,
+        unsigned int min_level_ = 0,
+        unsigned int max_level_ = numbers::invalid_unsigned_int)
+    :
+        problem(left_, right_, options_), beta(beta_), min_level(min_level_), max_level(max_level_)
     {
         problem.make_rectangle();
         problem.dofs_mg();
+
+        if (max_level == numbers::invalid_unsigned_int) {
+            max_level = problem.get_triangulation().n_global_levels();
+        }
     }
 
     template <typename Function>
@@ -157,43 +170,66 @@ public:
         AssertIndexRange(level, problem.get_triangulation().n_global_levels());
 
         // Initialize sparsity pattern and compute entries (level)
-        const DoFHandler<dim>& dof_handler = problem.get_dof();
+        const DoFHandler<dim>& dof_handler = problem.get_dofs();
         lm.reinit(make_sparsity_pattern(dof_handler, level));
 
         const AffineConstraints<double>& level_constraints = problem.get_level_constraints(level);
-        assemble_mass(lm.M, problem.get_dof(), level_constraints, level);
-        assemble_A0(lm.A0, problem.get_dof(), V, level_constraints, level);
+        assemble_mass(lm.M, problem.get_dofs(), level_constraints, level);
+        assemble_A0(lm.A0, problem.get_dofs(), V, level_constraints, level);
     }
 
     template <typename Function>
-    [[maybe_unused]] std::vector<Vector<double> >
+    [[maybe_unused]] MGLevelObject<Vector<double>>
     run(Function&& V, const double x0d, GdOptions options_rgd, SolverMethod solver, int n_check_res = 5) const
     {
         const Triangulation<dim>& triangulation = problem.get_triangulation();
-        const unsigned int n_levels = triangulation.n_global_levels();
+        const DoFHandler<dim>& dof_handler = problem.get_dofs();
+        //const unsigned int n_levels = triangulation.n_global_levels();
 
         // FE matrices for every multigrid level
-        std::vector<LevelMatrix> lm_v(n_levels);
+        //std::vector<LevelMatrix> lm_v(n_levels);
+        MGLevelObject<LevelMatrix> lm_v(min_level, max_level-1);  // inclusive range
 
-        for (unsigned int level = 0; level < n_levels; ++level) {
+        for (unsigned int level = min_level; level < max_level; ++level) {
             this->matrix(V, lm_v[level], level);
         }
 
-        // Iterate over levels
-        std::vector<Vector<double> > x_v(n_levels);
-        const DoFHandler<dim>& dof_handler = problem.get_dof();
+        // Build transfer operators
+        MGTransferPrebuilt<Vector<double> > mg_transfer(problem.get_mg_dofs());
+        mg_transfer.build(dof_handler);
 
-        for (unsigned int level = 0; level < n_levels; level++) {
+        // Iterate over levels
+        MGLevelObject<Vector<double> > x_v(min_level, max_level-1);
+        //std::vector<Vector<double> > x_v(n_levels);
+
+        for (unsigned int level = min_level; level < max_level; level++) {
             std::cerr << "Level: " << level << std::endl;
             std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
             std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
+
+            // Update weighed matrix for current solution + boundary conditions
+            const AffineConstraints<double>& level_constraints = problem.get_level_constraints(level);
 
             // Define starting value
             Vector<double> x0(dof_handler.n_dofs(level));
             x0 = x0d;
 
-            // Update weighed matrix for current solution + boundary conditions
-            const AffineConstraints<double>& level_constraints = problem.get_level_constraints(level);
+            // if (level == min_level) {
+            //     // Constant value on coarsest level
+            //     x0 = x0d;
+            // }
+            // else if (level+1 < max_level) {
+            //     // Linear interpolation of solution on previous level
+            //     mg_transfer.prolongate(level, x0, x_v[level-1]);
+            //
+            //     // Apply fine level constraints
+            //     level_constraints.distribute(x0);
+            //
+            //     // Renormalize in M-norm
+            //     Vector<double> Mx0(x0.size());
+            //     lm_v[level].M.vmult(Mx0, x0);
+            //     x0 /= std::sqrt(x0 * Mx0);
+            // }
 
             auto update_mpp_level = [&dof_handler, level, &level_constraints](
                 SparseMatrix<double>& Mpp, const Vector<double>& x)
@@ -213,11 +249,17 @@ public:
     {
 
     }
+    const DoFHandler<dim>& get_dofs() const
+    {
+        return problem.get_dofs();
+    }
 
 private:
     // Problem parameters
     GPE<dim> problem;
     double beta;
+
+    unsigned int min_level, max_level;
 };
 
 // Example potential function (later: potential.h, different functions)
@@ -234,26 +276,41 @@ public:
     }
 };
 
-// Put it all together
+// Put it all together:
+// 1. single level RGD
 template <int dim>
-void package(Point<dim> left, Point<dim> right, double beta, GPE_Options opt_gpe, GdOptions opt_rgd,
-    SolverMethod solver, bool multigrid)
+void package(std::string left_str, std::string right_str, double beta,
+    GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver)
+{
+    Square<dim> V;
+    GPE_Solve<dim> GS(str_to_point<dim>(left_str), str_to_point<dim>(right_str), beta, opt_gpe);
+
+    auto res = GS.run(V, 1.0, opt_rgd, solver);
+    GS.output(res);
+}
+
+// 2. multiresolution RGD
+template <int dim>
+void package_MR(std::string left_str, std::string right_str, double beta,
+    GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
+{
+    Square<dim> V;
+    GPE_Solve_MR<dim> GSM(str_to_point<dim>(left_str), str_to_point<dim>(right_str),
+        beta, opt_gpe, min_level, max_level);
+
+    auto res_mg = GSM.run(V, 1.0, opt_rgd, solver);
+    // TODO: output results
+    // dof_handler on mg vectors requires special treatment (add_mg_data_vector())
+}
+
+// 3. multilevel RGD (Nash)
+template <int dim>
+void package_MG(std::string left_str, std::string right_str, double beta,
+    GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
 {
     Square<dim> V;
 
-    if (multigrid) {
-        GPE_Solve_MG<dim> GSM(left, right, beta, opt_gpe);
-        auto res_mg = GSM.run(V, 1.0, opt_rgd, solver);
-
-        // TODO: output results
-        // dof_handler on mg vectors requires special treatment (add_mg_data_vector())
-    }
-    else {
-        GPE_Solve<dim> GS(left, right, beta, opt_gpe);
-        auto res = GS.run(V, 1.0, opt_rgd, solver);
-
-        // TODO: output results
-    }
+    // TODO
 }
 
 int main(int argc, char* argv[])
@@ -264,6 +321,7 @@ int main(int argc, char* argv[])
     GdOptions    opt_rgd{};
     GPE_Options  opt_gpe{};
     double beta;
+    int min_level, max_level;
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -290,18 +348,22 @@ int main(int argc, char* argv[])
                 "non-linearity factor")
             ("solver", po::value<std::string>()->default_value("gmres"),
                 "sparse solver (gmres|minres|cg)")
-            ("max_iter", po::value<int>()->default_value(25),
+            ("max-iter", po::value<int>()->default_value(25),
                 "maximum number of iterations")
-            ("max_inner", po::value<int>()->default_value(100),
+            ("max-inner", po::value<int>()->default_value(100),
                 "maximum number of iterations for sparse solver")
-            ("tol_residual", po::value<double>()->default_value(1e-4),
+            ("tol-residual", po::value<double>()->default_value(1e-4),
                 "tolerance for M-residual")
-            ("tol_inner", po::value<double>()->default_value(1e-6),
+            ("tol-inner", po::value<double>()->default_value(1e-6),
                 "tolerance for sparse solver, relative to right-hand side")
-            ("tol_lambda", po::value<double>()->default_value(1e-8),
+            ("tol-lambda", po::value<double>()->default_value(1e-8),
                 "tolerance for rayleigh quotient")
-            ("step_size", po::value<double>()->default_value(1.0),
-                "step size for RGD");
+            ("step-size", po::value<double>()->default_value(1.0),
+                "step size for RGD")
+            ("min-level", po::value<int>()->default_value(0),
+                "minimal level for multigrid")
+            ("max-level", po::value<int>()->default_value(0),
+                "maximal level for multigrid");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -326,6 +388,9 @@ int main(int argc, char* argv[])
         opt_gpe.degree    = vm["degree"].as<int>();
         opt_gpe.n_levels  = vm["levels"].as<int>();
         opt_gpe.dimension = vm["dimension"].as<int>();
+        min_level = vm["min-level"].as<int>();
+        max_level = vm["max-level"].as<int>();
+        max_level = max_level == 0 ? opt_gpe.n_levels : max_level;
 
         // Domain parameters
         multigrid = vm["multigrid"].as<bool>();
@@ -333,12 +398,12 @@ int main(int argc, char* argv[])
         right_str = vm["right"].as<std::string>();
 
         // Gradient descent parameters
-        opt_rgd.step_size    = vm["step_size"].as<double>();
-        opt_rgd.max_iter     = vm["max_iter"].as<int>();
-        opt_rgd.max_inner    = vm["max_inner"].as<int>();
-        opt_rgd.tol_inner    = vm["tol_inner"].as<double>();
-        opt_rgd.tol_residual = vm["tol_residual"].as<double>();
-        opt_rgd.tol_lambda   = vm["tol_lambda"].as<double>();
+        opt_rgd.step_size    = vm["step-size"].as<double>();
+        opt_rgd.max_iter     = vm["max-iter"].as<int>();
+        opt_rgd.max_inner    = vm["max-inner"].as<int>();
+        opt_rgd.tol_inner    = vm["tol-inner"].as<double>();
+        opt_rgd.tol_residual = vm["tol-residual"].as<double>();
+        opt_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
         solver = select_solver(solver_str);
         beta   = vm["beta"].as<double>();
     }
@@ -359,7 +424,8 @@ int main(int argc, char* argv[])
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10"; right_str = "10";
             }
-            package<1>(str_to_point<1>(left_str), str_to_point<1>(right_str), beta, opt_gpe, opt_rgd, solver, multigrid);
+            multigrid ? package_MR<1>(left_str, right_str, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                      : package<1>(left_str, right_str, beta, opt_gpe, opt_rgd, solver);
         }
         break;
     case 2:
@@ -368,7 +434,8 @@ int main(int argc, char* argv[])
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10,-10"; right_str = "10,10";
             }
-            package<2>(str_to_point<2>(left_str), str_to_point<2>(right_str), beta, opt_gpe, opt_rgd, solver, multigrid);
+            multigrid ? package_MR<2>(left_str, right_str, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                      : package<2>(left_str, right_str, beta, opt_gpe, opt_rgd, solver);
         }
         break;
     case 3:
@@ -377,7 +444,8 @@ int main(int argc, char* argv[])
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10,-10,-10"; right_str = "10,10,10";
             }
-            package<3>(str_to_point<3>(left_str), str_to_point<3>(right_str), beta, opt_gpe, opt_rgd, solver, multigrid);
+            multigrid ? package_MR<3>(left_str, right_str, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                      : package<3>(left_str, right_str, beta, opt_gpe, opt_rgd, solver);
         }
         break;
     default:

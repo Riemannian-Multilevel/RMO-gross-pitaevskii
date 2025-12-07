@@ -275,7 +275,6 @@ make_boundary(dealii::DoFHandler<dim>& dof_handler, BoundaryCondition bc,
                 dealii::VectorTools::interpolate_boundary_values(dof_handler, id, boundary_function, constraints);
             }
             break;
-
         default:
             throw std::invalid_argument("Unknown boundary condition");
     }
