@@ -50,166 +50,191 @@ void output_hdf5(const Vector<double>& solution, const DoFHandler<dim>& dof_hand
     data_out.write_hdf5_parallel(data_filter, filename_h5, MPI_COMM_WORLD);
 }
 
-template <int dim>
 struct GPE_Options
 {
-    Point<dim> left;    // bottom-left rectangle point
-    Point<dim> right;   // upper-right rectangle point
-    double beta;        // non-linearity factor
-    int n_levels;       // number of levels in finite element discretization
-    int degree;         // degree of shape functions
-    Ordering order;     // ordering for degrees of freedom
+    double beta;            // non-linearity factor
+    int dimension;          // dimension of domain
+    int n_levels;           // number of levels in finite element discretization
+    int degree;             // degree of shape functions
+    Ordering order;         // ordering for degrees of freedom
+    BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
+};
+
+// SparsityPattern objects need to have the same lifetime as SparseMatrix ones
+struct LevelMatrix
+{
+    void reinit(const SparsityPattern& sparsity)
+    {
+        sp.copy_from(sparsity);
+        M.reinit(sp);
+        A0.reinit(sp);
+        Mpp.reinit(sp);
+    }
+
+    SparsityPattern sp;
+    SparseMatrix<double> M;
+    SparseMatrix<double> A0;
+    SparseMatrix<double> Mpp;
 };
 
 template <int dim>
-class Experiment1
+class GPE_Solve
 {
 public:
-    Experiment1(GPE_Options<dim> options_) : options(options_)
+    GPE_Solve(Point<dim> left_, Point<dim> right_, const GPE_Options& options_)
+        : problem(left_, right_, options_.n_levels, options_.degree, options_.order),
+          options(options_)
     {
-        problem = GPE<dim>(options.n_levels, options.degree,
-            options.left, options.right, options.order);
         problem.make_rectangle();
+        AssertDimension(problem.get_triangulation().n_global_levels(), options.n_levels);
     }
 
-    // Populate matrix A_0 = M_V + S, fixed for iteration on every level,
-    // based on imposed boundary conditions
-    template <typename Function>
-    void mass_matrix(Function&& V, BoundaryCondition condition)
+    // TODO: move to gpe.h
+    void boundary()
     {
         problem.dofs();
-        Mass_v.clear();
-
-        constraints = problem.boundary(condition, {0});
-        Mass_v.emplace_back(problem.assemble(V, constraints));
-
+        constraints = problem.boundary(options.bc, {0});
         has_active_constraints = true;
     }
 
-    template <typename Function>
-    void mass_matrix_mg(Function&& V, BoundaryCondition condition)
+    // TODO: move to gpe.h
+    void boundary_mg()
     {
         problem.dofs_mg();
-        Mass_v.clear();
-
-        mg_constrained_dofs = problem.boundary_mg(condition, {0});
-
-        for (int level = 0; level < options.n_levels; level++) {
-            const AffineConstraints<double> &level_constraints = mg_constrained_dofs.get_level_constraints(level);
-
-            Mass_v.emplace_back(problem.assemble(V, level_constraints, level));
-        }
+        mg_constrained_dofs = problem.boundary_mg(options.bc, {0});
         has_mg_constraints = true;
     }
 
-    Vector<double>
-    solve(const Vector<double>& x0, GdOptions options_rgd, SolverMethod solver) const
+    // Populate matrix A_0 = M_V + S based on boundary conditions
+    template <typename Function>
+    void matrix(Function&& V, LevelMatrix& lm) const
     {
-        Assert(has_active_constraints, ExcInternalError("Experiment1::solve(): call mass_matrix() before solve()."));
-        AssertDimension(Mass_v.size(), 1);
+        // Initialize sparsity pattern and compute entries
+        lm.reinit(problem.sparsity());
 
-        const DoFHandler<dim>& dof_handler = problem.get_dofs();
-
-        // Update weighed matrix for current solution + boundary conditions
-        auto update_mpp = [this, &dof_handler](SparseMatrix<double>& Mpp, const Vector<double>& x)
-        {
-            assemble_mass_phiphi<dim>(Mpp, &dof_handler, x, constraints);
-        };
-
-        // Iteration for solving non-linear eigenvalue problem + boundary conditions
-        return gp_energy_rgd<dim>(Mass_v[0].A_0, Mass_v[0].M, Mass_v[0].Mpp,
-                                  update_mpp, x0, constraints, options.beta,
-                                  solver, options_rgd, 5);
+        assemble_mass(lm.M, problem.get_dof(), constraints);
+        assemble_A0(lm.A0, problem.get_dof(), V, constraints);
     }
 
-    // TODO: more or less the same as solve()
-    Vector<double>
-    solve_mg(Vector<double> x0, GdOptions options_rgd, SolverMethod solver, int level) const
+    template <typename Function>
+    void matrix_mg(Function&& V, LevelMatrix& lm, unsigned int level) const
     {
-        Assert(has_mg_constraints,  ExcInternalError("Experiment1::solve_mg(): call mass_matrix_mg() before solve_mg()."));
-        AssertIndexRange(level, options.n_levels);
-        AssertDimension(Mass_v.size(), options.n_levels);
+        const unsigned n_levels = problem.get_triangulation().n_global_levels();
+        AssertIndexRange(level, n_levels);
 
-        // Impose boundary conditions on current solution (dirichlet + hanging nodes)
-        const DoFHandler<dim>& dof_handler = problem.get_dofs();
-        const AffineConstraints<double> &level_constraints = mg_constrained_dofs.get_level_constraints(level);
+        // Initialize sparsity pattern and compute entries (level)
+        const AffineConstraints<double>& level_constraints = mg_constrained_dofs.get_level_constraints(level);
+        lm.reinit(problem.sparsity(level));
+
+        assemble_mass(lm.M, problem.get_dof(), level_constraints, level);
+        assemble_A0(lm.A0, problem.get_dof(), V, level_constraints, level);
+    }
+
+    // TODO: fix output to iterate only over level cells (mg)
+    void output()
+    {
+        // output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
+        //                     fmt::format("solution_{}d_lvl{}.vtu", dim, level));
+    }
+
+    void output(unsigned int)
+    {
+
+    }
+
+    // Begin iteration with constant starting value
+    template <typename Function>
+    [[maybe_unused]] Vector<double>
+    run(Function&& V, double x0d, GdOptions options_rgd, SolverMethod solver) const
+    {
+        Assert(has_active_constraints, ExcInternalError("Experiment1::run(): call boundary() before run()."));
+
+        const DoFHandler<dim>& dof_handler = problem.get_dof();
+        const Triangulation<dim>& triangulation = problem.get_triangulation();
+        const AffineConstraints<double>& active_constraints = constraints;
+
+        // Compute solution on most refined (active) level
+        std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+
+        // Define starting value
+        Vector<double> x0(dof_handler.n_dofs());
+        x0 = x0d;
+
+        // Populate matrices
+        LevelMatrix lm;
+        matrix(V, lm);
 
         // Update weighed matrix for current solution + boundary conditions
-        auto update_mpp_level = [this, &dof_handler, level, &level_constraints](
+        auto update_mpp = [&dof_handler, &active_constraints](
             SparseMatrix<double>& Mpp, const Vector<double>& x)
         {
-            assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level_constraints, level);
+            assemble_mass_phiphi<dim>(Mpp, dof_handler, x, active_constraints);
         };
 
-        // Iteration for solving non-linear eigenvalue problem + boundary conditions
-        return gp_energy_rgd<dim>(Mass_v[level].A_0, Mass_v[level].M, Mass_v[level].Mpp,
-                                  update_mpp_level, x0, level_constraints,
-                                  options.beta, solver, options_rgd, 5);
+        // Run gradient descent + enforce boundary conditions
+        Vector<double> x = gp_energy_rgd<dim>(lm.A0, lm.M, lm.Mpp,
+            update_mpp, x0, constraints, options.beta,
+            solver, options_rgd, 5);
+        return x;
     }
 
-    // Begin iteration with constant starting value and squared potential x -> x^2
-    void run(bool multigrid, double x0d, GdOptions options_rgd, SolverMethod solver) const
+    template <typename Function>
+    [[maybe_unused]] std::vector<Vector<double> >
+    run_mg(Function&& V, double x0d, GdOptions options_rgd, SolverMethod solver) const
     {
-        const auto dof_handler = problem.get_dof();
-        const auto triangulation = problem.get_triangulation();
+        Assert(has_mg_constraints,  ExcInternalError("Experiment1::run_mg(): call boundary_mg() before run)mg()."));
 
-        // Define potential function
-        auto V = [](const Point<dim>& p) {
-            typename Point<dim>::value_type out = 0.0;
-            for (unsigned d = 0; d < dim; d++) {
-                out += p[d]*p[d];
-            }
-            return out;
-        };
+        const DoFHandler<dim>& dof_handler = problem.get_dof();
+        const Triangulation<dim>& triangulation = problem.get_triangulation();
+        const unsigned int n_levels = triangulation.n_global_levels();
 
-        if (multigrid) {
-            // Initialize mass and stiffness matrix
-            if (!has_mg_constraints) {
-                this-mass_matrix_mg();
-            }
-            for (int level = 0; level < options.n_levels; level++) {
-                std::cerr << "Level: " << level << std::endl;
-                std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
-                std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
+        // FE matrices for every multigrid level
+        std::vector<LevelMatrix> lm_v(n_levels);
 
-                // Define starting value
-                Vector<double> x0(dof_handler.n_dofs(level));
-                x0 = x0d;
-                // Run gradient descent for multigrid level
-                Vector<double> x = this->solve_mg(x0, options_rgd, solver, level);
-
-                // Plot results
-                output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
-                    fmt::format("solution_{}d_lvl{}.vtu", dim, level));
-                std::cerr << std::endl;
-            }
+        for (unsigned int level = 0; level < n_levels; ++level) {
+            matrix_mg(V, lm_v[level], level);
         }
-        else {
-            if (!has_active_constraints) {
-                this-mass_matrix();
-            }
-            std::cerr << "Number of cells: " << triangulation.n_active_cells() << std::endl;
-            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+
+        // Iterate over levels
+        std::vector<Vector<double> > x_v(n_levels);
+
+        for (unsigned int level = 0; level < n_levels; level++) {
+            std::cerr << "Level: " << level << std::endl;
+            std::cerr << "Number of cells: " << triangulation.n_cells(level) << std::endl;
+            std::cerr << "Number of degrees of freedom: " << dof_handler.n_dofs(level) << std::endl;
 
             // Define starting value
-            Vector<double> x0(dof_handler.n_dofs());
+            Vector<double> x0(dof_handler.n_dofs(level));
             x0 = x0d;
-            // Run gradient descent
-            Vector<double> x = this->solve(x0, options_rgd, solver);
 
-            // Plot results
-            output_results(x, dof_handler, DataOutBase::OutputFormat::vtu,
-                fmt::format("solution_{}d.vtu",dim));
+            // Update weighed matrix for current solution + boundary conditions
+            const AffineConstraints<double>& level_constraints = mg_constrained_dofs.get_level_constraints(level);
+
+            auto update_mpp_level = [&dof_handler, level, &level_constraints](
+                SparseMatrix<double>& Mpp, const Vector<double>& x)
+            {
+                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level_constraints, level);
+            };
+
+            // Gradient descent + enforce boundary conditions
+            x_v[level] = gp_energy_rgd<dim>(lm_v[level].A0, lm_v[level].M, lm_v[level].Mpp,
+                update_mpp_level, x0, level_constraints,
+                options.beta, solver, options_rgd, 5);
+            std::cerr << std::endl;
         }
+        return x_v;
+    }
+
+    const GPE<dim>& get_problem() const
+    {
+        return problem;
     }
 
 private:
     // Problem parameters
-    GPE_Options<dim> options;
     GPE<dim> problem;
-
-    // Mass matrices for every level
-    std::vector<GPE_Mass<double> > Mass_v;
+    GPE_Options options;
 
     // Constraints for active level or multigrid
     AffineConstraints<double> constraints;
@@ -220,16 +245,47 @@ private:
     bool has_active_constraints = false;
 };
 
+// Example potential function (later: potential.h, different functions)
+template <int dim>
+class Square
+{
+public:
+    double operator()(const Point<dim>& p) const {
+        typename Point<dim>::value_type out = 0.0;
+        for (unsigned d = 0; d < dim; d++) {
+            out += p[d]*p[d];
+        }
+        return out;
+    }
+};
+
+// Put it all together
+template <int dim>
+void package(Point<dim> left, Point<dim> right, GPE_Options opt_gpe, GdOptions opt_rgd,
+    SolverMethod solver, bool multigrid)
+{
+    GPE_Solve<dim> GS(left, right, opt_gpe);
+    Square<dim> V;
+
+    if (multigrid) {
+        GS.boundary_mg();
+        auto res_mg = GS.run_mg(V, 1.0, opt_rgd, solver);
+        // TODO: output results
+        // dof_handler on mg vectors requires special treatment (add_mg_data_vector())
+    } else {
+        GS.boundary();
+        auto res = GS.run(V, 1.0, opt_rgd, solver);
+        // TODO: output results
+    }
+}
+
 int main(int argc, char* argv[])
 {
-    int degree, n_levels, dimension;
-    bool multigrid;
-    Ordering order;
-    std::string left_str, right_str;
+    bool         multigrid;
+    std::string  left_str, right_str, order_str, solver_str, boundary_str;
     SolverMethod solver;
-    double beta, step_size;
-    GdOptions options{};
-    BoundaryCondition boundary;
+    GdOptions    opt_rgd{};
+    GPE_Options  opt_gpe{};
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -246,7 +302,7 @@ int main(int argc, char* argv[])
              "problem dimension")
             ("order", po::value<std::string>()->default_value("default"),
              "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
-            ("constraints", po::value<std::string>()->default_value("neumann"),
+            ("boundary", po::value<std::string>()->default_value("neumann"),
                 "boundary constraints (neumann|dirichlet)")
             ("left", po::value<std::string>()->default_value(""),
                 "left point of the mesh")
@@ -277,29 +333,36 @@ int main(int argc, char* argv[])
             std::cout << desc << "\n";
             return 0;
         }
-        auto order_str = vm["order"].as<std::string>();
-        auto solver_str = vm["solver"].as<std::string>();
-        auto boundary_str = vm["boundary"].as<std::string>();
+        order_str = vm["order"].as<std::string>();
         std::transform(order_str.begin(), order_str.end(), order_str.begin(), ::toupper);
+
+        solver_str = vm["solver"].as<std::string>();
         std::transform(solver_str.begin(), solver_str.end(), solver_str.begin(), ::toupper);
+
+        boundary_str = vm["boundary"].as<std::string>();
         std::transform(boundary_str.begin(), boundary_str.end(), boundary_str.begin(), ::toupper);
 
-        order     = select_order(order_str);
-        boundary  = select_boundary_condition(boundary_str);
-        degree    = vm["degree"].as<int>();
-        n_levels  = vm["levels"].as<int>();
-        dimension = vm["dimension"].as<int>();
+        // General problem parameters
+        opt_gpe.order     = select_order(order_str);
+        opt_gpe.bc        = select_boundary_condition(boundary_str);
+        opt_gpe.degree    = vm["degree"].as<int>();
+        opt_gpe.n_levels  = vm["levels"].as<int>();
+        opt_gpe.dimension = vm["dimension"].as<int>();
+        opt_gpe.beta      = vm["beta"].as<double>();
+
+        // Domain parameters
         multigrid = vm["multigrid"].as<bool>();
         left_str  = vm["left"].as<std::string>();
         right_str = vm["right"].as<std::string>();
-        beta      = vm["beta"].as<double>();
-        solver    = select_solver(solver_str);
-        step_size = vm["step_size"].as<double>();
-        options.max_iter     = vm["max_iter"].as<int>();
-        options.max_inner    = vm["max_inner"].as<int>();
-        options.tol_inner    = vm["tol_inner"].as<double>();
-        options.tol_residual = vm["tol_residual"].as<double>();
-        options.tol_lambda   = vm["tol_lambda"].as<double>();
+
+        // Gradient descent parameters
+        opt_rgd.step_size    = vm["step_size"].as<double>();
+        opt_rgd.max_iter     = vm["max_iter"].as<int>();
+        opt_rgd.max_inner    = vm["max_inner"].as<int>();
+        opt_rgd.tol_inner    = vm["tol_inner"].as<double>();
+        opt_rgd.tol_residual = vm["tol_residual"].as<double>();
+        opt_rgd.tol_lambda   = vm["tol_lambda"].as<double>();
+        solver = select_solver(solver_str);
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -310,7 +373,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    switch (dimension) {
+    switch (opt_gpe.dimension) {
     case 1:
         {
             // Default endpoints of rectangle
@@ -318,8 +381,7 @@ int main(int argc, char* argv[])
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10"; right_str = "10";
             }
-            experiment1<1>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, boundary, multigrid, solver, options);
+            package<1>(str_to_point<1>(left_str), str_to_point<1>(right_str), opt_gpe, opt_rgd, solver, multigrid);
         }
         break;
     case 2:
@@ -328,8 +390,7 @@ int main(int argc, char* argv[])
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10,-10"; right_str = "10,10";
             }
-            experiment1<2>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, boundary, multigrid, solver, options);
+            package<2>(str_to_point<2>(left_str), str_to_point<2>(right_str), opt_gpe, opt_rgd, solver, multigrid);
         }
         break;
     case 3:
@@ -338,8 +399,7 @@ int main(int argc, char* argv[])
             if (left_str.empty() || right_str.empty()) {
                 left_str = "-10,-10,-10"; right_str = "10,10,10";
             }
-            experiment1<3>(n_levels, degree, left_str, right_str, beta, step_size,
-                           order, boundary, multigrid, solver, options);
+            package<3>(str_to_point<3>(left_str), str_to_point<3>(right_str), opt_gpe, opt_rgd, solver, multigrid);
         }
         break;
     default:

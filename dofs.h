@@ -51,7 +51,8 @@ select_order(const std::string& order_str)
 enum class BoundaryCondition
 {
     NEUMANN,
-    DIRICHLET
+    DIRICHLET,
+    ROBIN
 };
 
 inline BoundaryCondition
@@ -62,6 +63,9 @@ select_boundary_condition(const std::string& boundary_str)
     }
     if (boundary_str == "DIRICHLET") {
         return BoundaryCondition::DIRICHLET;
+    }
+    if (boundary_str == "ROBIN") {
+        return BoundaryCondition::ROBIN;
     }
     throw std::runtime_error(boundary_str + ": invalid boundary condition");
 }
@@ -162,38 +166,41 @@ void renumber_dofs(dealii::DoFHandler<dim>& dof_handler,
     const Ordering order = Ordering::CUTHILL_MCKEE,
     unsigned int level = dealii::numbers::invalid_unsigned_int)
 {
-    // TODO: further orderings for multilevel, check level index range
+    if (level != dealii::numbers::invalid_unsigned_int) {
+        AssertIndexRange(level, dof_handler.get_triangulation().n_levels());
+    }
+    // TODO: further orderings for multilevel
     switch (order) {
-    case Ordering::DEFAULT:
-        break;
+        case Ordering::DEFAULT:
+            break;
 
-    case Ordering::RANDOM:
-        level == dealii::numbers::invalid_unsigned_int
-            ? dealii::DoFRenumbering::random(dof_handler)
-            : dealii::DoFRenumbering::random(dof_handler, level);
-        break;
+        case Ordering::RANDOM:
+            level == dealii::numbers::invalid_unsigned_int
+                ? dealii::DoFRenumbering::random(dof_handler)
+                : dealii::DoFRenumbering::random(dof_handler, level);
+            break;
 
-    case Ordering::CUTHILL_MCKEE:
-        // TODO: use_constraints for global reordering
-        level == dealii::numbers::invalid_unsigned_int
-            ? dealii::DoFRenumbering::Cuthill_McKee(dof_handler, false, false)
-            : dealii::DoFRenumbering::Cuthill_McKee(dof_handler, static_cast<unsigned int>(level), false);
-        break;
+        case Ordering::CUTHILL_MCKEE:
+            // TODO: use_constraints for global reordering
+            level == dealii::numbers::invalid_unsigned_int
+                ? dealii::DoFRenumbering::Cuthill_McKee(dof_handler, false, false)
+                : dealii::DoFRenumbering::Cuthill_McKee(dof_handler, static_cast<unsigned int>(level), false);
+            break;
 
-    case Ordering::KING:
-        level == dealii::numbers::invalid_unsigned_int
-            ? dealii::DoFRenumbering::boost::king_ordering(dof_handler)
-            : throw std::logic_error("KING ordering not implemented for multilevel");
-        break;
+        case Ordering::KING:
+            level == dealii::numbers::invalid_unsigned_int
+                ? dealii::DoFRenumbering::boost::king_ordering(dof_handler)
+                : throw std::logic_error("KING ordering not implemented for multilevel");
+            break;
 
-    case Ordering::MIN_DEG:
-        level == dealii::numbers::invalid_unsigned_int
-            ? dealii::DoFRenumbering::boost::minimum_degree(dof_handler)
-            : throw std::logic_error("MIN_DEG ordering not implemented for multilevel");
-        break;
+        case Ordering::MIN_DEG:
+            level == dealii::numbers::invalid_unsigned_int
+                ? dealii::DoFRenumbering::boost::minimum_degree(dof_handler)
+                : throw std::logic_error("MIN_DEG ordering not implemented for multilevel");
+            break;
 
-    default:
-        throw std::invalid_argument("unknown ordering");
+        default:
+            throw std::invalid_argument("unknown ordering");
     }
 }
 

@@ -52,7 +52,7 @@ void assemble_system_impl(const CellRange& cells,
 //! @param dof_handler DOF object, contains triangulation and finite element
 //! @param flags Required update flags, typically set in Assembly object
 //! @param assemble_cell Function object which iterates over local cells
-//! @param level Multigrid level (0 for active cells)
+//! @param level Multigrid level; if valid, uses multigrid iterators instead of active cell ones
 //! @param constraints Affine constraints applied to matrix rows and columns
 template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class

@@ -13,31 +13,7 @@ namespace gpe
 {
 // TODO: lac_types.h to easily change to different matrix implementation
 
-template <typename T>
-struct GPE_Mass
-{
-    // avoid issues with deleted copy/move constructors of SparsityPattern
-    // SparseMatrix has defined move constructors, so we store them directly
-    explicit GPE_Mass(const dealii::SparsityPattern& sparsity_)
-        : sparsity(std::make_shared<dealii::SparsityPattern>())
-    {
-        // make an internal copy of the sparsity pattern
-        sparsity->copy_from(sparsity_);
-
-        // now initialize all matrices with this *owned* pattern
-        M.reinit(*sparsity);
-        A_0.reinit(*sparsity);
-        Mpp.reinit(*sparsity);
-    }
-
-    SparseMatrix<T> M;
-    SparseMatrix<T> A_0;
-    SparseMatrix<T> Mpp;
-
-private:
-    std::shared_ptr<SparsityPattern> sparsity;
-};
-
+// TODO: merge parts with main.cc
 //! @tparam dim
 template <int dim>
 class GPE
@@ -49,10 +25,10 @@ public:
     //! @param left_ Left end-point of the rectangular domain
     //! @param right_ Opposite end-point of the rectangular domain
     //! @param order_ Ordering used for degrees of freedom
-    GPE(const int n_levels_, const int degree, const Point<dim>& left_, const Point<dim>& right_,
+    GPE(const Point<dim>& left_, const Point<dim>& right_, const int n_levels_, const int degree,
         const Ordering order_ = Ordering::DEFAULT)
     :
-        n_levels(n_levels_), order(order_), left(left_), right(right_),
+        left(left_), right(right_), n_levels(n_levels_), order(order_),
         // Flag to allow multigrid algorithms
         triangulation(dealii::Triangulation<dim>::limit_level_difference_at_vertices),
         // DoFHandler<> has a deleted assignment operator, so initialize in the constructor
@@ -76,11 +52,31 @@ public:
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
     }
 
+    void dofs()
+    {
+        // step 2 - degrees of freedom
+        distribute_dofs(dof_handler, element, order);
+    }
+
+    void dofs_mg()
+    {
+        // step 2 - degrees of freedom - ordering applied to every level
+        distribute_mg_dofs(dof_handler, element, order, std::vector<bool>(n_levels, true));
+    }
+
+    SparsityPattern
+    sparsity(unsigned int level = dealii::numbers::invalid_unsigned_int) const
+    {
+        return make_sparsity_pattern(dof_handler, level);
+    }
+
+    // TODO: move to dofs.h
     dealii::AffineConstraints<double>
-    boundary(BoundaryCondition condition, std::set<dealii::types::boundary_id> dirichlet_ids = {0}) const
+    boundary(BoundaryCondition condition, const std::set<dealii::types::boundary_id>& dirichlet_ids = {0}) const
     {
         dealii::AffineConstraints<double> constraints;
         dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+        dealii::Functions::ZeroFunction<dim> boundary_function(element.n_components());
 
         switch (condition) {
             case BoundaryCondition::NEUMANN:
@@ -89,8 +85,6 @@ public:
 
             case BoundaryCondition::DIRICHLET:
                 // Dirichlet boundary (zero-valued)
-                dealii::Functions::ZeroFunction<dim> boundary_function(element.n_components());
-
                 for (const auto id: dirichlet_ids) {
                     dealii::VectorTools::interpolate_boundary_values(dof_handler, id, boundary_function, constraints);
                 }
@@ -103,13 +97,14 @@ public:
         return constraints;
     }
 
+    // TODO: move to dofs.h
     dealii::MGConstrainedDoFs
-    boundary_mg(BoundaryCondition condition, std::set<dealii::types::boundary_id> dirichlet_ids = {0}) const
+    boundary_mg(BoundaryCondition bc, const std::set<dealii::types::boundary_id>& dirichlet_ids = {0}) const
     {
         dealii::MGConstrainedDoFs mg_constrained_dofs;
         mg_constrained_dofs.initialize(dof_handler);
 
-        switch (condition) {
+        switch (bc) {
             case BoundaryCondition::NEUMANN:
                 // Natural boundary conditions, hanging nodes only
                 break;
@@ -125,39 +120,6 @@ public:
         return mg_constrained_dofs;
     }
 
-    void dofs()
-    {
-        // step 2 - degrees of freedom
-        distribute_dofs(dof_handler, element, order);
-    }
-
-    void dofs_mg()
-    {
-        // step 2 - degrees of freedom - ordering applied to every level
-        std::vector<bool> levels(n_levels, true);
-
-        // DoFHandler::distribute_dofs, DoFHandler::distribute_mg_dofs
-        distribute_mg_dofs(dof_handler, element, order, levels);
-    }
-
-    template <typename Function>
-    GPE_Mass<double>
-    assemble(Function&& V, const dealii::AffineConstraints<double>& constraints,
-        unsigned int level = dealii::numbers::invalid_unsigned_int) const
-    {
-        // In-place construction of sparsity pattern
-        // Handles multigrid transparently
-        GPE_Mass<double> Mass(make_sparsity_pattern(dof_handler, level));
-
-        // Compute values of mass matrix
-        assemble_mass(Mass.M, dof_handler, constraints, level);
-
-        // Compute values of stiffness + weighed mass matrix
-        assemble_A0(Mass.A_0, dof_handler, V, constraints, level);
-
-        return Mass; // XXX: or store in class object
-    }
-
     const dealii::DoFHandler<dim>& get_dof() const
     {
         return dof_handler;
@@ -166,15 +128,16 @@ public:
     {
         return triangulation;
     }
+
 private:
+    // Rectangle bounds
+    Point<dim> left;
+    Point<dim> right;
+
     // Problem parameters
     int n_levels;
     int dimension;
     Ordering order;
-
-    // Rectangle bounds
-    Point<dim> left;
-    Point<dim> right;
 
     // Finite element containers
     dealii::Triangulation<dim>   triangulation; // copy stored by dof_handler

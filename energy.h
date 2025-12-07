@@ -118,10 +118,8 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     for (int it = 0; it < options.max_iter; it++) {
         // A = A_0 + beta * M_phiphi
         SparseMatrix<double> A = sp_copy(A_0);
-
         // Apply constraints to incumbent solution
         constraints.distribute(x);
-
         // Update mass matrix
         update_mpp(Mpp, x);
         A.add(beta, Mpp);
@@ -161,6 +159,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
                       << std::endl;
         }
     }
+    constraints.distribute(x);
     return x;
 }
 
