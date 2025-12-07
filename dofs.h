@@ -9,6 +9,7 @@
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/dofs/dof_renumbering.h>
+#include <deal.II/numerics/vector_tools.h>
 
 // step 16 -- multigrid libraries
 #include <deal.II/multigrid/mg_tools.h>
@@ -246,6 +247,70 @@ void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q
             renumber_dofs<dim>(dof_handler, order);
         }
     }
+}
+
+//!
+//! @tparam dim Domain dimension
+//! @param dof_handler
+//! @param bc Boundary condition to be applied
+//! @param dirichlet_ids Boundary components for Dirichlet conditions
+//! @return
+template <int dim>
+dealii::AffineConstraints<double>
+make_boundary(dealii::DoFHandler<dim>& dof_handler, BoundaryCondition bc,
+    const std::set<dealii::types::boundary_id>& dirichlet_ids = {0})
+{
+    dealii::AffineConstraints<double> constraints;
+    dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+    dealii::Functions::ZeroFunction<dim> boundary_function(dof_handler.get_fe().n_components());
+
+    switch (bc) {
+        case BoundaryCondition::NEUMANN:
+            // Natural boundary conditions
+            break;
+
+        case BoundaryCondition::DIRICHLET:
+            // Dirichlet boundary (zero-valued)
+            for (const auto id: dirichlet_ids) {
+                dealii::VectorTools::interpolate_boundary_values(dof_handler, id, boundary_function, constraints);
+            }
+            break;
+
+        default:
+            throw std::invalid_argument("Unknown boundary condition");
+    }
+    constraints.close();
+    return constraints;
+}
+
+//!
+//! @tparam dim Domain dimension
+//! @param dof_handler
+//! @param bc Boundary condition to be applied
+//! @param dirichlet_ids Boundary components for Dirichlet conditions
+//! @return
+template <int dim>
+dealii::MGConstrainedDoFs
+make_boundary_mg(dealii::DoFHandler<dim>& dof_handler, const BoundaryCondition bc,
+    const std::set<dealii::types::boundary_id>& dirichlet_ids = {0})
+{
+    dealii::MGConstrainedDoFs mg_constrained_dofs;
+    mg_constrained_dofs.initialize(dof_handler);
+
+    switch (bc) {
+        case BoundaryCondition::NEUMANN:
+            // Natural boundary conditions, hanging nodes only
+            break;
+
+        case BoundaryCondition::DIRICHLET:
+            // Dirichlet boundary (zero-valued)
+            mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, dirichlet_ids);
+            break;
+
+        default:
+            throw std::invalid_argument("Unknown boundary condition");
+    }
+    return mg_constrained_dofs;
 }
 
 } // namespace gpe
