@@ -27,12 +27,12 @@ class GPE
 {
 public:
     //!
-    //! @param left_ Left end-point of the rectangular domain
-    //! @param right_ Opposite end-point of the rectangular domain
+    //! @param radius_ Radius of the cube domain
     //! @param options_ Parameters for GPE problem
-    GPE(const Point<dim>& left_, const Point<dim>& right_, const GPE_Options& options_)
+    // TODO: simplify to radius / hyper cube (later: allow passing in arbitrary meshes?)
+    GPE(double radius_, const GPE_Options& options_)
     :
-        left(left_), right(right_), options(options_),
+        radius(radius_), options(options_),
         // Flag to allow multigrid algorithms
         triangulation(dealii::Triangulation<dim>::limit_level_difference_at_vertices),
         // DoFHandler<> has a deleted assignment operator, so initialize in the constructor
@@ -41,12 +41,12 @@ public:
         options.dimension = dim;
     }
 
-    void make_rectangle()
+    void make_grid()
     {
         // step 1 - make grid
-        // rectangle consisting of precisely one cell
+        // cube consisting of precisely one cell
         std::cerr << "Dimension: " << options.dimension << std::endl;
-        dealii::GridGenerator::hyper_rectangle(triangulation, left, right);
+        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
 
         // the number of cells increases by a factor of 2^(dim x times)
         // -> n_levels equals the number of refinements + 1
@@ -115,8 +115,7 @@ public:
 
 private:
     // Problem parameters
-    Point<dim> left;
-    Point<dim> right;
+    double radius;
     GPE_Options options;
 
     // Finite element containers

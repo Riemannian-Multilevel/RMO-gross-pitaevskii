@@ -74,10 +74,10 @@ template <int dim>
 class GPE_Solve
 {
 public:
-    GPE_Solve(Point<dim> left_, Point<dim> right_, double beta_, const GPE_Options& options_)
-        : problem(left_, right_, options_), beta(beta_)
+    GPE_Solve(double radius_, double beta_, const GPE_Options& options_)
+        : problem(radius_, options_), beta(beta_)
     {
-        problem.make_rectangle();
+        problem.make_grid();
         problem.dofs();
     }
 
@@ -150,13 +150,13 @@ template <int dim>
 class GPE_Solve_MR
 {
 public:
-    GPE_Solve_MR(Point<dim> left_, Point<dim> right_, double beta_, const GPE_Options& options_,
+    GPE_Solve_MR(double radius_, double beta_, const GPE_Options& options_,
         unsigned int min_level_ = 0,
         unsigned int max_level_ = numbers::invalid_unsigned_int)
     :
-        problem(left_, right_, options_), beta(beta_), min_level(min_level_), max_level(max_level_)
+        problem(radius_, options_), beta(beta_), min_level(min_level_), max_level(max_level_)
     {
-        problem.make_rectangle();
+        problem.make_grid();
         problem.dofs_mg();
 
         if (max_level == numbers::invalid_unsigned_int) {
@@ -279,11 +279,11 @@ public:
 // Put it all together:
 // 1. single level RGD
 template <int dim>
-void package(std::string left_str, std::string right_str, double beta,
+void package(double radius, double beta,
     GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver)
 {
     Square<dim> V;
-    GPE_Solve<dim> GS(str_to_point<dim>(left_str), str_to_point<dim>(right_str), beta, opt_gpe);
+    GPE_Solve<dim> GS(radius, beta, opt_gpe);
 
     auto res = GS.run(V, 1.0, opt_rgd, solver);
     GS.output(res);
@@ -291,12 +291,11 @@ void package(std::string left_str, std::string right_str, double beta,
 
 // 2. multiresolution RGD
 template <int dim>
-void package_MR(std::string left_str, std::string right_str, double beta,
+void package_MR(double radius, double beta,
     GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
 {
     Square<dim> V;
-    GPE_Solve_MR<dim> GSM(str_to_point<dim>(left_str), str_to_point<dim>(right_str),
-        beta, opt_gpe, min_level, max_level);
+    GPE_Solve_MR<dim> GSM(radius, beta, opt_gpe, min_level, max_level);
 
     auto res_mg = GSM.run(V, 1.0, opt_rgd, solver);
     // TODO: output results
@@ -305,7 +304,7 @@ void package_MR(std::string left_str, std::string right_str, double beta,
 
 // 3. multilevel RGD (Nash)
 template <int dim>
-void package_MG(std::string left_str, std::string right_str, double beta,
+void package_MG(double radius, double beta,
     GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
 {
     Square<dim> V;
@@ -316,11 +315,10 @@ void package_MG(std::string left_str, std::string right_str, double beta,
 int main(int argc, char* argv[])
 {
     bool         multigrid;
-    std::string  left_str, right_str;
     SolverMethod solver;
     GdOptions    opt_rgd{};
     GPE_Options  opt_gpe{};
-    double beta;
+    double beta, radius;
     int min_level, max_level;
 
     // TODO: add configuration file (cf. boost tutorial)
@@ -340,10 +338,8 @@ int main(int argc, char* argv[])
              "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
             ("boundary", po::value<std::string>()->default_value("neumann"),
                 "boundary constraints (neumann|dirichlet)")
-            ("left", po::value<std::string>()->default_value(""),
-                "left point of the mesh")
-            ("right", po::value<std::string>()->default_value(""),
-                "right point of the mesh")
+            ("radius", po::value<double>()->default_value(10.0),
+                "default radius of the cube domain")
             ("beta", po::value<double>()->default_value(100.0),
                 "non-linearity factor")
             ("solver", po::value<std::string>()->default_value("gmres"),
@@ -394,8 +390,7 @@ int main(int argc, char* argv[])
 
         // Domain parameters
         multigrid = vm["multigrid"].as<bool>();
-        left_str  = vm["left"].as<std::string>();
-        right_str = vm["right"].as<std::string>();
+        radius    = vm["radius"].as<double>();
 
         // Gradient descent parameters
         opt_rgd.step_size    = vm["step-size"].as<double>();
@@ -420,32 +415,20 @@ int main(int argc, char* argv[])
     case 1:
         {
             // Default endpoints of rectangle
-            // TODO: encode default arguments in function template? (if constexpr...)
-            if (left_str.empty() || right_str.empty()) {
-                left_str = "-10"; right_str = "10";
-            }
-            multigrid ? package_MR<1>(left_str, right_str, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                      : package<1>(left_str, right_str, beta, opt_gpe, opt_rgd, solver);
+            multigrid ? package_MR<1>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                      : package<1>(radius, beta, opt_gpe, opt_rgd, solver);
         }
         break;
     case 2:
         {
-            // TODO: encode default arguments in function template? (if constexpr...)
-            if (left_str.empty() || right_str.empty()) {
-                left_str = "-10,-10"; right_str = "10,10";
-            }
-            multigrid ? package_MR<2>(left_str, right_str, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                      : package<2>(left_str, right_str, beta, opt_gpe, opt_rgd, solver);
+            multigrid ? package_MR<2>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                      : package<2>(radius, beta, opt_gpe, opt_rgd, solver);
         }
         break;
     case 3:
         {
-            // TODO: encode default arguments in function template? (if constexpr...)
-            if (left_str.empty() || right_str.empty()) {
-                left_str = "-10,-10,-10"; right_str = "10,10,10";
-            }
-            multigrid ? package_MR<3>(left_str, right_str, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                      : package<3>(left_str, right_str, beta, opt_gpe, opt_rgd, solver);
+            multigrid ? package_MR<3>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                      : package<3>(radius, beta, opt_gpe, opt_rgd, solver);
         }
         break;
     default:

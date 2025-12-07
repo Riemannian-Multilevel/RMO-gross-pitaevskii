@@ -86,7 +86,7 @@ public:
         grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, GridOut::OutputFormat::gnuplot);
     }
 
-    // generate rectangular domain
+    // generate cubic domain
     void make_cube()
     {
         dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
@@ -96,15 +96,21 @@ public:
         AssertDimension(n_levels, triangulation.n_global_levels());
     }
 
-    // generate rectangular domain, refined around the origin
-    // TODO: make R_outer / R_inner adjustable
-    void make_cube_graded()
+    // generate cube domain, refined around the origin
+    // TODO: move to mesh.h
+    void make_cube_graded(double R_outer = -1.0, double R_inner = -1.0)
     {
         if (n_levels <= 2) throw ExcInternalError("n_levels must be at least 2");
 
-        // Parameters controlling grading strength
-        const double R_outer = radius*std::sqrt(static_cast<double>(dim));  // start refining inside this radius
-        const double R_inner = 0.5; // target radius for finest cells
+        // defaults for controlling grading strength
+        if (R_outer == -1.0) {
+            // start refining inside this radius
+            R_outer = radius*std::sqrt(static_cast<double>(dim));
+        }
+        if (R_inner == -1.0) {
+            // target radius for finest cells
+            R_inner = 0.5;
+        }
 
         // Geometric shrink factor for the refinement radius per cycle
         const double shrink = std::pow(R_inner / R_outer, 1.0 / n_levels);
@@ -152,7 +158,7 @@ public:
         distribute_mg_dofs(dof_handler, element, order, levels);
 
         std::cerr << "Number of levels: " << n_levels << std::endl;
-        for (int i = 0; i < n_levels; i++) {
+        for (unsigned int i = 0; i < n_levels; i++) {
             std::cerr << "Number of cells (level " << i << "): " << triangulation.n_cells(i) << std::endl;
         }
         return dofs_mg_sparsity(dof_handler);
@@ -184,7 +190,7 @@ int main(int argc, char** argv)
     int min_level, max_level;
     bool multigrid, adaptive = false;
     Ordering order;
-    std::string radius_str;
+    double radius;
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -207,7 +213,7 @@ int main(int argc, char** argv)
              "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
             ("adaptive", po::bool_switch(&adaptive),
                 "non-uniform mesh with higher refinement around the origin")
-            ("radius", po::value<double>()->default_value(10),
+            ("radius", po::value<double>()->default_value(10.0),
                 "radius for the hypercube domain");
 
         po::variables_map vm;
@@ -225,7 +231,7 @@ int main(int argc, char** argv)
         degree     = vm["degree"].as<int>();
         n_levels   = vm["levels"].as<int>();
         dimension  = vm["dimension"].as<int>();
-        radius_str = vm["radius"].as<std::string>();
+        radius     = vm["radius"].as<double>();
         min_level  = vm["min-level"].as<int>();
         max_level  = vm["max-level"].as<int>();
         max_level  = max_level == 0 ? n_levels : max_level;
@@ -242,19 +248,19 @@ int main(int argc, char** argv)
     switch (dimension) {
     case 1:
         {
-            GPE_Sparsity<1> Problem(n_levels, degree, std::stod(radius_str), order);
+            GPE_Sparsity<1> Problem(n_levels, degree, radius, order);
             Problem.run(multigrid, adaptive);
         }
         break;
     case 2:
         {
-            GPE_Sparsity<2> Problem(n_levels, degree, std::stod(radius_str), order);
+            GPE_Sparsity<2> Problem(n_levels, degree, radius, order);
             Problem.run(multigrid, adaptive);
         }
         break;
     case 3:
         {
-            GPE_Sparsity<3> Problem(n_levels, degree, std::stod(radius_str), order);
+            GPE_Sparsity<3> Problem(n_levels, degree, radius, order);
             Problem.run(multigrid, adaptive);
         }
         break;
