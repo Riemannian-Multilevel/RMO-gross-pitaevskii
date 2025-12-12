@@ -14,6 +14,7 @@ set(COMMON_HEADERS
         mesh.h
         dofs.h
         assemble.h
+        operators.h
         lac.h
         util.h
         gpe_solve.h

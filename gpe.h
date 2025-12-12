@@ -6,7 +6,6 @@
 #include "lac.h"
 #include "mesh.h"
 #include "dofs.h"
-#include "assemble.h"
 
 namespace gpe
 {

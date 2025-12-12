@@ -1,6 +1,7 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
+#include "operators.h"
 #include "gpe.h"
 #include "gpe_solve.h"
 #include "util.h"
@@ -92,8 +93,8 @@ public:
         lm.reinit(make_sparsity_pattern(problem.get_dofs(), constraints));
 
         // Assemble matrix + boundary conditions
-        assemble_mass(lm.M, problem.get_dofs(), constraints);
-        assemble_A0(lm.A0, problem.get_dofs(), V, constraints);
+        assemble_mass(execution::seq_t{}, lm.M, problem.get_dofs(), constraints);
+        assemble_A0(execution::seq_t{}, lm.A0, problem.get_dofs(), V, constraints);
     }
 
     // Begin iteration with constant starting value
@@ -122,7 +123,7 @@ public:
         auto update_mpp = [&dof_handler, &constraints](
             SparseMatrix<double>& Mpp, const Vector<double>& x)
         {
-            assemble_mass_phiphi<dim>(Mpp, dof_handler, x, constraints);
+            assemble_mass_phiphi<dim>(execution::seq_t{}, Mpp, dof_handler, x, constraints);
         };
 
         // Run gradient descent + enforce boundary conditions
@@ -177,8 +178,8 @@ public:
         const DoFHandler<dim>& dof_handler = problem.get_dofs();
         lm.reinit(make_sparsity_pattern_mg(dof_handler, level));
 
-        assemble_mass(lm.M, problem.get_dofs(), level_constraints, level);
-        assemble_A0(lm.A0, problem.get_dofs(), V, level_constraints, level);
+        assemble_mass(execution::seq_t{}, lm.M, problem.get_dofs(), level_constraints, level);
+        assemble_A0(execution::seq_t{}, lm.A0, problem.get_dofs(), V, level_constraints, level);
     }
 
     template <typename Function>
@@ -238,7 +239,7 @@ public:
             auto update_mpp_level = [&dof_handler, level, &level_constraints](
                 SparseMatrix<double>& Mpp, const Vector<double>& x)
             {
-                assemble_mass_phiphi<dim>(Mpp, dof_handler, x, level_constraints, level);
+                assemble_mass_phiphi<dim>(execution::seq_t{}, Mpp, dof_handler, x, level_constraints, level);
             };
 
             // Gradient descent + enforce boundary conditions
@@ -318,7 +319,7 @@ void package_MG(double radius, double beta, GPE_Options opt_gpe,
 
 int main(int argc, char* argv[])
 {
-    bool         multigrid, adaptive;
+    bool         multigrid, parallel;
     SolverMethod solver;
     GdOptions    opt_rgd{};
     GPE_Options  opt_gpe{};
@@ -363,7 +364,9 @@ int main(int argc, char* argv[])
             ("min-level", po::value<int>()->default_value(0),
                 "minimal level for multigrid")
             ("max-level", po::value<int>()->default_value(0),
-                "maximal level for multigrid");
+                "maximal level for multigrid")
+            ("parallel", po::bool_switch(&parallel),
+                "parallel assembly for system matrices");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);

@@ -1,49 +1,16 @@
-#ifndef GPE_ASSEMBLY_H
-#define GPE_ASSEMBLY_H
+#ifndef GPE_ASSEMBLE_H
+#define GPE_ASSEMBLE_H
 
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/dofs/dof_handler.h>
-#include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
-#include <deal.II/base/iterator_range.h>
 #include <deal.II/base/quadrature_lib.h>
+#include <deal.II/base/work_stream.h>
 
 namespace gpe
 {
 using dealii::types::global_dof_index;
 using dealii::numbers::invalid_unsigned_int;
-
-// TODO: parallelize assembly with WorkStream over cells
-//       (distribute to system matrix remains serial)
-template <int dim, typename CellRange, typename Assembly>
-void assemble_system_impl(const CellRange& cells,
-    dealii::FEValues<dim> &fe_values,
-    dealii::SparseMatrix<double> &system_matrix,
-    dealii::FullMatrix<double> &cell_matrix,
-    std::vector<global_dof_index> &local_dof_indices,
-    Assembly&& assemble_cell,
-    const dealii::AffineConstraints<double>& constraints)
-{
-    for (const auto& cell : cells) {
-        fe_values.reinit(cell);
-        cell_matrix = 0;
-        // Same code for active cells, or cells on a level in a multigrid hierarchy
-        cell->get_active_or_mg_dof_indices(local_dof_indices);
-
-        // Pass on populated DoF indices to assemble matrix
-        assemble_cell(fe_values, cell_matrix, local_dof_indices);
-
-        // Apply boundary conditions (Dirichlet and hanging nodes, if any)
-        // when distributing local (cell) matrix entries
-        constraints.distribute_local_to_global(cell_matrix, local_dof_indices, system_matrix);
-
-        // for (const unsigned int i : fe_values.dof_indices()) {
-        //     for (const unsigned int j : fe_values.dof_indices()) {
-        //         system_matrix.add(local_dof_indices[i], local_dof_indices[j], cell_matrix(i, j));
-        //     }
-        // }
-    }
-}
 
 //! Mass matrix assembly, implementation based on tutorial/step-3
 //! @tparam dim Problem dimension
@@ -119,144 +86,137 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     }
 }
 
-// TODO: optional assembly for right-hand side (separate function?)
-template <int dim>
-void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::AffineConstraints<double>& constraints,
-    unsigned int level = invalid_unsigned_int)
+namespace parallel
 {
-    dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
+template <int dim>
+struct ScratchData
+{
+    ScratchData(const dealii::FiniteElement<dim> &fe,
+                const dealii::QGauss<dim> &quadrature,
+                dealii::UpdateFlags flags)
+      : fe_values(fe, quadrature, flags)
+    {}
 
-    auto f_mass = [](const dealii::FEValues<dim>& fe_values,
-        dealii::FullMatrix<double>& cell_matrix, auto&&...)
+    ScratchData(const ScratchData<dim> &scratch)
     {
-        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
-            for (const unsigned int i : fe_values.dof_indices()) {
-                for (const unsigned int j : fe_values.dof_indices()) {
-                    cell_matrix(i, j) += (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                        fe_values.shape_value(j, q_index) * // phi_j(x_q)
-                        fe_values.JxW(q_index)); // dx
-                }
-            }
-        }
-    };
-    assemble_system(system_matrix, dof_handler, flags, f_mass, constraints, level);
-}
+        fe_values(scratch.fe_values.get_fe(),
+                  scratch.fe_values.get_quadrature(),
+                  scratch.fe_values.get_update_flags());
+    }
+    dealii::FEValues<dim> fe_values;
+};
 
 template <int dim>
-void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::AffineConstraints<double>& constraints,
-    unsigned int level = invalid_unsigned_int)
+struct PerTaskData
 {
-    dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients | dealii::update_JxW_values);
+    dealii::FullMatrix<double> cell_matrix;
+    std::vector<typename dealii::DoFHandler<dim>::global_dof_index> local_dof_indices;
 
-    auto f_stiffness = [](const dealii::FEValues<dim>& fe_values,
-        dealii::FullMatrix<double>& cell_matrix, auto&&...)
+    PerTaskData (const dealii::FiniteElement<dim> &fe)
+        : cell_matrix (fe.dofs_per_cell, fe.dofs_per_cell),
+          local_dof_indices (fe.dofs_per_cell)
+    {}
+};
+
+template <int dim, class Assembly>
+void assemble_system(dealii::SparseMatrix<double>& system_matrix,
+                     const dealii::DoFHandler<dim>& dof_handler,
+                     dealii::UpdateFlags flags,
+                     Assembly&& assemble_cell,
+                     const dealii::AffineConstraints<double>& constraints,
+                     unsigned int level = dealii::numbers::invalid_unsigned_int)
+{
+    using DoFHandler = dealii::DoFHandler<dim>;
+    using global_dof_index = typename DoFHandler::global_dof_index;
+
+    const auto& fe = dof_handler.get_fe();
+    const dealii::QGauss<dim> quadrature(fe.degree + 1);
+
+    system_matrix = 0;
+
+    ScratchData<dim> scratch(fe, quadrature, flags);
+    PerTaskData<dim> copy;
+
+    // generic cell worker: works for active and level cells
+    auto cell_worker = [&](const auto& cell, ScratchData<dim>& scratch, PerTaskData<dim>& copy)
     {
-        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
-            for (const unsigned int i : fe_values.dof_indices()) {
-                for (const unsigned int j : fe_values.dof_indices()) {
-                    cell_matrix(i, j) += (fe_values.shape_grad(i, q_index) * // grad phi_i(x_q)
-                        fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
-                        fe_values.JxW(q_index)); // dx
-                }
-            }
-        }
+        scratch.fe_values.reinit(cell); // cell is active_cell_iterator or level_cell_iterator
+        copy.cell_matrix = 0;
+
+        const unsigned int dofs_per_cell = fe.dofs_per_cell;
+        copy.local_dof_indices.resize(dofs_per_cell);
+
+        cell->get_active_or_mg_dof_indices(copy.local_dof_indices);
+
+        // user-provided local assembly
+        assemble_cell(scratch.fe_values, copy.cell_matrix, copy.local_dof_indices);
     };
-    assemble_system(system_matrix, dof_handler, flags, f_stiffness, constraints, level);
+
+    auto copier = [&](const PerTaskData<dim>& copy)
+    {
+        constraints.distribute_local_to_global(copy.cell_matrix, copy.local_dof_indices, system_matrix);
+    };
+
+    if (level == dealii::numbers::invalid_unsigned_int) {
+        AssertDimension(system_matrix.m(), dof_handler.n_dofs());
+        AssertDimension(system_matrix.n(), dof_handler.n_dofs());
+
+        using Iterator = typename DoFHandler::active_cell_iterator;
+        Iterator begin = dof_handler.begin_active();
+        Iterator end   = dof_handler.end();
+
+        dealii::WorkStream::run(begin, end, cell_worker, copier, scratch, copy);
+    }
+    else {
+        AssertDimension(system_matrix.m(), dof_handler.n_dofs(level));
+        AssertDimension(system_matrix.n(), dof_handler.n_dofs(level));
+
+        using Iterator = typename DoFHandler::level_cell_iterator;
+        Iterator begin = dof_handler.begin_mg(level);
+        Iterator end   = dof_handler.end_mg(level);
+
+        dealii::WorkStream::run(begin, end, cell_worker, copier, scratch, copy);
+    }
 }
 
-template <int dim, typename Function>
-void assemble_mass_weighed(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    Function&& V, const dealii::AffineConstraints<double>& constraints,
-    unsigned int level = invalid_unsigned_int)
+} // namespace parallel
+
+namespace execution
 {
-    dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
+struct seq_t {};
+struct par_t {};
 
-    auto f_mass_weighed = [V](const dealii::FEValues<dim>& fe_values,
-        dealii::FullMatrix<double>& cell_matrix, auto&&...)
-    {
-        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
-            dealii::Point<dim> x = fe_values.quadrature_point(q_index);
-
-            for (const unsigned int i : fe_values.dof_indices()) {
-                for (const unsigned int j : fe_values.dof_indices()) {
-                    cell_matrix(i, j) += V(x) * (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                        fe_values.shape_value(j, q_index) * // phi_j(x_q)
-                        fe_values.JxW(q_index)); // dx
-                }
-            }
-        }
-    };
-    assemble_system(system_matrix, dof_handler, flags, f_mass_weighed, constraints, level);
+inline constexpr seq_t seq{};
+inline constexpr par_t par{};
 }
 
-// A0 = stiffness + mass_weighed
-template <int dim, typename Function>
-void assemble_A0(dealii::SparseMatrix<double>& system_matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    Function&& V, const dealii::AffineConstraints<double>& constraints,
-    unsigned int level = invalid_unsigned_int)
+// Tag-based approach for selecting parallel or sequential version
+template <int dim, class Assembly>
+void assemble_system(execution::seq_t,
+                     dealii::SparseMatrix<double> &system_matrix,
+                     const dealii::DoFHandler<dim> &dof_handler,
+                     dealii::UpdateFlags flags,
+                     Assembly&& assemble_cell,
+                     const dealii::AffineConstraints<double> &constraints,
+                     unsigned int level = invalid_unsigned_int)
 {
-    dealii::UpdateFlags flags = (dealii::update_values | dealii::update_gradients
-        | dealii::update_JxW_values | dealii::update_quadrature_points);
-
-    auto f_A0 = [V](const dealii::FEValues<dim>& fe_values,
-        dealii::FullMatrix<double>& cell_matrix, auto&&...)
-    {
-        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
-            dealii::Point<dim> x = fe_values.quadrature_point(q_index);
-
-            for (const unsigned int i : fe_values.dof_indices()) {
-                for (const unsigned int j : fe_values.dof_indices()) {
-                    cell_matrix(i, j) += V(x) * (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                        fe_values.shape_value(j, q_index) * // phi_j(x_q)
-                        fe_values.JxW(q_index)); // dx
-                    cell_matrix(i, j) += (fe_values.shape_grad(i, q_index) * // grad phi_i(x_q)
-                        fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
-                        fe_values.JxW(q_index)); // dx
-                }
-            }
-        }
-    };
-    assemble_system(system_matrix, dof_handler, flags, f_A0, constraints, level);
+    assemble_system(system_matrix, dof_handler, flags,
+        std::forward<Assembly>(assemble_cell), constraints, level);
 }
 
-// TODO: optimizations (symmetry, caching, matrix-free operator)
-template <int dim>
-void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::Vector<double>& u, const dealii::AffineConstraints<double>& constraints,
-    unsigned int level = invalid_unsigned_int)
+template <int dim, class Assembly>
+void assemble_system(execution::par_t,
+                     dealii::SparseMatrix<double> &system_matrix,
+                     const dealii::DoFHandler<dim> &dof_handler,
+                     dealii::UpdateFlags flags,
+                     Assembly &&assemble_cell,
+                     const dealii::AffineConstraints<double> &constraints,
+                     unsigned int level = invalid_unsigned_int)
 {
-    dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
-
-    auto f_mass_phiphi = [u](const dealii::FEValues<dim>& fe_values,
-        dealii::FullMatrix<double>& cell_matrix, const auto& local_dof_indices)
-    {
-        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
-            double u_x = 0.0;
-            for (const unsigned int i : fe_values.dof_indices()) {
-                u_x += u(local_dof_indices[i]) * fe_values.shape_value(i, q_index);
-            }
-            u_x = std::abs(u_x);
-            u_x *= u_x; // u_x2
-
-            for (const unsigned int i : fe_values.dof_indices()) {
-                for (const unsigned int j : fe_values.dof_indices()) {
-                    cell_matrix(i, j) += u_x * (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                        fe_values.shape_value(j, q_index) * // phi_j(x_q)
-                        fe_values.JxW(q_index)); // dx
-                }
-            }
-        }
-    };
-    assemble_system(matrix, dof_handler, flags, f_mass_phiphi, constraints, level);
+    parallel::assemble_system(system_matrix, dof_handler, flags,
+        std::forward<Assembly>(assemble_cell), constraints, level);
 }
 
 } // namespace gpe
 
-#endif //GPE_ASSEMBLY_H
+#endif //GPE_ASSEMBLE_H
