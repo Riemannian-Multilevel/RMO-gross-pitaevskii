@@ -71,7 +71,7 @@ struct LevelMatrix
     SparseMatrix<double> Mpp;
 };
 
-template <int dim>
+template <int dim, typename ExecutionPolicy>
 class GPE_Solve
 {
 public:
@@ -93,8 +93,8 @@ public:
         lm.reinit(make_sparsity_pattern(problem.get_dofs(), constraints));
 
         // Assemble matrix + boundary conditions
-        assemble_mass(execution::seq_t{}, lm.M, problem.get_dofs(), constraints);
-        assemble_A0(execution::seq_t{}, lm.A0, problem.get_dofs(), V, constraints);
+        assemble_mass(policy, lm.M, problem.get_dofs(), constraints);
+        assemble_A0(policy, lm.A0, problem.get_dofs(), V, constraints);
     }
 
     // Begin iteration with constant starting value
@@ -123,7 +123,7 @@ public:
         auto update_mpp = [&dof_handler, &constraints](
             SparseMatrix<double>& Mpp, const Vector<double>& x)
         {
-            assemble_mass_phiphi<dim>(execution::seq_t{}, Mpp, dof_handler, x, constraints);
+            assemble_mass_phiphi<dim>(policy, Mpp, dof_handler, x, constraints);
         };
 
         // Run gradient descent + enforce boundary conditions
@@ -146,14 +146,15 @@ private:
     // Problem parameters
     GPE<dim> problem;
     double beta;
+    static constexpr ExecutionPolicy policy{};
 };
 
 // TODO: inherit from GPE base class
-template <int dim>
-class GPE_Solve_MR
+template <int dim, typename ExecutionPolicy>
+class GPE_Solve_MG
 {
 public:
-    GPE_Solve_MR(double radius_, double beta_, const GPE_Options& options_,
+    GPE_Solve_MG(double radius_, double beta_, const GPE_Options& options_,
         unsigned int min_level_ = 0,
         unsigned int max_level_ = numbers::invalid_unsigned_int)
     :
@@ -178,8 +179,8 @@ public:
         const DoFHandler<dim>& dof_handler = problem.get_dofs();
         lm.reinit(make_sparsity_pattern_mg(dof_handler, level));
 
-        assemble_mass(execution::seq_t{}, lm.M, problem.get_dofs(), level_constraints, level);
-        assemble_A0(execution::seq_t{}, lm.A0, problem.get_dofs(), V, level_constraints, level);
+        assemble_mass(policy, lm.M, problem.get_dofs(), level_constraints, level);
+        assemble_A0(policy, lm.A0, problem.get_dofs(), V, level_constraints, level);
     }
 
     template <typename Function>
@@ -239,7 +240,7 @@ public:
             auto update_mpp_level = [&dof_handler, level, &level_constraints](
                 SparseMatrix<double>& Mpp, const Vector<double>& x)
             {
-                assemble_mass_phiphi<dim>(execution::seq_t{}, Mpp, dof_handler, x, level_constraints, level);
+                assemble_mass_phiphi<dim>(policy, Mpp, dof_handler, x, level_constraints, level);
             };
 
             // Gradient descent + enforce boundary conditions
@@ -263,6 +264,7 @@ private:
     // Problem parameters
     GPE<dim> problem;
     double beta;
+    static constexpr ExecutionPolicy policy{};
 
     unsigned int min_level, max_level;
 };
@@ -281,40 +283,31 @@ public:
     }
 };
 
-// Put it all together:
-// 1. single level RGD
-template <int dim>
-void package(double radius, double beta, GPE_Options opt_gpe,
-    GdOptions opt_rgd, SolverMethod solver)
+template <class F>
+decltype(auto) with_policy(bool parallel, F&& f)
 {
-    Square<dim> V;
-    GPE_Solve<dim> GS(radius, beta, opt_gpe);
-
-    auto res = GS.run(V, 1.0, opt_rgd, solver);
-    GS.output(res);
+    return parallel ? f(execution::par) : f(execution::seq);
 }
 
-// 2. multiresolution RGD
 template <int dim>
-void package_MR(double radius, double beta, GPE_Options opt_gpe,
-    GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
-{
-    Square<dim> V;
-    GPE_Solve_MR<dim> GSM(radius, beta, opt_gpe, min_level, max_level);
-
-    auto res_mg = GSM.run(V, 1.0, opt_rgd, solver);
-    // TODO: output results
-    // dof_handler on mg vectors requires special treatment (add_mg_data_vector())
-}
-
-// 3. multilevel RGD (Nash)
-template <int dim>
-void package_MG(double radius, double beta, GPE_Options opt_gpe,
-    GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
+void run_package(bool parallel, bool multigrid, unsigned min_level, unsigned max_level,
+    double radius, double beta, GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver)
 {
     Square<dim> V;
 
-    // TODO
+    with_policy(parallel, [&](auto policy_tag)
+    {
+        using Policy = std::decay_t<decltype(policy_tag)>;
+
+        if (multigrid) {
+            GPE_Solve_MG<dim, Policy> GSM(radius, beta, opt_gpe, min_level, max_level);
+            GSM.run(V, 1.0, opt_rgd, solver);
+        }
+        else {
+            GPE_Solve<dim, Policy> GS(radius, beta, opt_gpe);
+            GS.run(V, 1.0, opt_rgd, solver);
+        }
+    });
 }
 
 int main(int argc, char* argv[])
@@ -324,7 +317,7 @@ int main(int argc, char* argv[])
     GdOptions    opt_rgd{};
     GPE_Options  opt_gpe{};
     double beta, radius;
-    int min_level, max_level;
+    unsigned min_level, max_level;
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -412,21 +405,17 @@ int main(int argc, char* argv[])
         switch (opt_gpe.dimension) {
             case 1:
                 {
-                    // Default endpoints of rectangle
-                    multigrid ? package_MR<1>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                              : package<1>(radius, beta, opt_gpe, opt_rgd, solver);
+                    run_package<1>(parallel, multigrid, min_level, max_level, radius, beta, opt_gpe, opt_rgd, solver);
                 }
                 break;
             case 2:
                 {
-                    multigrid ? package_MR<2>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                              : package<2>(radius, beta, opt_gpe, opt_rgd, solver);
+                    run_package<2>(parallel, multigrid, min_level, max_level, radius, beta, opt_gpe, opt_rgd, solver);
                 }
                 break;
             case 3:
                 {
-                    multigrid ? package_MR<3>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                              : package<3>(radius, beta, opt_gpe, opt_rgd, solver);
+                    run_package<3>(parallel, multigrid, min_level, max_level, radius, beta, opt_gpe, opt_rgd, solver);
                 }
                 break;
             default:

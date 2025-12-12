@@ -91,26 +91,26 @@ namespace parallel
 template <int dim>
 struct ScratchData
 {
+    dealii::FEValues<dim> fe_values;
+
     ScratchData(const dealii::FiniteElement<dim> &fe,
                 const dealii::QGauss<dim> &quadrature,
                 dealii::UpdateFlags flags)
-      : fe_values(fe, quadrature, flags)
+        : fe_values(fe, quadrature, flags)
     {}
 
     ScratchData(const ScratchData<dim> &scratch)
-    {
-        fe_values(scratch.fe_values.get_fe(),
-                  scratch.fe_values.get_quadrature(),
-                  scratch.fe_values.get_update_flags());
-    }
-    dealii::FEValues<dim> fe_values;
+        : fe_values(scratch.fe_values.get_fe(),
+                    scratch.fe_values.get_quadrature(),
+                    scratch.fe_values.get_update_flags())
+    {}
 };
 
 template <int dim>
 struct PerTaskData
 {
     dealii::FullMatrix<double> cell_matrix;
-    std::vector<typename dealii::DoFHandler<dim>::global_dof_index> local_dof_indices;
+    std::vector<global_dof_index> local_dof_indices;
 
     PerTaskData (const dealii::FiniteElement<dim> &fe)
         : cell_matrix (fe.dofs_per_cell, fe.dofs_per_cell),
@@ -126,56 +126,48 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::AffineConstraints<double>& constraints,
                      unsigned int level = dealii::numbers::invalid_unsigned_int)
 {
-    using DoFHandler = dealii::DoFHandler<dim>;
-    using global_dof_index = typename DoFHandler::global_dof_index;
-
     const auto& fe = dof_handler.get_fe();
     const dealii::QGauss<dim> quadrature(fe.degree + 1);
 
+    // Clear existing matrix entries
     system_matrix = 0;
 
     ScratchData<dim> scratch(fe, quadrature, flags);
-    PerTaskData<dim> copy;
+    PerTaskData<dim> data(fe);
 
     // generic cell worker: works for active and level cells
-    auto cell_worker = [&](const auto& cell, ScratchData<dim>& scratch, PerTaskData<dim>& copy)
+    auto cell_worker = [&](const auto& cell, ScratchData<dim>& scratch, PerTaskData<dim>& data)
     {
         scratch.fe_values.reinit(cell); // cell is active_cell_iterator or level_cell_iterator
-        copy.cell_matrix = 0;
+        data.cell_matrix = 0;
 
         const unsigned int dofs_per_cell = fe.dofs_per_cell;
-        copy.local_dof_indices.resize(dofs_per_cell);
+        data.local_dof_indices.resize(dofs_per_cell);
 
-        cell->get_active_or_mg_dof_indices(copy.local_dof_indices);
+        cell->get_active_or_mg_dof_indices(data.local_dof_indices);
 
         // user-provided local assembly
-        assemble_cell(scratch.fe_values, copy.cell_matrix, copy.local_dof_indices);
+        assemble_cell(scratch.fe_values, data.cell_matrix, data.local_dof_indices);
     };
 
-    auto copier = [&](const PerTaskData<dim>& copy)
+    auto copier = [&](const PerTaskData<dim>& data)
     {
-        constraints.distribute_local_to_global(copy.cell_matrix, copy.local_dof_indices, system_matrix);
+        constraints.distribute_local_to_global(data.cell_matrix, data.local_dof_indices, system_matrix);
     };
 
     if (level == dealii::numbers::invalid_unsigned_int) {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs());
         AssertDimension(system_matrix.n(), dof_handler.n_dofs());
 
-        using Iterator = typename DoFHandler::active_cell_iterator;
-        Iterator begin = dof_handler.begin_active();
-        Iterator end   = dof_handler.end();
-
-        dealii::WorkStream::run(begin, end, cell_worker, copier, scratch, copy);
+        dealii::WorkStream::run(dof_handler.begin_active(), dof_handler.end(),
+            cell_worker, copier, scratch, data);
     }
     else {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs(level));
         AssertDimension(system_matrix.n(), dof_handler.n_dofs(level));
 
-        using Iterator = typename DoFHandler::level_cell_iterator;
-        Iterator begin = dof_handler.begin_mg(level);
-        Iterator end   = dof_handler.end_mg(level);
-
-        dealii::WorkStream::run(begin, end, cell_worker, copier, scratch, copy);
+        dealii::WorkStream::run(dof_handler.begin_mg(level), dof_handler.end_mg(level),
+            cell_worker, copier, scratch, data);
     }
 }
 
