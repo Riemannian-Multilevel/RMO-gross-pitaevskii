@@ -126,6 +126,9 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::AffineConstraints<double>& constraints,
                      unsigned int level = dealii::numbers::invalid_unsigned_int)
 {
+#ifdef NDEBUG
+    std::cerr << "gpe: Parallel assembly enabled" << std::endl;
+#endif
     const auto& fe = dof_handler.get_fe();
     const dealii::QGauss<dim> quadrature(fe.degree + 1);
 

@@ -22,6 +22,19 @@ dealii::Point<dim> str_to_point(const std::string& s, const char sep=',') {
     return p;
 }
 
+template <class F>
+decltype(auto) with_dimension(unsigned dim, F&& f)
+{
+    switch (dim)
+    {
+        case 1: return std::forward<F>(f)(std::integral_constant<int, 1>{});
+        case 2: return std::forward<F>(f)(std::integral_constant<int, 2>{});
+        case 3: return std::forward<F>(f)(std::integral_constant<int, 3>{});
+        default:
+            throw std::invalid_argument("dimension must be 1, 2 or 3");
+    }
+}
+
 } //namespace gpe
 
 #endif //GPE_UTIL_H

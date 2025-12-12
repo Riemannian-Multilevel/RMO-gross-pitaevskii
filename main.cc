@@ -283,31 +283,45 @@ public:
     }
 };
 
-template <class F>
-decltype(auto) with_policy(bool parallel, F&& f)
+template <int dim, typename ExecutionPolicy>
+void package(double radius, double beta, GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver)
 {
-    return parallel ? f(execution::par) : f(execution::seq);
+    Square<dim> V;
+    GPE_Solve<dim, ExecutionPolicy> GS(radius, beta, opt_gpe);
+
+    auto x = GS.run(V, 1.0, opt_rgd, solver);
+    GS.output(x);
 }
 
-template <int dim>
-void run_package(bool parallel, bool multigrid, unsigned min_level, unsigned max_level,
+template <int dim, typename ExecutionPolicy>
+void package_MG(unsigned min_level, unsigned max_level,
     double radius, double beta, GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver)
 {
     Square<dim> V;
+    GPE_Solve_MG<dim, ExecutionPolicy> GSM(radius, beta, opt_gpe, min_level, max_level);
 
-    with_policy(parallel, [&](auto policy_tag)
-    {
-        using Policy = std::decay_t<decltype(policy_tag)>;
+    auto xv = GSM.run(V, 1.0, opt_rgd, solver);
+}
 
-        if (multigrid) {
-            GPE_Solve_MG<dim, Policy> GSM(radius, beta, opt_gpe, min_level, max_level);
-            GSM.run(V, 1.0, opt_rgd, solver);
+template <int dim, class... Args>
+void run_package(bool parallel, bool multigrid,
+    unsigned min_level, unsigned max_level, Args&& ...args)
+{
+    // TODO: bitfield (similar to update_flags in deal.ii) gpe::parallel | gpe::multigrid
+    if (multigrid) {
+        if (parallel) {
+            package_MG<dim, execution::par_t>(min_level, max_level, std::forward<Args>(args)...);
+        } else {
+            package_MG<dim, execution::seq_t>(min_level, max_level, std::forward<Args>(args)...);
         }
-        else {
-            GPE_Solve<dim, Policy> GS(radius, beta, opt_gpe);
-            GS.run(V, 1.0, opt_rgd, solver);
+    }
+    else {
+        if (parallel) {
+            package<dim, execution::par_t>(std::forward<Args>(args)...);
+        } else {
+            package<dim, execution::seq_t>(std::forward<Args>(args)...);
         }
-    });
+    }
 }
 
 int main(int argc, char* argv[])
@@ -402,25 +416,13 @@ int main(int argc, char* argv[])
         solver = select_solver(solver_str);
         beta   = vm["beta"].as<double>();
 
-        switch (opt_gpe.dimension) {
-            case 1:
-                {
-                    run_package<1>(parallel, multigrid, min_level, max_level, radius, beta, opt_gpe, opt_rgd, solver);
-                }
-                break;
-            case 2:
-                {
-                    run_package<2>(parallel, multigrid, min_level, max_level, radius, beta, opt_gpe, opt_rgd, solver);
-                }
-                break;
-            case 3:
-                {
-                    run_package<3>(parallel, multigrid, min_level, max_level, radius, beta, opt_gpe, opt_rgd, solver);
-                }
-                break;
-            default:
-                throw std::invalid_argument("dimension must be 1, 2 or 3");
-        }
+        with_dimension(opt_gpe.dimension, [&](auto D)
+        {
+            constexpr int dim = decltype(D)::value;
+
+            run_package<dim>(parallel, multigrid, min_level, max_level,
+                radius, beta, opt_gpe, opt_rgd, solver);
+        });
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
