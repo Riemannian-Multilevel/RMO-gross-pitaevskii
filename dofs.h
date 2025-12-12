@@ -28,48 +28,12 @@ enum class Ordering
     MIN_DEG
 };
 
-inline Ordering
-select_order(const std::string& order_str)
-{
-    if (order_str == "DEFAULT") {
-        return Ordering::DEFAULT;
-    }
-    if (order_str == "RANDOM") {
-        return Ordering::RANDOM;
-    }
-    if (order_str == "CUTHILL_MCKEE") {
-        return Ordering::CUTHILL_MCKEE;
-    }
-    if (order_str == "KING") {
-        return Ordering::KING;
-    }
-    if (order_str == "MIN_DEG") {
-        return Ordering::MIN_DEG;
-    }
-    throw std::runtime_error(order_str + ": invalid ordering");
-}
-
 enum class BoundaryCondition
 {
     NEUMANN,
     DIRICHLET,
     ROBIN
 };
-
-inline BoundaryCondition
-select_boundary_condition(const std::string& boundary_str)
-{
-    if (boundary_str == "NEUMANN") {
-        return BoundaryCondition::NEUMANN;
-    }
-    if (boundary_str == "DIRICHLET") {
-        return BoundaryCondition::DIRICHLET;
-    }
-    if (boundary_str == "ROBIN") {
-        return BoundaryCondition::ROBIN;
-    }
-    throw std::runtime_error(boundary_str + ": invalid boundary condition");
-}
 
 //!
 //! @tparam dim
@@ -131,32 +95,47 @@ copy_pattern(const dealii::DynamicSparsityPattern& dsp)
 //!
 //! @tparam dim Dimension of the domain
 //! @param dof_handler
-//! @param level
+//! @param constraints
+//! @param keep_constrained_dofs
 //! @return
 template <int dim>
 dealii::SparsityPattern
 make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::AffineConstraints<double>& constraints = {})
+    const dealii::AffineConstraints<double>& constraints = {}, bool keep_constrained_dofs = true)
 {
     const unsigned int n = dof_handler.n_dofs();
     dealii::DynamicSparsityPattern dynamic_sparsity_pattern(n, n);
 
-    dealii::DoFTools::make_sparsity_pattern(dof_handler,
-        dynamic_sparsity_pattern, constraints, false);
+    dealii::DoFTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern,
+        constraints, keep_constrained_dofs);
 
     return copy_pattern(dynamic_sparsity_pattern);
 }
 
 template <int dim>
 dealii::SparsityPattern
-make_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler,
-    unsigned int level, const dealii::AffineConstraints<double>& constraints = {})
+make_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler, unsigned int level,
+    const dealii::AffineConstraints<double>& constraints = {}, bool keep_constrained_dofs = true)
 {
     const unsigned int n = dof_handler.n_dofs(level);
     dealii::DynamicSparsityPattern dynamic_sparsity_pattern(n, n);
 
-    dealii::MGTools::make_sparsity_pattern(dof_handler,
-        dynamic_sparsity_pattern, level, constraints, false);
+    dealii::MGTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern, level,
+        constraints, keep_constrained_dofs);
+
+    return copy_pattern(dynamic_sparsity_pattern);
+}
+
+template <int dim>
+dealii::SparsityPattern
+make_interface_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler, unsigned int level,
+    const dealii::MGConstrainedDoFs& mg_constrained_dofs)
+{
+    const unsigned int n = dof_handler.n_dofs(level);
+    dealii::DynamicSparsityPattern dynamic_sparsity_pattern(n, n);
+
+    dealii::MGTools::make_interface_sparsity_pattern(dof_handler, mg_constrained_dofs,
+        dynamic_sparsity_pattern, level);
 
     return copy_pattern(dynamic_sparsity_pattern);
 }
@@ -177,6 +156,9 @@ void renumber_dofs(dealii::DoFHandler<dim>& dof_handler,
         AssertIndexRange(level, dof_handler.get_triangulation().n_levels());
     }
     // TODO: further orderings for multilevel
+    bool use_constraints = false;
+    bool reversed_numbering = false;
+
     switch (order) {
         case Ordering::DEFAULT:
             break;
@@ -188,21 +170,24 @@ void renumber_dofs(dealii::DoFHandler<dim>& dof_handler,
             break;
 
         case Ordering::CUTHILL_MCKEE:
-            // TODO: use_constraints for global reordering
             level == dealii::numbers::invalid_unsigned_int
-                ? dealii::DoFRenumbering::Cuthill_McKee(dof_handler, false, false)
-                : dealii::DoFRenumbering::Cuthill_McKee(dof_handler, static_cast<unsigned int>(level), false);
+                ? dealii::DoFRenumbering::Cuthill_McKee(dof_handler,
+                    reversed_numbering, use_constraints)
+                : dealii::DoFRenumbering::Cuthill_McKee(dof_handler,
+                    static_cast<unsigned int>(level), reversed_numbering);
             break;
 
         case Ordering::KING:
             level == dealii::numbers::invalid_unsigned_int
-                ? dealii::DoFRenumbering::boost::king_ordering(dof_handler)
+                ? dealii::DoFRenumbering::boost::king_ordering(dof_handler,
+                    reversed_numbering, use_constraints)
                 : throw std::logic_error("KING ordering not implemented for multilevel");
             break;
 
         case Ordering::MIN_DEG:
             level == dealii::numbers::invalid_unsigned_int
-                ? dealii::DoFRenumbering::boost::minimum_degree(dof_handler)
+                ? dealii::DoFRenumbering::boost::minimum_degree(dof_handler,
+                    reversed_numbering, use_constraints)
                 : throw std::logic_error("MIN_DEG ordering not implemented for multilevel");
             break;
 
@@ -228,12 +213,8 @@ void distribute_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<di
 
 template <int dim>
 void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q<dim>& element,
-                        Ordering order = Ordering::DEFAULT,
-                        const std::vector<bool>& levels = {})
+                        Ordering order = Ordering::DEFAULT)
 {
-    if (levels.size()) {
-        AssertDimension(levels.size(), dof_handler.get_triangulation().n_levels());
-    }
     // Distribute degrees of freedom according to (default or other) ordering,
     // such that a basis of V_h can be enumerated in a deterministic way
     dof_handler.distribute_dofs(element);
@@ -244,13 +225,8 @@ void distribute_mg_dofs(dealii::DoFHandler<dim>& dof_handler, const dealii::FE_Q
     // Reorder degrees of freedom for improved conditioning of system matrix
     // (default: order vertices, faces, ... by refinement level)
     if (order != Ordering::DEFAULT) {
-        // A level is either reordered, or not (bool vector)
-        for (unsigned i = 0; i < levels.size(); i++) {
-            if (levels[i])
-                renumber_dofs<dim>(dof_handler, order, i);
-        }
-        if (levels.empty()) {
-            renumber_dofs<dim>(dof_handler, order);
+        for (unsigned i = 0; i < dof_handler.get_triangulation().n_levels(); i++) {
+            renumber_dofs<dim>(dof_handler, order, i);
         }
     }
 }

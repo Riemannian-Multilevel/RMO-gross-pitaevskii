@@ -18,15 +18,46 @@ using dealii::SparsityPattern;
 using dealii::Vector;
 using dealii::Point;
 
+// SparsityPattern objects need to have the same lifetime as SparseMatrix ones
+struct LevelMatrix
+{
+    SparsityPattern sp;
+    SparseMatrix<double> M;
+    SparseMatrix<double> A0;
+    SparseMatrix<double> Mpp;
+
+    void reinit(const SparsityPattern& sparsity)
+    {
+        sp.copy_from(sparsity);
+        M.reinit(sp);
+        A0.reinit(sp);
+        Mpp.reinit(sp);
+    }
+};
+
+// Matrix used for boundary residuals in geometric multigrid
+struct InterfaceMatrix
+{
+    SparsityPattern sp;
+    SparseMatrix<double> IM;
+
+    void reinit(const SparsityPattern& sparsity)
+    {
+        sp.copy_from(sparsity);
+        IM.reinit(sp);
+    }
+};
+
 //!
 //! @param M Sparse matrix
 //! @return Copy of input sparse matrix
-SparseMatrix<double>
+inline SparseMatrix<double>
 sp_copy(const SparseMatrix<double>& M)
 {
     SparseMatrix<double> M_copy;
     M_copy.reinit(M);
     M_copy.copy_from(M);
+
     return M_copy;
 }
 
@@ -36,19 +67,6 @@ enum class SolverMethod
     MINRES,
     CG
 };
-
-inline SolverMethod select_solver(const std::string& solver_str)
-{
-    if (solver_str == "GMRES") {
-        return SolverMethod::GMRES;
-    } else if (solver_str == "MINRES") {
-        return SolverMethod::MINRES;
-    } else if (solver_str == "CG") {
-        return SolverMethod::CG;
-    } else {
-        throw std::runtime_error(solver_str + ": invalid solver");
-    }
-}
 
 inline std::string
 to_string(SolverMethod method)

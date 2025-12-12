@@ -11,16 +11,6 @@ namespace gpe
 {
 // TODO: lac_types.h to easily change to different matrix implementation
 
-// TODO: "unitialized from function main" when used with program_options (populated in try/catch loop)
-struct GPE_Options
-{
-    int dimension;          // dimension of domain
-    int n_levels;           // number of levels for global refinement
-    int degree;             // degree of shape functions
-    Ordering order;         // ordering for degrees of freedom
-    BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
-};
-
 //! Wrapper object for GPE problem, which encodes order/dependencies of used methods
 //! @tparam dim
 template <int dim>
@@ -29,66 +19,68 @@ class GPE
 public:
     //!
     //! @param radius_ Radius of the cube domain
-    //! @param options_ Parameters for GPE problem
+    //! @param degree_
     // TODO: simplify to radius / hyper cube (later: allow passing in arbitrary meshes?)
-    GPE(double radius_, const GPE_Options& options_)
+    GPE(double radius_, unsigned int degree_)
     :
-        radius(radius_), options(options_),
+        radius(radius_), degree(degree_),
         // Flag to allow multigrid algorithms
         triangulation(dealii::Triangulation<dim>::limit_level_difference_at_vertices),
         // DoFHandler<> has a deleted assignment operator, so initialize in the constructor
-        element(options.degree), dof_handler(triangulation)
+        element(degree), dof_handler(triangulation)
     {
-        options.dimension = dim;
+        dimension = dim;
     }
 
-    void make_grid()
+    void make_grid(int n_levels)
     {
         // step 1 - regularly refined mesh
-        make_cube(triangulation, radius, options.n_levels);
+        make_cube(triangulation, radius, n_levels);
         has_grid = true;
 
         std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
         std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
     }
 
-    void make_grid_graded(const int n_adaptive)
+    void plot_grid(const std::string& prefix) const
     {
-        // step 1 - mesh refined towards the origin
-        make_cube_graded(triangulation, radius, options.n_levels, n_adaptive);
-        has_adaptive_grid = true;
-
-        std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
-        std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
+        const std::string filename = prefix + "_" + std::to_string(dim) + "{}";
+        if (dim == 2) {
+            grid2file(filename + ".svg", triangulation, dealii::GridOut::OutputFormat::svg);
+        }
+        grid2file(filename + ".gnuplot", triangulation, dealii::GridOut::OutputFormat::gnuplot);
     }
 
-    void dofs()
+    void dofs(Ordering order, BoundaryCondition bc)
     {
-        if (!has_grid && !has_adaptive_grid)
+        if (!has_grid)
             throw dealii::ExcEmptyObject("GPE::dofs(): call make_grid() or make_grid_graded() first");
 
         // step 2 - degrees of freedom
-        distribute_dofs(dof_handler, element, options.order);
+        distribute_dofs(dof_handler, element, order);
 
         // step 6 - formulate constraints
-        constraints = make_boundary(dof_handler, options.bc, {0});
+        constraints = make_boundary(dof_handler, bc, dirichlet_boundary_ids);
         constraints.close();
         has_active_constraints = true;
     }
 
-    void dofs_mg()
+    void dofs_mg(Ordering order, BoundaryCondition bc)
     {
         if (!has_grid)
             throw dealii::ExcEmptyObject("GPE::dofs_mg(): call make_grid() first");
-        else if (has_adaptive_grid)
-            throw dealii::ExcNotImplemented("GPE::dofs_mg(): not implemented for adaptively refined grid");
 
         // step 2 - degrees of freedom - ordering applied to every level
-        distribute_mg_dofs(dof_handler, element, options.order, std::vector<bool>(options.n_levels, true));
+        distribute_mg_dofs(dof_handler, element, order);
 
         // step 6 - formulate constraints
-        mg_constrained_dofs = make_boundary_mg(dof_handler, options.bc, {0});
-        has_mg_constraints = true;
+        constraints = make_boundary(dof_handler, bc, dirichlet_boundary_ids);
+        constraints.close();
+        has_active_constraints = true;
+
+        // step 16 - formulate multigrid constraints
+        mg_constrained_dofs = make_boundary_mg(dof_handler, bc, dirichlet_boundary_ids);
+        has_mg_constraints  = true;
     }
 
     const dealii::DoFHandler<dim>&
@@ -106,11 +98,15 @@ public:
     {
         return triangulation;
     }
+    unsigned int n_levels() const
+    {
+        return triangulation.n_levels();
+    }
     const dealii::AffineConstraints<double>&
         get_constraints() const
     {
         if (!has_active_constraints)
-            throw dealii::ExcEmptyObject("GPE::get_constraints(): call dofs() first");
+            throw dealii::ExcEmptyObject("GPE::get_constraints(): call dofs() or dofs_mg() first");
 
         return constraints;
     }
@@ -122,15 +118,12 @@ public:
 
         return mg_constrained_dofs.get_level_constraints(level);
     }
-    GPE_Options get_options() const
-    {
-        return options;
-    }
 
 private:
     // Problem parameters
     double radius;
-    GPE_Options options;
+    unsigned int degree;
+    int dimension;
 
     // Finite element containers
     dealii::Triangulation<dim> triangulation; // copy stored by dof_handler
@@ -138,6 +131,7 @@ private:
     dealii::DoFHandler<dim> dof_handler;
 
     // Constraints for active level or multigrid
+    std::set<dealii::types::boundary_id> dirichlet_boundary_ids = {0};
     dealii::AffineConstraints<double> constraints;
     dealii::MGConstrainedDoFs mg_constrained_dofs;
 
@@ -145,7 +139,6 @@ private:
     bool has_active_constraints = false;
     bool has_mg_constraints = false;
     bool has_grid = false;
-    bool has_adaptive_grid = false;
 };
 
 }

@@ -15,6 +15,17 @@ struct GdControl
     double rg_norm;
 };
 
+struct GdOptions
+{
+    double tol_inner;     // relative tolerance for inner solver
+    double tol_lambda;    // tolerance for rayleigh quotients
+    double tol_residual;  // tolerance for M-residual
+    double step_size;     // fixed step-size used in iteration steps
+    int max_iter;         // maximum GD iterations
+    int max_inner;        // maximum sparse solver iterations
+    SolverMethod solver;  // method for solving sparse linear equations
+};
+
 template <typename Matrix>
 void energy_residual(GdControl& control, const Vector<double>& x, const Vector<double>& g,
                      const Matrix& A, const Matrix& M)
@@ -55,16 +66,6 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
     return x * Bx;
 }
 
-struct GdOptions
-{
-    double tol_inner;     // relative tolerance for inner solver
-    double tol_lambda;    // tolerance for rayleigh quotients
-    double tol_residual;  // tolerance for M-residual
-    double step_size;     // fixed step-size used in iteration steps
-    int max_iter;         // maximum GD iterations
-    int max_inner;        // maximum sparse solver iterations
-};
-
 template <typename Matrix>
 bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
                                 const Vector<double>& x, const Vector<double>& g,
@@ -90,9 +91,8 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 //! @param M Mass matrix
 //! @param Mpp Weighed mass matrix, updated in every iteration step
 //! @param x0 Starting value
-//! @param constraints Object for applying FE constraints to the solution
 //! @param beta Non-linearity factor for GPE
-//! @param solver Used sparse solver (gmres|minres|cg)
+//! @param constraints Object for applying FE constraints to the solution
 //! @param update_mpp
 //! @param options Termination criteria
 //! @param check_every Number of iterations after which to check termination criteria
@@ -101,9 +101,8 @@ template <int dim, typename Function>
 Vector<double>
 // TODO: SolverOptions for inner solve
 gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
-              Function&& update_mpp, const Vector<double>& x0,
+              Function&& update_mpp, const Vector<double>& x0, double beta,
               const dealii::AffineConstraints<double>& constraints,
-              double beta, SolverMethod solver,
               const GdOptions& options, int check_every = 5)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
@@ -126,7 +125,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
 
         // Solve linear system (boundary constraints assumed applied to A_0, M, Mpp)
         // TODO: distribute constraints again?
-        Vector<double> y = solve_sparse(A, x, solver,
+        Vector<double> y = solve_sparse(A, x, options.solver,
             precondition, options.max_inner, options.tol_inner);
 
         // z <- A^{-1}x / (x' A^{-1}x)
