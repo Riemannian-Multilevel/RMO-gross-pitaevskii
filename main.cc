@@ -2,7 +2,7 @@
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
 #include "gpe.h"
-#include "energy.h"
+#include "gpe_solve.h"
 #include "util.h"
 
 #include <deal.II/numerics/data_out.h>
@@ -77,6 +77,8 @@ public:
     GPE_Solve(double radius_, double beta_, const GPE_Options& options_)
         : problem(radius_, options_), beta(beta_)
     {
+        // TODO: grid based on KellyErrorEstimator (run after different solves, so move this outside the constructor?)
+        //       make_grid_graded() leads to increased conditioning, due to hanging node constraints
         problem.make_grid();
         problem.dofs();
     }
@@ -86,10 +88,10 @@ public:
     void matrix(Function&& V, LevelMatrix& lm) const
     {
         // Construct sparsity pattern
-        lm.reinit(make_sparsity_pattern(problem.get_dofs()));
+        const AffineConstraints<double>& constraints = problem.get_constraints();
+        lm.reinit(make_sparsity_pattern(problem.get_dofs(), constraints));
 
         // Assemble matrix + boundary conditions
-        const AffineConstraints<double>& constraints = problem.get_constraints();
         assemble_mass(lm.M, problem.get_dofs(), constraints);
         assemble_A0(lm.A0, problem.get_dofs(), V, constraints);
     }
@@ -156,6 +158,7 @@ public:
     :
         problem(radius_, options_), beta(beta_), min_level(min_level_), max_level(max_level_)
     {
+        // TODO: retrieve from options if grid should be (adaptively) refined
         problem.make_grid();
         problem.dofs_mg();
 
@@ -170,10 +173,10 @@ public:
         AssertIndexRange(level, problem.get_triangulation().n_global_levels());
 
         // Initialize sparsity pattern and compute entries (level)
-        const DoFHandler<dim>& dof_handler = problem.get_dofs();
-        lm.reinit(make_sparsity_pattern(dof_handler, level));
-
         const AffineConstraints<double>& level_constraints = problem.get_level_constraints(level);
+        const DoFHandler<dim>& dof_handler = problem.get_dofs();
+        lm.reinit(make_sparsity_pattern_mg(dof_handler, level));
+
         assemble_mass(lm.M, problem.get_dofs(), level_constraints, level);
         assemble_A0(lm.A0, problem.get_dofs(), V, level_constraints, level);
     }
@@ -214,6 +217,7 @@ public:
             Vector<double> x0(dof_handler.n_dofs(level));
             x0 = x0d;
 
+            // TODO: check for missing steps in tutorial/step-16
             // if (level == min_level) {
             //     // Constant value on coarsest level
             //     x0 = x0d;
@@ -279,8 +283,8 @@ public:
 // Put it all together:
 // 1. single level RGD
 template <int dim>
-void package(double radius, double beta,
-    GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver)
+void package(double radius, double beta, GPE_Options opt_gpe,
+    GdOptions opt_rgd, SolverMethod solver)
 {
     Square<dim> V;
     GPE_Solve<dim> GS(radius, beta, opt_gpe);
@@ -291,8 +295,8 @@ void package(double radius, double beta,
 
 // 2. multiresolution RGD
 template <int dim>
-void package_MR(double radius, double beta,
-    GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
+void package_MR(double radius, double beta, GPE_Options opt_gpe,
+    GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
 {
     Square<dim> V;
     GPE_Solve_MR<dim> GSM(radius, beta, opt_gpe, min_level, max_level);
@@ -304,8 +308,8 @@ void package_MR(double radius, double beta,
 
 // 3. multilevel RGD (Nash)
 template <int dim>
-void package_MG(double radius, double beta,
-    GPE_Options opt_gpe, GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
+void package_MG(double radius, double beta, GPE_Options opt_gpe,
+    GdOptions opt_rgd, SolverMethod solver, int min_level, int max_level)
 {
     Square<dim> V;
 
@@ -314,7 +318,7 @@ void package_MG(double radius, double beta,
 
 int main(int argc, char* argv[])
 {
-    bool         multigrid;
+    bool         multigrid, adaptive;
     SolverMethod solver;
     GdOptions    opt_rgd{};
     GPE_Options  opt_gpe{};
@@ -401,6 +405,30 @@ int main(int argc, char* argv[])
         opt_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
         solver = select_solver(solver_str);
         beta   = vm["beta"].as<double>();
+
+        switch (opt_gpe.dimension) {
+            case 1:
+                {
+                    // Default endpoints of rectangle
+                    multigrid ? package_MR<1>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                              : package<1>(radius, beta, opt_gpe, opt_rgd, solver);
+                }
+                break;
+            case 2:
+                {
+                    multigrid ? package_MR<2>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                              : package<2>(radius, beta, opt_gpe, opt_rgd, solver);
+                }
+                break;
+            case 3:
+                {
+                    multigrid ? package_MR<3>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
+                              : package<3>(radius, beta, opt_gpe, opt_rgd, solver);
+                }
+                break;
+            default:
+                throw std::invalid_argument("dimension must be 1, 2 or 3");
+        }
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -409,29 +437,5 @@ int main(int argc, char* argv[])
     catch (...) {
         std::cerr << "Exception of unknown type!\n";
         return 1;
-    }
-
-    switch (opt_gpe.dimension) {
-    case 1:
-        {
-            // Default endpoints of rectangle
-            multigrid ? package_MR<1>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                      : package<1>(radius, beta, opt_gpe, opt_rgd, solver);
-        }
-        break;
-    case 2:
-        {
-            multigrid ? package_MR<2>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                      : package<2>(radius, beta, opt_gpe, opt_rgd, solver);
-        }
-        break;
-    case 3:
-        {
-            multigrid ? package_MR<3>(radius, beta, opt_gpe, opt_rgd, solver, min_level, max_level)
-                      : package<3>(radius, beta, opt_gpe, opt_rgd, solver);
-        }
-        break;
-    default:
-        throw std::invalid_argument("dimension must be 1, 2 or 3");
     }
 }

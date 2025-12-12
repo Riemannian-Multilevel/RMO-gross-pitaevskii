@@ -16,7 +16,7 @@ set(COMMON_HEADERS
         assemble.h
         lac.h
         util.h
-        energy.h
+        gpe_solve.h
         gpe.h
 )
 deal_ii_initialize_cached_variables()

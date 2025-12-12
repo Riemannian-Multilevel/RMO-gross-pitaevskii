@@ -62,9 +62,10 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::AffineConstraints<double>& constraints,
                      unsigned int level = invalid_unsigned_int)
 {
+    // Quadrature formula for the evaluation of the integrals on each cell
     const auto& element = dof_handler.get_fe();
-    // Quadrature formula for the evaluation of the integrals on each cel
     const dealii::QGauss<dim> quadrature_formula(element.degree + 1);
+
     // Class which handles finite element, quadrature, and mapping objects
     dealii::FEValues<dim> fe_values(element, quadrature_formula, flags);
 
@@ -79,21 +80,42 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     // XXX: optional parameter if (reinit) ... (default true)
     system_matrix = 0;  // system_matrix.reinit(system_matrix.get_sparsity_pattern())
 
+    // Generic lambda: works for active-cell range and mg-level range
+    auto assemble_over_cells = [&](const auto &cell_range)
+    {
+        for (const auto &cell : cell_range)  // cell is a DoFHandler<dim>::(active|level)_cell_iterator
+        {
+            fe_values.reinit(cell); // convertible to Triangulation::cell_iterator
+            cell_matrix = 0;
+            cell->get_active_or_mg_dof_indices(local_dof_indices);
+
+            // Pass on populated DoF indices to assemble matrix
+            assemble_cell(fe_values, cell_matrix, local_dof_indices);
+
+            // Apply boundary conditions (Dirichlet and hanging nodes, if any)
+            // when distributing local (cell) matrix entries
+            constraints.distribute_local_to_global(cell_matrix, local_dof_indices, system_matrix);
+        }
+    };
+
     // Iterate over cells / degrees of freedom
     if (level == invalid_unsigned_int) {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs());
         AssertDimension(system_matrix.n(), dof_handler.n_dofs());
 
         // Iterate over active cells
-        assemble_system_impl(dof_handler.active_cell_iterators(),
-            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell, constraints);
-    } else {
+        // assemble_system_impl(dof_handler.active_cell_iterators(),
+        //     fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell, constraints);
+        assemble_over_cells(dof_handler.active_cell_iterators());
+    }
+    else {
         AssertDimension(system_matrix.m(), dof_handler.n_dofs(level));
         AssertDimension(system_matrix.n(), dof_handler.n_dofs(level));
 
         // Iterate over multigrid cells on given level
-        assemble_system_impl(dof_handler.mg_cell_iterators_on_level(level),
-            fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell, constraints);
+        // assemble_system_impl(dof_handler.mg_cell_iterators_on_level(level),
+        //     fe_values, system_matrix, cell_matrix, local_dof_indices, assemble_cell, constraints);
+        assemble_over_cells(dof_handler.mg_cell_iterators_on_level(level));
     }
 }
 

@@ -118,6 +118,15 @@ void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
     dealii::DoFTools::write_gnuplot_dof_support_point_info(out, id_to_point);
 }
 
+template <typename... Args>
+dealii::SparsityPattern
+copy_pattern(const dealii::DynamicSparsityPattern& dsp)
+{
+    dealii::SparsityPattern sp;
+    sp.copy_from(dsp);
+    return sp;
+}
+
 //! Create a sparsity pattern from a DoF object
 //!
 //! @tparam dim Dimension of the domain
@@ -127,32 +136,29 @@ void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
 template <int dim>
 dealii::SparsityPattern
 make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
-    unsigned int level = dealii::numbers::invalid_unsigned_int)
+    const dealii::AffineConstraints<double>& constraints = {})
 {
-    unsigned int n;
-    if (level != dealii::numbers::invalid_unsigned_int) {
-        // multigrid case
-        n = dof_handler.n_dofs(level);
-    } else {
-        n = dof_handler.n_dofs();
-    }
-
-    // Since the bandwidth of the system matrix is unknown beforehand, or
-    // with a pessimistic upper bound, we use `DynamicSparsityPattern` to allocate
-    // positions and then copy it to CSR format (`SparsityPattern`).
+    const unsigned int n = dof_handler.n_dofs();
     dealii::DynamicSparsityPattern dynamic_sparsity_pattern(n, n);
 
-    if (level != dealii::numbers::invalid_unsigned_int) {
-        // multigrid case
-        dealii::MGTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern, level);
-    } else {
-        dealii::DoFTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern);
-    }
+    dealii::DoFTools::make_sparsity_pattern(dof_handler,
+        dynamic_sparsity_pattern, constraints, false);
 
-    dealii::SparsityPattern sparsity_pattern;
-    sparsity_pattern.copy_from(dynamic_sparsity_pattern);
+    return copy_pattern(dynamic_sparsity_pattern);
+}
 
-    return sparsity_pattern;
+template <int dim>
+dealii::SparsityPattern
+make_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler,
+    unsigned int level, const dealii::AffineConstraints<double>& constraints = {})
+{
+    const unsigned int n = dof_handler.n_dofs(level);
+    dealii::DynamicSparsityPattern dynamic_sparsity_pattern(n, n);
+
+    dealii::MGTools::make_sparsity_pattern(dof_handler,
+        dynamic_sparsity_pattern, level, constraints, false);
+
+    return copy_pattern(dynamic_sparsity_pattern);
 }
 
 //! Renumber degrees of freedom for improved conditioning of system matrix.
@@ -278,7 +284,6 @@ make_boundary(dealii::DoFHandler<dim>& dof_handler, BoundaryCondition bc,
         default:
             throw std::invalid_argument("Unknown boundary condition");
     }
-    constraints.close();
     return constraints;
 }
 
@@ -303,6 +308,7 @@ make_boundary_mg(dealii::DoFHandler<dim>& dof_handler, const BoundaryCondition b
 
         case BoundaryCondition::DIRICHLET:
             // Dirichlet boundary (zero-valued)
+            // TODO: makes sense from a residual perspective; general case?
             mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, dirichlet_ids);
             break;
 

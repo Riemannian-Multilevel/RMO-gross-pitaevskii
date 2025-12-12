@@ -125,6 +125,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         A.add(beta, Mpp);
 
         // Solve linear system (boundary constraints assumed applied to A_0, M, Mpp)
+        // TODO: distribute constraints again?
         Vector<double> y = solve_sparse(A, x, solver,
             precondition, options.max_inner, options.tol_inner);
 

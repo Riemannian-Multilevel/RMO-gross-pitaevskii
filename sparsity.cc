@@ -1,6 +1,6 @@
 #include "mesh.h"
 #include "dofs.h"
-#include "util.h"
+#include "gpe.h"
 
 #include <fmt/format.h>
 #include <iostream>
@@ -17,22 +17,19 @@ using namespace dealii;
 //! @param handler DoFHandler
 //! @return
 template <int dim>
-// Use vector with one entry for interoperability with dofs_mg_sparsity
-// (SparsityPattern has no copy or move constructors)
-std::vector<SparsityPattern>
-dofs_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
+SparsityPattern
+dofs_sparsity(const DoFHandler<dim>& handler, const AffineConstraints<double>& constraints,
+    std::string prefix = "domain")
 {
     assert(handler.has_active_dofs());
     write_dof_locations(handler, fmt::format("{}_{}d_dof.gnuplot", prefix, handler.dimension));
-    std::vector<SparsityPattern> Sd_v(1);
 
-    auto Sd = make_sparsity_pattern(handler);
+    auto Sd = make_sparsity_pattern(handler, constraints);
     {
         std::ofstream out(fmt::format("{}_{}d_sparsity.svg", prefix, handler.dimension));
         Sd.print_svg(out);
     }
-    Sd_v[0].copy_from(Sd);
-    return Sd_v;
+    return Sd;
 }
 
 //! Retrieve and visualize sparsity pattern for a given DoF ordering
@@ -40,6 +37,7 @@ dofs_sparsity(const DoFHandler<dim>& handler, std::string prefix = "domain")
 //! @param dof_handler DoFHandler
 //! @return
 template <int dim>
+// TODO: MGLevelObject for min/max level
 std::vector<SparsityPattern>
 dofs_mg_sparsity(const DoFHandler<dim>& dof_handler, std::string prefix = "domain")
 {
@@ -55,7 +53,7 @@ dofs_mg_sparsity(const DoFHandler<dim>& dof_handler, std::string prefix = "domai
             prefix, dof_handler.dimension, level));
     }
     for (int level = 0; level < n_levels; ++level) {
-        auto Sd = make_sparsity_pattern(dof_handler, level);
+        auto Sd = make_sparsity_pattern_mg(dof_handler, level);
         Sd_v[level].copy_from(Sd);
 
         std::ofstream out(fmt::format("{}_{}d_sparsity_l{}.svg",
@@ -65,117 +63,74 @@ dofs_mg_sparsity(const DoFHandler<dim>& dof_handler, std::string prefix = "domai
     return Sd_v;
 }
 
+// TODO: dirichlet boundary and hanging-node constraints for sparsity pattern
+//       inner/outer radius for adaptive refinement
 template <int dim>
 class GPE_Sparsity
 {
 public:
-    GPE_Sparsity(const unsigned int n_levels_, const unsigned int degree, double radius_,
-        const Ordering order_ = Ordering::DEFAULT)
+    GPE_Sparsity(GPE_Options options_, const double radius_)
     :
-        n_levels(n_levels_), order(order_), radius(radius_),
+        options(options_), radius(radius_),
         triangulation(Triangulation<dim>::limit_level_difference_at_vertices),
-        element(degree), dof_handler(triangulation)
+        element(options.degree), dof_handler(triangulation)
     {}
 
-    void plot()
+    void plot() const
     {
-        // visualize grid
         if (dim == 2) {
             grid2file(fmt::format("rectangle_{}d.svg",dim), triangulation, GridOut::OutputFormat::svg);
         }
         grid2file(fmt::format("rectangle_{}d.gnuplot",dim), triangulation, GridOut::OutputFormat::gnuplot);
     }
 
-    // generate cubic domain
-    void make_cube()
-    {
-        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
-
-        // the number of cells increases by a factor of 2^(dim x times)
-        triangulation.refine_global(n_levels-1);
-        AssertDimension(n_levels, triangulation.n_global_levels());
-    }
-
-    // generate cube domain, refined around the origin
-    // TODO: move to mesh.h
-    void make_cube_graded(double R_outer = -1.0, double R_inner = -1.0)
-    {
-        if (n_levels <= 2) throw ExcInternalError("n_levels must be at least 2");
-
-        // defaults for controlling grading strength
-        if (R_outer == -1.0) {
-            // start refining inside this radius
-            R_outer = radius*std::sqrt(static_cast<double>(dim));
-        }
-        if (R_inner == -1.0) {
-            // target radius for finest cells
-            R_inner = 0.5;
-        }
-
-        // Geometric shrink factor for the refinement radius per cycle
-        const double shrink = std::pow(R_inner / R_outer, 1.0 / n_levels);
-
-        // Start from a very coarse mesh on [-L, L]^dim
-        GridGenerator::hyper_cube(triangulation, -radius, radius);
-
-        triangulation.refine_global(2);
-        double current_radius = R_outer;
-
-        for (unsigned int cycle = 0; cycle < n_levels; ++cycle)
-        {
-            // Mark cells for refinement if their center is closer
-            // than current_radius to the origin
-            for (const auto &cell : triangulation.active_cell_iterators())
-            {
-                if (const double r = cell->center().norm(); r < current_radius) {
-                    cell->set_refine_flag();
-                }
-            }
-            triangulation.execute_coarsening_and_refinement();
-            current_radius *= shrink;
-        }
-    }
-
-    // TODO: MGLevelObject vs. std::vector
-    [[maybe_unused]] std::vector<SparsityPattern> dofs()
+    [[maybe_unused]] SparsityPattern
+    dofs(const AffineConstraints<double>& constraints = {})
     {
         // step 2 - degrees of freedom
-        distribute_dofs(dof_handler, element, order);
+        distribute_dofs(dof_handler, element, options.order);
 
         std::cerr << "Number of active cells: " << triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of levels: " << triangulation.n_levels() << std::endl;
 
-        return dofs_sparsity(dof_handler);
+        return dofs_sparsity(dof_handler, constraints);
     }
 
-    // TODO: MGLevelObject vs. std::vector
-    [[maybe_unused]] std::vector<SparsityPattern> dofs_mg()
+    // TODO: MGLevelObject for min/max level
+    [[maybe_unused]] std::vector<SparsityPattern>
+    dofs_mg()
     {
         // step 2 - degrees of freedom - ordering applied to every level
-        std::vector<bool> levels(n_levels, true);
+        std::vector<bool> levels(options.n_levels, true);
 
         // DoFHandler::distribute_dofs, DoFHandler::distribute_mg_dofs
-        distribute_mg_dofs(dof_handler, element, order, levels);
+        distribute_mg_dofs(dof_handler, element, options.order, levels);
 
-        std::cerr << "Number of levels: " << n_levels << std::endl;
-        for (unsigned int i = 0; i < n_levels; i++) {
+        std::cerr << "Number of levels: " << options.n_levels << std::endl;
+        for (int i = 0; i < options.n_levels; i++) {
             std::cerr << "Number of cells (level " << i << "): " << triangulation.n_cells(i) << std::endl;
         }
         return dofs_mg_sparsity(dof_handler);
     }
 
-    void run(bool multigrid, bool adaptive)
+    void run(bool multigrid, bool adaptive, int n_levels_adaptive = 0)
     {
-        adaptive  ? this->make_cube_graded() : this->make_cube();
-        multigrid ? this->dofs_mg() : this->dofs();
-
+        if (adaptive) {
+            make_cube_graded(triangulation, radius, options.n_levels, n_levels_adaptive);
+        } else {
+            make_cube(triangulation, radius, options.n_levels);
+        }
+        if (multigrid) {
+            this->dofs_mg();
+        } else {
+            this->dofs();
+        }
         this->plot();
     }
 
 private:
     // Problem parameters
-    unsigned int n_levels;
-    Ordering order;
+    GPE_Options options;
     double radius;
 
     // Finite element containers
@@ -186,10 +141,9 @@ private:
 
 int main(int argc, char** argv)
 {
-    int degree, n_levels, dimension;
+    GPE_Options options{};
     int min_level, max_level;
     bool multigrid, adaptive = false;
-    Ordering order;
     double radius;
 
     // TODO: add configuration file (cf. boost tutorial)
@@ -200,7 +154,13 @@ int main(int argc, char** argv)
             ("degree", po::value<int>()->default_value(1),
              "polynomial degree for finite element")
             ("levels", po::value<int>()->default_value(3),
-             "number of times to globally refine the mesh")
+             "number of times to regularly refine the mesh")
+            ("levels-adaptive", po::value<int>()->default_value(2),
+                "number of times to refine the mesh towards the origin")
+            ("radius-inner", po::value<double>()->default_value(-1.0),
+                "inner radius for mesh refinement")
+            ("radius-outer", po::value<double>()->default_value(-1.0),
+                "outer radius for mesh refinement")
             ("min-level", po::value<int>()->default_value(0),
                 "minimum multigrid level")
             ("max-level", po::value<int>()->default_value(0),
@@ -227,14 +187,40 @@ int main(int argc, char** argv)
         auto order_str = vm["ordering"].as<std::string>();
         std::transform(order_str.begin(), order_str.end(), order_str.begin(), ::toupper);
 
-        order      = select_order(order_str);
-        degree     = vm["degree"].as<int>();
-        n_levels   = vm["levels"].as<int>();
-        dimension  = vm["dimension"].as<int>();
-        radius     = vm["radius"].as<double>();
-        min_level  = vm["min-level"].as<int>();
-        max_level  = vm["max-level"].as<int>();
-        max_level  = max_level == 0 ? n_levels : max_level;
+        options.order = select_order(order_str);
+        options.degree = vm["degree"].as<int>();
+        options.n_levels = vm["levels"].as<int>();
+        options.dimension = vm["dimension"].as<int>();
+        options.bc = BoundaryCondition::NEUMANN;
+
+        radius    = vm["radius"].as<double>();
+        int n_levels_adaptive = vm["levels-adaptive"].as<int>();
+        min_level = vm["min-level"].as<int>();
+        max_level = vm["max-level"].as<int>();
+        max_level = max_level == 0 ? options.n_levels : max_level;
+
+        switch (options.dimension) {
+            case 1:
+                {
+                    GPE_Sparsity<1> Problem(options, radius);
+                    Problem.run(multigrid, adaptive, n_levels_adaptive);
+                }
+                break;
+            case 2:
+                {
+                    GPE_Sparsity<2> Problem(options, radius);
+                    Problem.run(multigrid, adaptive, n_levels_adaptive);
+                }
+                break;
+            case 3:
+                {
+                    GPE_Sparsity<3> Problem(options, radius);
+                    Problem.run(multigrid, adaptive, n_levels_adaptive);
+                }
+                break;
+            default:
+                throw std::invalid_argument("dimension must be 1, 2 or 3");
+        }
     }
     catch (std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
@@ -243,28 +229,5 @@ int main(int argc, char** argv)
     catch (...) {
         std::cerr << "Exception of unknown type!\n";
         return 1;
-    }
-
-    switch (dimension) {
-    case 1:
-        {
-            GPE_Sparsity<1> Problem(n_levels, degree, radius, order);
-            Problem.run(multigrid, adaptive);
-        }
-        break;
-    case 2:
-        {
-            GPE_Sparsity<2> Problem(n_levels, degree, radius, order);
-            Problem.run(multigrid, adaptive);
-        }
-        break;
-    case 3:
-        {
-            GPE_Sparsity<3> Problem(n_levels, degree, radius, order);
-            Problem.run(multigrid, adaptive);
-        }
-        break;
-    default:
-        throw std::invalid_argument("dimension must be 1, 2 or 3");
     }
 }

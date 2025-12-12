@@ -12,15 +12,17 @@ namespace gpe
 {
 // TODO: lac_types.h to easily change to different matrix implementation
 
+// TODO: "unitialized from function main" when used with program_options (populated in try/catch loop)
 struct GPE_Options
 {
     int dimension;          // dimension of domain
-    int n_levels;           // number of levels in finite element discretization
+    int n_levels;           // number of levels for global refinement
     int degree;             // degree of shape functions
     Ordering order;         // ordering for degrees of freedom
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
 };
 
+//! Wrapper object for GPE problem, which encodes order/dependencies of used methods
 //! @tparam dim
 template <int dim>
 class GPE
@@ -43,31 +45,45 @@ public:
 
     void make_grid()
     {
-        // step 1 - make grid
-        // cube consisting of precisely one cell
-        std::cerr << "Dimension: " << options.dimension << std::endl;
-        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
+        // step 1 - regularly refined mesh
+        make_cube(triangulation, radius, options.n_levels);
+        has_grid = true;
 
-        // the number of cells increases by a factor of 2^(dim x times)
-        // -> n_levels equals the number of refinements + 1
-        triangulation.refine_global(options.n_levels-1);
-
-        AssertDimension(options.n_levels, triangulation.n_global_levels());
         std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
+        std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
+    }
+
+    void make_grid_graded(const int n_adaptive)
+    {
+        // step 1 - mesh refined towards the origin
+        make_cube_graded(triangulation, radius, options.n_levels, n_adaptive);
+        has_adaptive_grid = true;
+
+        std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
+        std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
     }
 
     void dofs()
     {
+        if (!has_grid && !has_adaptive_grid)
+            throw dealii::ExcEmptyObject("GPE::dofs(): call make_grid() or make_grid_graded() first");
+
         // step 2 - degrees of freedom
         distribute_dofs(dof_handler, element, options.order);
 
         // step 6 - formulate constraints
         constraints = make_boundary(dof_handler, options.bc, {0});
+        constraints.close();
         has_active_constraints = true;
     }
 
     void dofs_mg()
     {
+        if (!has_grid)
+            throw dealii::ExcEmptyObject("GPE::dofs_mg(): call make_grid() first");
+        else if (has_adaptive_grid)
+            throw dealii::ExcNotImplemented("GPE::dofs_mg(): not implemented for adaptively refined grid");
+
         // step 2 - degrees of freedom - ordering applied to every level
         distribute_mg_dofs(dof_handler, element, options.order, std::vector<bool>(options.n_levels, true));
 
@@ -94,20 +110,19 @@ public:
     const dealii::AffineConstraints<double>&
         get_constraints() const
     {
-        if (!has_active_constraints) {
+        if (!has_active_constraints)
             throw dealii::ExcEmptyObject("GPE::get_constraints(): call dofs() first");
-        }
+
         return constraints;
     }
     const dealii::AffineConstraints<double>&
         get_level_constraints(const unsigned level) const
     {
-        if (!has_mg_constraints) {
+        if (!has_mg_constraints)
             throw dealii::ExcEmptyObject("GPE::get_mg_constraints(): call dofs_mg() first");
-        }
+
         return mg_constrained_dofs.get_level_constraints(level);
     }
-
     GPE_Options get_options() const
     {
         return options;
@@ -119,17 +134,19 @@ private:
     GPE_Options options;
 
     // Finite element containers
-    dealii::Triangulation<dim>   triangulation; // copy stored by dof_handler
-    const dealii::FE_Q<dim>      element;       // copy stored by dof_handler
-    dealii::DoFHandler<dim>      dof_handler;
+    dealii::Triangulation<dim> triangulation; // copy stored by dof_handler
+    const dealii::FE_Q<dim> element;          // copy stored by dof_handler
+    dealii::DoFHandler<dim> dof_handler;
 
     // Constraints for active level or multigrid
     dealii::AffineConstraints<double> constraints;
     dealii::MGConstrainedDoFs mg_constrained_dofs;
 
-    // Sanity check
+    // Checks & balances
     bool has_active_constraints = false;
     bool has_mg_constraints = false;
+    bool has_grid = false;
+    bool has_adaptive_grid = false;
 };
 
 }
