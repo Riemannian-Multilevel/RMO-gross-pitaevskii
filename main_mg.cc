@@ -23,10 +23,10 @@ public:
         unsigned int min_level_ = 0,
         unsigned int max_level_ = numbers::invalid_unsigned_int)
     :
-        problem(options.radius, options.degree), min_level(min_level_), max_level(max_level_)
+        problem(options), min_level(min_level_), max_level(max_level_)
     {
-        problem.make_grid(options.n_levels);
-        problem.dofs_mg(options.order, options.bc);
+        problem.make_grid();
+        problem.dofs_mg();
 
         if (max_level == numbers::invalid_unsigned_int) {
             max_level = problem.get_triangulation().n_global_levels();
@@ -162,7 +162,23 @@ int main(int argc, char* argv[])
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
-        add_options(argc, argv, options, options_rgd, options_mg);
+        po::options_description all("Allowed options");
+        all.add_options()("help", "produce help message");
+        all.add(gpe_cli_options());
+        all.add(gd_cli_options());
+        all.add(mg_cli_options());
+
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, all), vm);
+        po::notify(vm);
+
+        if (vm.count("help")) {
+            std::cout << all << "\n";
+            return 0;
+        }
+        apply_gpe_options(vm, options);
+        apply_gd_options(vm, options_rgd);
+        apply_mg_options(vm, options_mg);
 
         with_dimension(options.dimension, [&](auto D)
         {

@@ -21,12 +21,12 @@ class GPE_Solve
 {
 public:
     explicit GPE_Solve(const GPE_Options& options)
-        : problem(options.radius, options.degree)
+        : problem(options)
     {
         // TODO: grid based on KellyErrorEstimator (run after different solves, so move this outside the constructor?)
         //       make_grid_graded() leads to increased conditioning, due to hanging node constraints
-        problem.make_grid(options.n_levels);
-        problem.dofs(options.order, options.bc);
+        problem.make_grid();
+        problem.dofs();
     }
 
     // Populate matrix A_0 = M_V + S based on boundary conditions
@@ -121,7 +121,23 @@ int main(int argc, char* argv[])
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
-        add_options(argc, argv, options, options_rgd, options_mg);
+        po::options_description all("Allowed options");
+        all.add_options()("help", "produce help message");
+        all.add(gpe_cli_options());
+        all.add(gd_cli_options());
+        all.add(mg_cli_options());
+
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, all), vm);
+        po::notify(vm);
+
+        if (vm.count("help")) {
+            std::cout << all << "\n";
+            return 0;
+        }
+        apply_gpe_options(vm, options);
+        apply_gd_options(vm, options_rgd);
+        apply_mg_options(vm, options_mg);
 
         if (options_mg.multigrid) {
             throw std::logic_error("Multigrid is not supported in this program!");

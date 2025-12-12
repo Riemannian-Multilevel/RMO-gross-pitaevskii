@@ -83,6 +83,7 @@ to_string(SolverMethod method)
     }
 }
 
+// TODO: turn this into a solver object (SparseSolve)
 template <typename PreconditionerType>
 Vector<double>
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,

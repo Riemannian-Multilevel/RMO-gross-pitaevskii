@@ -1,6 +1,9 @@
 #ifndef GPE_OPTIONS_H
 #define GPE_OPTIONS_H
 
+#include "gpe.h"
+#include "descent.h"
+
 #include <boost/program_options.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 namespace po = boost::program_options;  // XXX: move to gpe namespace?
@@ -8,24 +11,13 @@ namespace po = boost::program_options;  // XXX: move to gpe namespace?
 namespace gpe
 {
 
-struct GPE_Options
-{
-    int dimension;          // dimension of domain
-    int n_levels;           // number of levels for global refinement
-    int degree;             // degree of shape functions
-    double radius;          // radius of the cube (square, line) domain
-    double beta;            // factor for the non-linear term in GPE
-    Ordering order;         // ordering for degrees of freedom
-    BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
-};
-
 // TODO: parallel/multigrid to other struct
 struct MG_Options
 {
-    bool parallel{false};   // parallelize matrix assembly
-    bool multigrid{false};  // build a multigrid hierarchy
-    int min_level{0};       // minimum level for multigrid algorithms
-    int max_level{0};       // maximum level for multigrid algorithms
+    bool parallel;      // parallelize matrix assembly
+    bool multigrid;     // build a multigrid hierarchy
+    int min_level;      // minimum level for multigrid algorithms
+    int max_level;      // maximum level for multigrid algorithms
 };
 
 inline SolverMethod
@@ -34,15 +26,13 @@ select_solver(const std::string& solver_str)
     if (solver_str == "GMRES") {
         return SolverMethod::GMRES;
     }
-    else if (solver_str == "MINRES") {
+    if (solver_str == "MINRES") {
         return SolverMethod::MINRES;
     }
-    else if (solver_str == "CG") {
+    if (solver_str == "CG") {
         return SolverMethod::CG;
     }
-    else {
-        throw std::runtime_error(solver_str + ": invalid solver");
-    }
+    throw std::runtime_error(solver_str + ": invalid solver");
 }
 
 inline Ordering
@@ -81,67 +71,62 @@ select_boundary_condition(const std::string& boundary_str)
     throw std::runtime_error(boundary_str + ": invalid boundary condition");
 }
 
-inline void
-add_options(int argc, char* argv[], GPE_Options& options, GdOptions& options_rgd, MG_Options& options_mg)
+inline std::string upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c){ return std::toupper(c); });
+    return s;
+}
+
+
+// ---------- MG_Options ----------
+inline po::options_description mg_cli_options() {
+    po::options_description d("Multigrid options");
+    d.add_options()
+        ("multigrid", po::value<bool>()->default_value(false)->implicit_value(true),
+         "enable multigrid (0|1)")
+        ("min-level", po::value<unsigned>()->default_value(0),
+         "minimal level for multigrid")
+        ("max-level", po::value<unsigned>()->default_value(dealii::numbers::invalid_unsigned_int),
+         "maximal level for multigrid")
+        ("parallel", po::value<bool>()->default_value(false)->implicit_value(true),
+         "parallel assembly for system matrices (0|1)");
+    return d;
+}
+
+inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 {
-    po::options_description desc("Allowed options");
-    desc.add_options()
-        ("help", "produce help message")
+    mg.multigrid = vm["multigrid"].as<bool>();
+    mg.parallel  = vm["parallel"].as<bool>();
+    mg.min_level = vm["min-level"].as<unsigned>();
+    mg.max_level = vm["max-level"].as<unsigned>();
+}
+
+
+// ---------- GPE_Options ----------
+inline po::options_description gpe_cli_options() {
+    po::options_description d("General problem options");
+    d.add_options()
         ("degree", po::value<int>()->default_value(1),
          "polynomial degree for finite element")
         ("levels", po::value<int>()->default_value(3),
          "number of times to globally refine the mesh")
-        ("multigrid", po::bool_switch(&options_mg.multigrid),
-         "enable multigrid")
         ("dimension", po::value<int>()->default_value(2),
          "problem dimension")
         ("order", po::value<std::string>()->default_value("default"),
          "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
         ("boundary", po::value<std::string>()->default_value("neumann"),
-            "boundary constraints (neumann|dirichlet)")
+         "boundary constraints (neumann|dirichlet)")
         ("radius", po::value<double>()->default_value(10.0),
-            "default radius of the cube domain")
+         "default radius of the cube domain")
         ("beta", po::value<double>()->default_value(100.0),
-            "non-linearity factor")
-        ("solver", po::value<std::string>()->default_value("gmres"),
-            "sparse solver (gmres|minres|cg)")
-        ("max-iter", po::value<int>()->default_value(25),
-            "maximum number of iterations")
-        ("max-inner", po::value<int>()->default_value(100),
-            "maximum number of iterations for sparse solver")
-        ("tol-residual", po::value<double>()->default_value(1e-4),
-            "tolerance for M-residual")
-        ("tol-inner", po::value<double>()->default_value(1e-6),
-            "tolerance for sparse solver, relative to right-hand side")
-        ("tol-lambda", po::value<double>()->default_value(1e-8),
-            "tolerance for rayleigh quotient")
-        ("step-size", po::value<double>()->default_value(1.0),
-            "step size for RGD")
-        ("min-level", po::value<int>()->default_value(0),
-            "minimal level for multigrid")
-        ("max-level", po::value<int>()->default_value(0),
-            "maximal level for multigrid")
-        ("parallel", po::bool_switch(&options_mg.parallel),
-            "parallel assembly for system matrices");
+         "non-linearity factor");
+    return d;
+}
 
-    po::variables_map vm;
-    po::store(po::parse_command_line(argc, argv, desc), vm);
-    po::notify(vm);
+inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options) {
+    const auto order_str    = upper(vm["order"].as<std::string>());
+    const auto boundary_str = upper(vm["boundary"].as<std::string>());
 
-    if (vm.count("help")) {
-        std::cout << desc << "\n";
-        return;
-    }
-    std::string order_str = vm["order"].as<std::string>();
-    std::transform(order_str.begin(), order_str.end(), order_str.begin(), ::toupper);
-
-    std::string solver_str = vm["solver"].as<std::string>();
-    std::transform(solver_str.begin(), solver_str.end(), solver_str.begin(), ::toupper);
-
-    std::string boundary_str = vm["boundary"].as<std::string>();
-    std::transform(boundary_str.begin(), boundary_str.end(), boundary_str.begin(), ::toupper);
-
-    // General problem parameters
     options.order     = select_order(order_str);
     options.bc        = select_boundary_condition(boundary_str);
     options.degree    = vm["degree"].as<int>();
@@ -149,8 +134,33 @@ add_options(int argc, char* argv[], GPE_Options& options, GdOptions& options_rgd
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
+}
 
-    // Gradient descent parameters
+
+// ---------- GdOptions ----------
+inline po::options_description gd_cli_options() {
+    po::options_description d("RGD options");
+    d.add_options()
+        ("solver", po::value<std::string>()->default_value("gmres"),
+         "sparse solver (gmres|minres|cg)")
+        ("max-iter", po::value<int>()->default_value(25),
+         "maximum number of iterations")
+        ("max-inner", po::value<int>()->default_value(100),
+         "maximum number of iterations for sparse solver")
+        ("tol-residual", po::value<double>()->default_value(1e-4),
+         "tolerance for M-residual")
+        ("tol-inner", po::value<double>()->default_value(1e-6),
+         "tolerance for sparse solver, relative to right-hand side")
+        ("tol-lambda", po::value<double>()->default_value(1e-8),
+         "tolerance for rayleigh quotient")
+        ("step-size", po::value<double>()->default_value(1.0),
+         "step size for RGD");
+    return d;
+}
+
+inline void apply_gd_options(const po::variables_map& vm, GdOptions& options_rgd) {
+    const auto solver_str = upper(vm["solver"].as<std::string>());
+
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
     options_rgd.max_inner    = vm["max-inner"].as<int>();
@@ -158,11 +168,6 @@ add_options(int argc, char* argv[], GPE_Options& options, GdOptions& options_rgd
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.solver       = select_solver(solver_str);
-
-    // Multigrid options
-    options_mg.min_level = vm["min-level"].as<int>();
-    options_mg.max_level = vm["max-level"].as<int>();
-    options_mg.max_level = options_mg.max_level == 0 ? options.n_levels : options_mg.max_level;
 }
 
 } // namespace gpe

@@ -10,11 +10,12 @@ namespace gpe
 struct GdControl
 {
     double mass;
-    double lmb;
+    double lambda;
     double residual;
     double rg_norm;
 };
 
+// TODO: move this to options.h?
 struct GdOptions
 {
     double tol_inner;     // relative tolerance for inner solver
@@ -36,10 +37,10 @@ void energy_residual(GdControl& control, const Vector<double>& x, const Vector<d
 
     Vector<double> Ax(x.size());
     A.vmult(Ax, x);
-    control.lmb = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
+    control.lambda = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
 
     Vector<double> r(Ax);
-    r.add(-control.lmb, Mx);        // r = A x - lambda M x
+    r.add(-control.lambda, Mx);        // r = A x - lambda M x
     //double res = r.l2_norm(); // or M-norm, see below
 
     Vector<double> Mr(r.size());
@@ -69,17 +70,17 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
 template <typename Matrix>
 bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
                                 const Vector<double>& x, const Vector<double>& g,
-                                GdControl& ctrl, GdOptions options)
+                                GdControl& ctrl, double tol_lambda, double tol_residual)
 {
     // Compute criteria
     GdControl ctrl_prev(ctrl);
     energy_residual(ctrl, x, g, A, M);
 
     // Check criteria
-    const double lmb_diff   = std::abs(ctrl.lmb - ctrl_prev.lmb);
-    const double lmb_factor = 1.0 + std::abs(ctrl.lmb);  // avoid numerical issues near lmb ~ 0
+    const double lmb_diff   = std::abs(ctrl.lambda - ctrl_prev.lambda);
+    const double lmb_factor = 1.0 + std::abs(ctrl.lambda);  // avoid numerical issues near lmb ~ 0
 
-    if (lmb_diff < options.tol_lambda * lmb_factor && ctrl.residual < options.tol_residual) {
+    if (lmb_diff < tol_lambda * lmb_factor && ctrl.residual < tol_residual) {
         return true;
     }
     return false;
@@ -125,6 +126,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
 
         // Solve linear system (boundary constraints assumed applied to A_0, M, Mpp)
         // TODO: distribute constraints again?
+        //       pass a solver object
         Vector<double> y = solve_sparse(A, x, options.solver,
             precondition, options.max_inner, options.tol_inner);
 
@@ -149,12 +151,13 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         // Check termination criteria every N steps
         if (it % check_every == 0 || it == options.max_iter - 1) {
             // Update control structure
-            if (energy_terminate_iteration(M, A, x, g, control, options)) {
+            if (energy_terminate_iteration(M, A, x, g, control,
+                options.tol_lambda, options.tol_residual)) {
                 break;
             }
             // Print newly computed values
             const double E = energy(x, A_0, Mpp);
-            std::cerr << "Mass = " << control.mass << ", lambda = " << control.lmb
+            std::cerr << "Mass = " << control.mass << ", lambda = " << control.lambda
                       << ", residual = " << control.residual << ", energy = " << E
                       << std::endl;
         }
