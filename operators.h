@@ -67,7 +67,7 @@ void assemble_mass_weighed(ExecutionPolicy&& policy,
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
 
-    auto f_mass_weighed = [V](const dealii::FEValues<dim>& fe_values,
+    auto f_mass_weighed = [&V](const dealii::FEValues<dim>& fe_values,
         dealii::FullMatrix<double>& cell_matrix, auto&&...)
     {
         for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
@@ -127,13 +127,18 @@ void assemble_mass_phiphi(ExecutionPolicy&& policy,
 {
     dealii::UpdateFlags flags = (dealii::update_values | dealii::update_JxW_values);
 
-    auto f_mass_phiphi = [u](const dealii::FEValues<dim>& fe_values,
+    auto f_mass_phiphi = [&u](const dealii::FEValues<dim>& fe_values,
         dealii::FullMatrix<double>& cell_matrix, const auto& local_dof_indices)
     {
+        std::vector<double> u_local(fe_values.dofs_per_cell);
+        for (const unsigned int i : fe_values.dof_indices()) {
+            u_local[i] = u(local_dof_indices[i]);
+        }
+        
         for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
             double u_x = 0.0;
             for (const unsigned int i : fe_values.dof_indices()) {
-                u_x += u(local_dof_indices[i]) * fe_values.shape_value(i, q_index);
+                u_x += u_local[i] * fe_values.shape_value(i, q_index);
             }
             u_x = std::abs(u_x);
             u_x *= u_x; // u_x2

@@ -260,6 +260,7 @@ make_boundary(dealii::DoFHandler<dim>& dof_handler, BoundaryCondition bc,
         default:
             throw std::invalid_argument("Unknown boundary condition");
     }
+    constraints.close();
     return constraints;
 }
 

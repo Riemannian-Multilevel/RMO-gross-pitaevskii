@@ -25,12 +25,15 @@ public:
     :
         problem(options), min_level(min_level_), max_level(max_level_)
     {
-        problem.make_grid();
-        problem.dofs_mg();
-
         if (max_level == numbers::invalid_unsigned_int) {
             max_level = problem.get_triangulation().n_global_levels();
         }
+    }
+
+    void setup()
+    {
+        problem.make_grid();
+        problem.dofs_mg();
     }
 
     template <typename Function>
@@ -82,6 +85,7 @@ public:
             const AffineConstraints<double>& level_constraints = problem.get_level_constraints(level);
 
             // Define starting value
+            // TODO: take MGLevelObject of starting vectors, then overload on constant value
             Vector<double> x0(dof_handler.n_dofs(level));
             x0 = x0d;
 
@@ -117,10 +121,6 @@ public:
         return x_v;
     }
 
-    void output(unsigned int level)
-    {
-
-    }
     const DoFHandler<dim>& get_dofs() const
     {
         return problem.get_dofs();
@@ -134,23 +134,24 @@ private:
 };
 
 template <int dim, typename ExecutionPolicy>
-void package_MG(const unsigned min_level, const unsigned max_level,
+void package(const unsigned min_level, const unsigned max_level,
     const GPE_Options& options, const GdOptions& opt_rgd)
 {
     Square<dim> V;
-    GPE_Solve_MG<dim, ExecutionPolicy> GSM(options, min_level, max_level);
+    GPE_Solve_MG<dim, ExecutionPolicy> GS(options, min_level, max_level);
+    GS.setup();
 
-    auto xv = GSM.run(V, 1.0, options.beta, opt_rgd);
+    auto xv = GS.run(V, 1.0, options.beta, opt_rgd);
 }
 
 template <int dim>
-void run_package_MG(bool parallel, const unsigned min_level, const unsigned max_level,
+void run_package(bool parallel, const unsigned min_level, const unsigned max_level,
     const GPE_Options& options, const GdOptions& options_rgd)
 {
     if (parallel) {
-        package_MG<dim, execution::par_t>(min_level, max_level, options, options_rgd);
+        package<dim, execution::par_t>(min_level, max_level, options, options_rgd);
     } else {
-        package_MG<dim, execution::seq_t>(min_level, max_level, options, options_rgd);
+        package<dim, execution::seq_t>(min_level, max_level, options, options_rgd);
     }
 }
 
@@ -184,7 +185,7 @@ int main(int argc, char* argv[])
         {
             constexpr int dim = decltype(D)::value;
 
-            run_package_MG<dim>(options_mg.parallel, options_mg.min_level,
+            run_package<dim>(options_mg.parallel, options_mg.min_level,
                 options_mg.max_level, options, options_rgd);
         });
     }

@@ -129,7 +129,9 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         //       pass a solver object
         Vector<double> y = solve_sparse(A, x, options.solver,
             precondition, options.max_inner, options.tol_inner);
+        constraints.distribute(y);
 
+        // TODO: class object for energy with value() / gradient() - takes Vector of dofs as argument, not Point<dim>
         // z <- A^{-1}x / (x' A^{-1}x)
         Vector<double> z(y);
         double denom1 = x * y; // x' A^-1 x
@@ -139,6 +141,10 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         // g <- x - z
         Vector<double> g(x);
         g.add(-1.0, z);
+
+        // Nash: g(x) <- g(x) + v
+        // v <- interpolate(g_fine(x_fine)) - g(interpolate(x_fine))
+        // Nash objective: f + < v, x - Ry> - not required for fixed step size GD
 
         // x <- x - h g
         x.add(-options.step_size, g);

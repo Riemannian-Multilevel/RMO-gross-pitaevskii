@@ -71,7 +71,6 @@ public:
 
         // step 6 - formulate constraints
         constraints = make_boundary(dof_handler, options.bc, dirichlet_boundary_ids);
-        constraints.close();
         has_active_constraints = true;
     }
 
@@ -85,7 +84,6 @@ public:
 
         // step 6 - formulate constraints
         constraints = make_boundary(dof_handler, options.bc, dirichlet_boundary_ids);
-        constraints.close();
         has_active_constraints = true;
 
         // step 16 - formulate multigrid constraints
@@ -111,6 +109,10 @@ public:
     unsigned int n_levels() const
     {
         return triangulation.n_levels();
+    }
+    unsigned int n_dofs() const
+    {
+        return dof_handler.n_dofs();
     }
     const dealii::AffineConstraints<double>&
         get_constraints() const

@@ -126,7 +126,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::AffineConstraints<double>& constraints,
                      unsigned int level = dealii::numbers::invalid_unsigned_int)
 {
-#ifdef NDEBUG
+#ifdef DEBUG
     std::cerr << "gpe: Parallel assembly enabled" << std::endl;
 #endif
     const auto& fe = dof_handler.get_fe();
@@ -139,13 +139,13 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     PerTaskData<dim> data(fe);
 
     // generic cell worker: works for active and level cells
-    auto cell_worker = [&](const auto& cell, ScratchData<dim>& scratch, PerTaskData<dim>& data)
+    auto cell_worker = [&assemble_cell](const auto& cell, ScratchData<dim>& scratch, PerTaskData<dim>& data)
     {
         scratch.fe_values.reinit(cell); // cell is active_cell_iterator or level_cell_iterator
         data.cell_matrix = 0;
 
-        const unsigned int dofs_per_cell = fe.dofs_per_cell;
-        data.local_dof_indices.resize(dofs_per_cell);
+        //const unsigned int dofs_per_cell = fe.dofs_per_cell;
+        //data.local_dof_indices.resize(dofs_per_cell);
 
         cell->get_active_or_mg_dof_indices(data.local_dof_indices);
 
@@ -153,7 +153,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
         assemble_cell(scratch.fe_values, data.cell_matrix, data.local_dof_indices);
     };
 
-    auto copier = [&](const PerTaskData<dim>& data)
+    auto copier = [&constraints, &system_matrix](const PerTaskData<dim>& data)
     {
         constraints.distribute_local_to_global(data.cell_matrix, data.local_dof_indices, system_matrix);
     };
