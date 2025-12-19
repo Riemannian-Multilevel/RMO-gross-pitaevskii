@@ -54,9 +54,11 @@ int main()
     options.degree = 1;
     options.radius = 10;
     options.beta = 100;
+    options.n_levels = 10;
+    options.bc = BoundaryCondition::DIRICHLET;
+
     GPE_Options options_coarse(options);
     options_coarse.n_levels = 9;
-    options.n_levels = 10;
 
     Square<2> V;
     GPE_Solve<2, execution::seq_t> solver_fine(options);
@@ -93,9 +95,9 @@ int main()
     std::cout << std::endl;
     std::cout << "---- COARSE THEN FINE SOLVE" << std::endl;
 
-    LevelMatrix lm_fine, lm_coarse;
-    solver_fine.get_matrix(V, lm_fine); // for normalization
-    solver_coarse.get_matrix(V, lm_coarse);
+    // LevelMatrix lm_fine, lm_coarse;
+    // solver_fine.get_matrix(V, lm_fine); // for normalization
+    // solver_coarse.get_matrix(V, lm_coarse);
 
     {
         TimerOutput::Scope timer_section(timer, "Solve - coarse then fine");
@@ -105,9 +107,9 @@ int main()
         VectorTools::interpolate_to_finer_mesh(solver_coarse.get_dofs(), x,
             solver_fine.get_dofs(), solver_fine.get_constraints(), y0);
 
-        Vector<double> My0(y0.size());
-        lm_fine.M.vmult(My0, y0);
-        y0 /= std::sqrt(y0 * My0);
+        // Vector<double> My0(y0.size());
+        // lm_fine.M.vmult(My0, y0);
+        // y0 /= std::sqrt(y0 * My0);
 
         std::cout << std::endl;
         auto y = solver_fine.run(V, y0, options.beta, options_gd, 1);

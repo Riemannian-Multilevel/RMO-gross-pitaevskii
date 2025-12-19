@@ -28,7 +28,7 @@ struct GdOptions
 };
 
 template <typename Matrix>
-void energy_residual(GdControl& control, const Vector<double>& x, const Vector<double>& g,
+void energy_residual(GdControl& control, const Vector<double>& x,
                      const Matrix& A, const Matrix& M)
 {
     Vector<double> Mx(x.size());
@@ -46,10 +46,6 @@ void energy_residual(GdControl& control, const Vector<double>& x, const Vector<d
     Vector<double> Mr(r.size());
     M.vmult(Mr, r);
     control.residual = std::sqrt(r * Mr);
-
-    Vector<double> Mg(g.size());
-    M.vmult(Mg, g);
-    control.rg_norm = std::sqrt(g * Mg);
 }
 
 template <typename Matrix>
@@ -67,14 +63,15 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
     return x * Bx;
 }
 
+// TODO: gradient norm termination (when gradient is computed)
 template <typename Matrix>
 bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
-                                const Vector<double>& x, const Vector<double>& g,
-                                GdControl& ctrl, double tol_lambda, double tol_residual)
+                                const Vector<double>& x, GdControl& ctrl,
+                                double tol_lambda, double tol_residual)
 {
     // Compute criteria
     GdControl ctrl_prev(ctrl);
-    energy_residual(ctrl, x, g, A, M);
+    energy_residual(ctrl, x, A, M);
 
     // Check criteria
     const double lmb_diff   = std::abs(ctrl.lambda - ctrl_prev.lambda);
@@ -120,9 +117,24 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         SparseMatrix<double> A = sp_copy(A_0);
         // Apply constraints to incumbent solution
         constraints.distribute(x);
+
         // Update mass matrix
         update_mpp(Mpp, x);
         A.add(beta, Mpp);
+        
+        // Check termination criteria every N steps
+        if (it % check_every == 0 || it == options.max_iter - 1) {
+            // Update control structure
+            if (energy_terminate_iteration(M, A, x,  control,
+                options.tol_lambda, options.tol_residual)) {
+                break;
+                }
+            // Print newly computed values
+            const double E = energy(x, A_0, Mpp);
+            std::cerr << "Mass = " << control.mass << ", lambda = " << control.lambda
+                      << ", residual = " << control.residual << ", energy = " << E
+                      << std::endl;
+        }
 
         // Solve linear system (boundary constraints assumed applied to A_0, M, Mpp)
         // TODO: distribute constraints again?
@@ -153,22 +165,8 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         Vector<double> Mx(x.size());
         M.vmult(Mx, x);
         x /= std::sqrt(x * Mx);
-
-        // Check termination criteria every N steps
-        if (it % check_every == 0 || it == options.max_iter - 1) {
-            // Update control structure
-            if (energy_terminate_iteration(M, A, x, g, control,
-                options.tol_lambda, options.tol_residual)) {
-                break;
-            }
-            // Print newly computed values
-            const double E = energy(x, A_0, Mpp);
-            std::cerr << "Mass = " << control.mass << ", lambda = " << control.lambda
-                      << ", residual = " << control.residual << ", energy = " << E
-                      << std::endl;
-        }
     }
-    constraints.distribute(x);
+    //constraints.distribute(x);
     return x;
 }
 
