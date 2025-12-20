@@ -2,123 +2,126 @@
 #include "main.h"
 
 #include <deal.II/base/timer.h>
+#include <deal.II/base/mg_level_object.h>
+#include <deal.II/numerics/vector_tools.h>
+
 #include <fstream>
-#include <iostream>
-#include <fmt/format.h>
+#include <memory>
+#include <vector>
 
-using namespace gpe;
 using namespace dealii;
+using namespace gpe;
 
-// struct GPE_Options
-// {
-//     int dimension;          // dimension of domain
-//     int n_levels;           // number of levels for global refinement
-//     int degree;             // degree of shape functions
-//     double radius;          // radius of the cube (square, line) domain
-//     double beta;            // factor for the non-linear term in GPE
-//     Ordering order;         // ordering for degrees of freedom
-//     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
-// };
+template <int dim, typename ExecPolicy>
+static void
+prolongate_between_meshes(const GPE_Solve<dim, ExecPolicy> &coarse,
+                          const Vector<double> &x_coarse,
+                          const GPE_Solve<dim, ExecPolicy> &fine,
+                          Vector<double> &y0_fine)
+{
+    y0_fine.reinit(fine.n_dofs());
+    y0_fine = 0.0;
 
-// struct GdOptions
-// {
-//     double tol_inner;     // relative tolerance for inner solver
-//     double tol_lambda;    // tolerance for rayleigh quotients
-//     double tol_residual;  // tolerance for M-residual
-//     double step_size;     // fixed step-size used in iteration steps
-//     int max_iter;         // maximum GD iterations
-//     int max_inner;        // maximum sparse solver iterations
-//     SolverMethod solver;  // method for solving sparse linear equations
-// };
+    VectorTools::interpolate_to_finer_mesh(coarse.get_dofs(), x_coarse,
+                                           fine.get_dofs(), fine.get_constraints(),
+                                           y0_fine);
+
+    // Good practice: enforce constraints explicitly
+    fine.get_constraints().distribute(y0_fine);
+}
 
 int main()
 {
-    TimerOutput timer (std::cout, TimerOutput::summary, TimerOutput::wall_times);
+    TimerOutput timer(std::cout, TimerOutput::summary, TimerOutput::wall_times);
 
+    // --- options as before ---
     GdOptions options_gd{};
-    options_gd.tol_inner = 1e-6;
-    options_gd.tol_lambda = 1e-8;
-    options_gd.tol_residual = 1e-4;
-    options_gd.step_size = 1.0;
-    options_gd.max_iter = 20;
-    options_gd.max_inner = 500;
-    options_gd.solver = SolverMethod::MINRES;
-
-    // TODO: compare matrix operators
-    // * mesh size
-    // * sequential assembly
-    // * parallel assembly
-    // * matrix-free assembly
+    options_gd.tol_inner    = 1e-6;
+    options_gd.tol_lambda   = 1e-8;
+    options_gd.tol_residual = 1e-6;
+    options_gd.step_size    = 1.0;
+    options_gd.max_iter     = 20;
+    options_gd.max_inner    = 500;
+    options_gd.solver       = SolverMethod::MINRES;
 
     GPE_Options options{};
     options.dimension = 2;
-    options.degree = 1;
-    options.radius = 10;
-    options.beta = 100;
-    options.bc = BoundaryCondition::DIRICHLET;
+    options.degree    = 1;
+    options.radius    = 10;
+    options.beta      = 100;
+    options.bc        = BoundaryCondition::DIRICHLET;
 
-    GPE_Options options_coarse(options);
     constexpr int dim = 2;
-
     Square<dim> V;
-    int n_levels_fine = 10;
-    int n_levels_coarse = 9;
-    GPE_Solve<dim, execution::seq_t> solver_fine(options, n_levels_fine);
-    GPE_Solve<dim, execution::seq_t> solver_coarse(options_coarse, n_levels_coarse);
 
-    std::cout << "---- FINE ASSEMBLY ----" << std::endl;
+    using Exec = execution::seq_t;
+
+    // Refinement-count hierarchy
+    const unsigned int ref_min = 8;   // coarse
+    const unsigned int ref_max = 11;  // fine
+
+    // 1) One solver per refinement count
+    // We'll store them in a vector, indexed by (ref - ref_min)
+    std::vector<std::unique_ptr<GPE_Solve<dim, Exec>>> solver(ref_max - ref_min + 1);
+
+    for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
+        solver[ref - ref_min] = std::make_unique<GPE_Solve<dim, Exec>>(options, ref);
+
+    // 2) Setup + assemble each refinement
+    for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
-        TimerOutput::Scope timer_section(timer, "Assembly - fine");
-        solver_fine.setup();
-        solver_fine.assemble_matrix(V);
+        std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
+        TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
+
+        solver[ref - ref_min]->setup();
+        solver[ref - ref_min]->assemble_matrix(V);
     }
 
-    std::cout << std::endl;
-    std::cout << "---- COARSE ASSEMBLY ----" << std::endl;
+    // 3) Hierarchy of starting vectors (indexed by refinement count!)
+    MGLevelObject<Vector<double>> y0(ref_min, ref_max);
+    MGLevelObject<Vector<double>> x (ref_min, ref_max);
+
+    for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
-        TimerOutput::Scope timer_section(timer, "Assembly - coarse");
-        solver_coarse.setup();
-        solver_coarse.assemble_matrix(V);
+        y0[ref].reinit(solver[ref - ref_min]->n_dofs());
+        x[ref].reinit(solver[ref - ref_min]->n_dofs());
     }
 
-    std::cout << std::endl;
-    std::cout << "---- FINE SOLVE ----" << std::endl;
+    // Coarsest guess
+    y0[ref_min] = 1.0; // or 0.0
+
+    // 4) Nested iteration: solve and prolongate to next refinement
+    std::cout << "\n---- COARSE -> FINE (BY REFINEMENT COUNT) ----\n";
+
+    const unsigned int width = std::to_string(ref_max).size();
+
+    for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
-        std::ofstream file("solve_fine.csv");
-        TimerOutput::Scope timer_section(timer, "Solve - fine");
-        solver_fine.run(1.0, options.beta, options_gd, 1, file);
+        std::cout << "\nSOLVE REF " << ref << "\n";
+
+        std::ostringstream name;
+        name << "solve_ref_"
+             << std::setw(width) << std::setfill('0') << ref
+             << ".csv";
+
+        std::ofstream file(name.str());
+        {
+            TimerOutput::Scope t(timer, "Solve - ref " + std::to_string(ref));
+            x[ref] = solver[ref - ref_min]->run(y0[ref],
+                                                options.beta,
+                                                options_gd,
+                                                1,
+                                                file);
+        }
+
+        if (ref < ref_max)
+        {
+            prolongate_between_meshes<dim, Exec>(*solver[ref - ref_min], x[ref],
+                                                 *solver[(ref + 1) - ref_min],
+                                                 y0[ref + 1]);
+        }
     }
 
-    std::cout << std::endl;
-    std::cout << "---- COARSE SOLVE ----" << std::endl;
-    {
-        std::ofstream file("solve_coarse.csv");
-        TimerOutput::Scope timer_section(timer, "Solve - coarse");
-        solver_coarse.run(1.0, options.beta, options_gd, 1, file);
-    }
 
-    // Multiresolution
-    std::cout << std::endl;
-    std::cout << "---- COARSE THEN FINE SOLVE" << std::endl;
-
-    // LevelMatrix lm_fine, lm_coarse;
-    // solver_fine.get_matrix(V, lm_fine); // for normalization
-    // solver_coarse.get_matrix(V, lm_coarse);
-
-    {
-        std::ofstream file_coarse("solve_multires_coarse.csv");
-        TimerOutput::Scope timer_section(timer, "Solve - coarse then fine");
-        auto x = solver_coarse.run(1.0, options.beta, options_gd, 1, file_coarse);
-        auto y0 = Vector<double>(solver_fine.n_dofs());
-
-        VectorTools::interpolate_to_finer_mesh(solver_coarse.get_dofs(), x,
-            solver_fine.get_dofs(), solver_fine.get_constraints(), y0);
-
-        // Vector<double> My0(y0.size());
-        // lm_fine.M.vmult(My0, y0);
-        // y0 /= std::sqrt(y0 * My0);
-
-        std::ofstream file_fine("solve_multires_fine.csv");
-        auto y = solver_fine.run(y0, options.beta, options_gd, 1, file_fine);
-    }
+    return 0;
 }
