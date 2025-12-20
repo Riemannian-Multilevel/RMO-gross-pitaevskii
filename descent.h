@@ -135,13 +135,14 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 //! @param update_mpp
 //! @param options Termination criteria
 //! @param check_every Number of iterations after which to check termination criteria
+//! @param os Output stream for diagnostics
 //! @return
 template <int dim, typename Function>
 Vector<double>
 gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
               Function&& update_mpp, const Vector<double>& x0, double beta,
               const dealii::AffineConstraints<double>& constraints,
-              const GdOptions& options, int check_every = 5, std::ostream& os = std::cerr)
+              const GdOptions& options, int check_every, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
 

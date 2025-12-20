@@ -2,6 +2,7 @@
 #include "main.h"
 
 #include <deal.II/base/timer.h>
+#include <fstream>
 #include <iostream>
 #include <fmt/format.h>
 
@@ -83,15 +84,17 @@ int main()
     std::cout << std::endl;
     std::cout << "---- FINE SOLVE ----" << std::endl;
     {
+        std::ofstream file("solve_fine.csv");
         TimerOutput::Scope timer_section(timer, "Solve - fine");
-        solver_fine.run(1.0, options.beta, options_gd, 1);
+        solver_fine.run(1.0, options.beta, options_gd, 1, file);
     }
 
     std::cout << std::endl;
     std::cout << "---- COARSE SOLVE ----" << std::endl;
     {
+        std::ofstream file("solve_coarse.csv");
         TimerOutput::Scope timer_section(timer, "Solve - coarse");
-        solver_coarse.run(1.0, options.beta, options_gd, 1);
+        solver_coarse.run(1.0, options.beta, options_gd, 1, file);
     }
 
     // Multiresolution
@@ -103,8 +106,9 @@ int main()
     // solver_coarse.get_matrix(V, lm_coarse);
 
     {
+        std::ofstream file_coarse("solve_multires_coarse.csv");
         TimerOutput::Scope timer_section(timer, "Solve - coarse then fine");
-        auto x = solver_coarse.run(1.0, options.beta, options_gd, 1);
+        auto x = solver_coarse.run(1.0, options.beta, options_gd, 1, file_coarse);
         auto y0 = Vector<double>(solver_fine.n_dofs());
 
         VectorTools::interpolate_to_finer_mesh(solver_coarse.get_dofs(), x,
@@ -114,7 +118,7 @@ int main()
         // lm_fine.M.vmult(My0, y0);
         // y0 /= std::sqrt(y0 * My0);
 
-        std::cout << std::endl;
-        auto y = solver_fine.run(y0, options.beta, options_gd, 1);
+        std::ofstream file_fine("solve_multires_fine.csv");
+        auto y = solver_fine.run(y0, options.beta, options_gd, 1, file_fine);
     }
 }

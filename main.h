@@ -52,7 +52,7 @@ public:
     }
 
     [[maybe_unused]] Vector<double>
-    run(const Vector<double>& x0, double beta, GdOptions options_rgd, int n_check_res) const
+    run(const Vector<double>& x0, double beta, GdOptions options_rgd, int n_check_res, std::ostream& os = std::cerr) const
     {
         if (!is_assembled)
             throw dealii::ExcEmptyObject("GPE_Solve::run(): call assemble_matrix() first");
@@ -76,19 +76,19 @@ public:
 
         // Run gradient descent + enforce boundary conditions
         Vector<double> x = gp_energy_rgd<dim>(A0, M, Mpp,
-            update_mpp, x0, beta, constraints, options_rgd, n_check_res);
+            update_mpp, x0, beta, constraints, options_rgd, n_check_res, os);
         return x;
     }
 
     // Iteration with constant starting value
     [[maybe_unused]] Vector<double>
-    run(const double x0d, double beta, GdOptions options_rgd, int n_check_res) const
+    run(const double x0d, double beta, GdOptions options_rgd, int n_check_res, std::ostream& os = std::cerr) const
     {
         // Define starting value
         Vector<double> x0(problem.get_dofs().n_dofs());
         x0 = x0d;
 
-        Vector<double> x = run(x0, beta, options_rgd, n_check_res);
+        Vector<double> x = run(x0, beta, options_rgd, n_check_res, os);
         return x;
     }
 
