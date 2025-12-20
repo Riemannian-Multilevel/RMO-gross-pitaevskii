@@ -18,23 +18,6 @@ using dealii::SparsityPattern;
 using dealii::Vector;
 using dealii::Point;
 
-// SparsityPattern objects need to have the same lifetime as SparseMatrix ones
-struct LevelMatrix
-{
-    SparsityPattern sp;
-    SparseMatrix<double> M;
-    SparseMatrix<double> A0;
-    SparseMatrix<double> Mpp;
-
-    void reinit(const SparsityPattern& sparsity)
-    {
-        sp.copy_from(sparsity);
-        M.reinit(sp);
-        A0.reinit(sp);
-        Mpp.reinit(sp);
-    }
-};
-
 // Matrix used for boundary residuals in geometric multigrid
 struct InterfaceMatrix
 {
@@ -47,19 +30,6 @@ struct InterfaceMatrix
         IM.reinit(sp);
     }
 };
-
-//!
-//! @param M Sparse matrix
-//! @return Copy of input sparse matrix
-inline SparseMatrix<double>
-sp_copy(const SparseMatrix<double>& M)
-{
-    SparseMatrix<double> M_copy;
-    M_copy.reinit(M);
-    M_copy.copy_from(M);
-
-    return M_copy;
-}
 
 enum class SolverMethod
 {
@@ -83,9 +53,9 @@ to_string(SolverMethod method)
     }
 }
 
-// TODO: turn this into a solver object (SparseSolve)
+// TODO: return SolverInfo (converged/did_not_converge/error)
 template <typename PreconditionerType>
-Vector<double>
+std::pair<Vector<double>,unsigned int>
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
     const SolverMethod method = SolverMethod::GMRES,
     const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
@@ -117,10 +87,7 @@ solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& sy
     default:
         throw std::invalid_argument("Unknown SolverMethod");
     }
-
-    std::cerr << solver_control.last_step()
-              << " " + to_string(method) + " iterations needed to obtain convergence." << std::endl;
-    return solution;
+    return std::make_pair(solution,solver_control.last_step());
 }
 
 } // namespace gpe

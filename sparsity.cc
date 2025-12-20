@@ -17,9 +17,15 @@ public:
     explicit GPE_Sparsity(const GPE_Options& options)
     :
         problem(options)
+    {}
+
+    void setup()
     {
         problem.make_grid();
         problem.dofs();
+
+        auto sp = make_sparsity_pattern(problem.get_dofs(), problem.get_constraints());
+        sparsity_pattern.copy_from(sp);
     }
 
     void run(const std::string& prefix) const
@@ -30,20 +36,16 @@ public:
 
         problem.plot_grid(prefix);
 
-        const DoFHandler<dim>& dof_handler = problem.get_dofs();
-        const AffineConstraints<double>& constraints = problem.get_constraints();
-
-        write_dof_locations(dof_handler, fmt::format("{}_{}d_dof.gnuplot", prefix, dim));
-
-        auto Sd = make_sparsity_pattern(dof_handler, constraints);
+        write_dof_locations(problem.get_dofs(), fmt::format("{}_{}d_dof.gnuplot", prefix, dim));
         {
             std::ofstream out(fmt::format("{}_{}d_sparsity.svg", prefix, dim));
-            Sd.print_svg(out);
+            sparsity_pattern.print_svg(out);
         }
     }
 
 private:
     GPE<dim> problem;
+    SparsityPattern sparsity_pattern;
 };
 
 template <int dim>
@@ -51,21 +53,27 @@ class GPE_Sparsity_MG
 {
 public:
     explicit GPE_Sparsity_MG(const GPE_Options& options,
-        unsigned int min_level_ = 0,
-        unsigned int max_level_ = numbers::invalid_unsigned_int)
+        unsigned int min_level_,
+        unsigned int max_level_)
     :
         problem(options), min_level(min_level_), max_level(max_level_)
+    {
+        AssertIndexRange(min_level, problem.get_triangulation().n_global_levels());
+        AssertIndexRange(max_level, problem.get_triangulation().n_global_levels());
+    }
+
+    void setup()
     {
         problem.make_grid();
         problem.dofs_mg();
 
-        if (max_level == numbers::invalid_unsigned_int) {
-            max_level = problem.get_triangulation().n_levels();
+        for (unsigned level = min_level; level < max_level; level++) {
+            auto Sd = make_sparsity_pattern_mg(problem.get_dofs(), level, {});
+            sparsity_pattern_v[level].copy_from(Sd);
         }
     }
 
-    // TODO: multigrid/colored print_grid
-    void run(const std::string& prefix)
+    void run(const std::string& prefix) const
     {
         const Triangulation<dim>& triangulation = problem.get_triangulation();
         const DoFHandler<dim>& dof_handler = problem.get_dofs();
@@ -78,31 +86,16 @@ public:
             write_level_vertex_points(dof_handler, level,
                 fmt::format("{}_{}d_dof_l{}.gnuplot", prefix, dim, level));
 
-            auto Sd = make_sparsity_pattern_mg(dof_handler, level, {});
-            {
-                std::ofstream out(fmt::format("{}_{}d_sparsity_l{}.svg", prefix, dim, level));
-                Sd.print_svg(out);
-            }
+            std::ofstream out(fmt::format("{}_{}d_sparsity_l{}.svg", prefix, dim, level));
+            sparsity_pattern_v[level].print_svg(out);
         }
     }
 
 private:
     GPE<dim> problem;
     unsigned min_level, max_level;
+    MGLevelObject<SparsityPattern> sparsity_pattern_v;
 };
-
-template <int dim>
-void run_package(bool multigrid, unsigned min_level, unsigned max_level, const GPE_Options& options)
-{
-    if (multigrid) {
-        GPE_Sparsity_MG<dim> GSM(options, min_level, max_level);
-        GSM.run("domain");
-    }
-    else {
-        GPE_Sparsity<dim> GS(options);
-        GS.run("domain");
-    }
-}
 
 int main(int argc, char** argv)
 {
@@ -130,7 +123,14 @@ int main(int argc, char** argv)
         {
             constexpr int dim = decltype(D)::value;
 
-            run_package<dim>(options_mg.multigrid, options_mg.min_level, options_mg.max_level, options);
+            if (options_mg.multigrid) {
+                GPE_Sparsity_MG<dim> GS(options, options_mg.min_level, options_mg.max_level);
+                GS.run("domain");
+            }
+            else {
+                GPE_Sparsity<dim> GS(options);
+                GS.run("domain");
+            }
         });
     }
     catch (std::exception& e) {

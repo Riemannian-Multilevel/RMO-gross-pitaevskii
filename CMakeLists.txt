@@ -4,7 +4,7 @@ project(gpe)
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(fmt)
 
-find_package(deal.II 9.6.0 REQUIRED
+find_package(deal.II 9.7.0 REQUIRED
         HINTS ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
 )
 #find_package(fmt CONFIG REQUIRED)
@@ -35,12 +35,6 @@ add_executable(main main.cc)
 target_sources(main PRIVATE main.h ${COMMON_HEADERS})
 deal_ii_setup_target(main)
 target_link_libraries(main Boost::program_options fmt::fmt)
-
-# Multigrid GPE program
-add_executable(main_mg main_mg.cc)
-target_sources(main_mg PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(main_mg)
-target_link_libraries(main_mg Boost::program_options fmt::fmt)
 
 # Benchmarking
 add_executable(bench bench.cc)

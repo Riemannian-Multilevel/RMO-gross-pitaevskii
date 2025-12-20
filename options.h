@@ -14,10 +14,11 @@ namespace gpe
 // TODO: parallel/multigrid to other struct
 struct MG_Options
 {
-    bool parallel;      // parallelize matrix assembly
-    bool multigrid;     // build a multigrid hierarchy
-    int min_level;      // minimum level for multigrid algorithms
-    int max_level;      // maximum level for multigrid algorithms
+    bool parallel;              // parallelize matrix assembly
+    bool multigrid;             // build a multigrid hierarchy
+    unsigned int n_levels;      // number of levels for global refinement
+    unsigned int min_level;     // minimum level for multigrid algorithms
+    unsigned int max_level;     // maximum level for multigrid algorithms
 };
 
 inline SolverMethod
@@ -82,23 +83,48 @@ inline std::string upper(std::string s) {
 inline po::options_description mg_cli_options() {
     po::options_description d("Multigrid options");
     d.add_options()
+        ("levels", po::value<int>()->default_value(3),
+        "number of times to globally refine the mesh")
         ("multigrid", po::value<bool>()->default_value(false)->implicit_value(true),
          "enable multigrid (0|1)")
-        ("min-level", po::value<unsigned>()->default_value(0),
+        ("min-level", po::value<int>()->default_value(0),
          "minimal level for multigrid")
-        ("max-level", po::value<unsigned>()->default_value(dealii::numbers::invalid_unsigned_int),
+        ("max-level", po::value<int>()->default_value(0),
          "maximal level for multigrid")
         ("parallel", po::value<bool>()->default_value(false)->implicit_value(true),
          "parallel assembly for system matrices (0|1)");
     return d;
 }
 
+// Integer validation
+static unsigned int to_unsigned_nonneg(int v, const char* opt_name) {
+    if (v < 0)
+        throw po::validation_error(po::validation_error::invalid_option_value, opt_name,
+                                   std::to_string(v));
+    return static_cast<unsigned int>(v);
+}
+
 inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 {
     mg.multigrid = vm["multigrid"].as<bool>();
     mg.parallel  = vm["parallel"].as<bool>();
-    mg.min_level = vm["min-level"].as<unsigned>();
-    mg.max_level = vm["max-level"].as<unsigned>();
+    mg.n_levels  = vm["levels"].as<int>();
+
+    // min_level >= 0
+    const int min_i = vm["min-level"].as<int>();
+    mg.min_level = to_unsigned_nonneg(min_i, "min-level");
+
+    // max_level >= 0, default n_levels
+    const int max_i = vm["max-level"].as<int>();
+    const unsigned max_u = to_unsigned_nonneg(max_i, "max-level");
+    mg.max_level = (max_u == 0) ? mg.n_levels : max_u;
+
+    // min_level <= max_level
+    if (mg.max_level < mg.min_level) {
+        throw po::validation_error(po::validation_error::invalid_option_value,
+                                   "max-level",
+                                   "must be >= min-level");
+    }
 }
 
 
@@ -108,8 +134,6 @@ inline po::options_description gpe_cli_options() {
     d.add_options()
         ("degree", po::value<int>()->default_value(1),
          "polynomial degree for finite element")
-        ("levels", po::value<int>()->default_value(3),
-         "number of times to globally refine the mesh")
         ("dimension", po::value<int>()->default_value(2),
          "problem dimension")
         ("order", po::value<std::string>()->default_value("default"),
@@ -130,7 +154,6 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.order     = select_order(order_str);
     options.bc        = select_boundary_condition(boundary_str);
     options.degree    = vm["degree"].as<int>();
-    options.n_levels  = vm["levels"].as<int>();
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();

@@ -63,6 +63,47 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
     return x * Bx;
 }
 
+inline Vector<double>
+energy_gradient(const SparseMatrix<double>& A, const Vector<double>& x,
+    const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
+    unsigned int& last_step)
+{
+    dealii::PreconditionIdentity precondition{};
+
+    // y <- A^-1 x
+    auto [y,y_iter] = solve_sparse(A, x, options.solver,
+        precondition, options.max_inner, options.tol_inner);
+
+    // Apply boundary condition
+    constraints.distribute(y);
+
+    // z <- A^{-1}x / (x' A^{-1}x)
+    Vector<double> z(y);
+    double denom1 = x * y; // x' A^-1 x
+    Assert(denom1 > 0, dealii::ExcInternalError("x' A^{-1} x <= 0"));
+    z /= denom1;
+
+    // g <- x - z
+    Vector<double> g(x);
+    g.add(-1.0, z);
+
+    last_step = y_iter;
+    return g;
+}
+
+// Retraction by normalization
+inline void
+energy_retract(const SparseMatrix<double>& M, const Vector<double>& g, Vector<double>& x, double step_size)
+{
+    // x <- x - h g
+    x.add(-step_size, g);
+
+    // x <- x / ||x||_M
+    Vector<double> Mx(x.size());  // TODO: unnecessary allocation
+    M.vmult(Mx, x);
+    x /= std::sqrt(x * Mx);
+}
+
 // TODO: gradient norm termination (when gradient is computed)
 template <typename Matrix>
 bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
@@ -70,7 +111,7 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
                                 double tol_lambda, double tol_residual)
 {
     // Compute criteria
-    GdControl ctrl_prev(ctrl);
+    const GdControl ctrl_prev(ctrl);
     energy_residual(ctrl, x, A, M);
 
     // Check criteria
@@ -97,74 +138,67 @@ bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
 //! @return
 template <int dim, typename Function>
 Vector<double>
-// TODO: SolverOptions for inner solve
 gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
               Function&& update_mpp, const Vector<double>& x0, double beta,
               const dealii::AffineConstraints<double>& constraints,
-              const GdOptions& options, int check_every = 5)
+              const GdOptions& options, int check_every = 5, std::ostream& os = std::cerr)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
 
-    // Begin RGD iteration
     Vector x(x0);
     GdControl control{};
-    dealii::PreconditionIdentity precondition{};
+    unsigned int last_step = 0;  // number of iterations in inner solver taken
+    int iter;
 
     // TODO: unnecessary copies g, z
     //       dealii::Function with value() and grad_value()
-    for (int it = 0; it < options.max_iter; it++) {
-        // A = A_0 + beta * M_phiphi
-        SparseMatrix<double> A = sp_copy(A_0);
+    os << "iter,lac_iter,mass,lambda,residual,energy" << std::endl;
+
+    SparseMatrix<double> A;
+    A.reinit(A_0.get_sparsity_pattern());
+
+    // Begin RGD iteration
+    for (iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints to incumbent solution
         constraints.distribute(x);
 
-        // Update mass matrix
+        // A = A_0 + beta * M_xx
+        // TODO: matrix copy in every iteration - assemble A in single call, or use matrix-free operator
+        A.copy_from(A_0);
         update_mpp(Mpp, x);
         A.add(beta, Mpp);
-        
-        // Check termination criteria every N steps
-        if (it % check_every == 0 || it == options.max_iter - 1) {
+
+        // Termination criteria
+        if (iter % check_every == 0) {
             // Update control structure
-            if (energy_terminate_iteration(M, A, x,  control,
-                options.tol_lambda, options.tol_residual)) {
+            if (energy_terminate_iteration(M, A, x,  control, options.tol_lambda, options.tol_residual)) {
                 break;
-                }
-            // Print newly computed values
+            }
             const double E = energy(x, A_0, Mpp);
-            std::cerr << "Mass = " << control.mass << ", lambda = " << control.lambda
-                      << ", residual = " << control.residual << ", energy = " << E
-                      << std::endl;
+
+            // Values for previous iteration (including starting step)
+            os << iter << "," << last_step << "," << control.mass << "," << control.lambda << ","
+               << control.residual << "," << E << std::endl;
         }
+        // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
+        auto g = energy_gradient(A, x, options, constraints, last_step);
 
-        // Solve linear system (boundary constraints assumed applied to A_0, M, Mpp)
-        // TODO: distribute constraints again?
-        //       pass a solver object
-        Vector<double> y = solve_sparse(A, x, options.solver,
-            precondition, options.max_inner, options.tol_inner);
-        constraints.distribute(y);
-
-        // TODO: class object for energy with value() / gradient() - takes Vector of dofs as argument, not Point<dim>
-        // z <- A^{-1}x / (x' A^{-1}x)
-        Vector<double> z(y);
-        double denom1 = x * y; // x' A^-1 x
-        Assert(denom1 > 0, dealii::ExcInternalError("x' A^{-1} x <= 0"));
-        z /= denom1;
-
-        // g <- x - z
-        Vector<double> g(x);
-        g.add(-1.0, z);
-
+        // TODO
         // Nash: g(x) <- g(x) + v
         // v <- interpolate(g_fine(x_fine)) - g(interpolate(x_fine))
         // Nash objective: f + < v, x - Ry> - not required for fixed step size GD
 
-        // x <- x - h g
-        x.add(-options.step_size, g);
+        // Retraction: x <- (x - h g) / ||x - h g||_M
+        energy_retract(M, g, x, options.step_size);
+    }
 
-        // x <- x / ||x||_M
-        Vector<double> Mx(x.size());
-        M.vmult(Mx, x);
-        x /= std::sqrt(x * Mx);
+    // Print values for last iteration
+    if (iter == options.max_iter - 1) {
+        constraints.distribute(x);
+        const double E = energy(x, A_0, Mpp);
+
+        os << iter << "," << last_step << "," << control.mass << "," << control.lambda << ","
+           << control.residual << "," << E << std::endl;
     }
     //constraints.distribute(x);
     return x;

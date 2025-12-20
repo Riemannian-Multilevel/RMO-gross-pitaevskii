@@ -39,7 +39,7 @@ int main()
     options_gd.tol_lambda = 1e-8;
     options_gd.tol_residual = 1e-4;
     options_gd.step_size = 1.0;
-    options_gd.max_iter = 10;
+    options_gd.max_iter = 20;
     options_gd.max_inner = 500;
     options_gd.solver = SolverMethod::MINRES;
 
@@ -54,20 +54,22 @@ int main()
     options.degree = 1;
     options.radius = 10;
     options.beta = 100;
-    options.n_levels = 10;
     options.bc = BoundaryCondition::DIRICHLET;
 
     GPE_Options options_coarse(options);
-    options_coarse.n_levels = 9;
+    constexpr int dim = 2;
 
-    Square<2> V;
-    GPE_Solve<2, execution::seq_t> solver_fine(options);
-    GPE_Solve<2, execution::seq_t> solver_coarse(options_coarse);
+    Square<dim> V;
+    int n_levels_fine = 10;
+    int n_levels_coarse = 9;
+    GPE_Solve<dim, execution::seq_t> solver_fine(options, n_levels_fine);
+    GPE_Solve<dim, execution::seq_t> solver_coarse(options_coarse, n_levels_coarse);
 
     std::cout << "---- FINE ASSEMBLY ----" << std::endl;
     {
         TimerOutput::Scope timer_section(timer, "Assembly - fine");
         solver_fine.setup();
+        solver_fine.assemble_matrix(V);
     }
 
     std::cout << std::endl;
@@ -75,20 +77,21 @@ int main()
     {
         TimerOutput::Scope timer_section(timer, "Assembly - coarse");
         solver_coarse.setup();
+        solver_coarse.assemble_matrix(V);
     }
 
     std::cout << std::endl;
     std::cout << "---- FINE SOLVE ----" << std::endl;
     {
         TimerOutput::Scope timer_section(timer, "Solve - fine");
-        solver_fine.run(V, 1.0, options.beta, options_gd, 1);
+        solver_fine.run(1.0, options.beta, options_gd, 1);
     }
 
     std::cout << std::endl;
     std::cout << "---- COARSE SOLVE ----" << std::endl;
     {
         TimerOutput::Scope timer_section(timer, "Solve - coarse");
-        solver_coarse.run(V, 1.0, options.beta, options_gd, 1);
+        solver_coarse.run(1.0, options.beta, options_gd, 1);
     }
 
     // Multiresolution
@@ -101,7 +104,7 @@ int main()
 
     {
         TimerOutput::Scope timer_section(timer, "Solve - coarse then fine");
-        auto x = solver_coarse.run(V, 1.0, options.beta, options_gd, 1);
+        auto x = solver_coarse.run(1.0, options.beta, options_gd, 1);
         auto y0 = Vector<double>(solver_fine.n_dofs());
 
         VectorTools::interpolate_to_finer_mesh(solver_coarse.get_dofs(), x,
@@ -112,6 +115,6 @@ int main()
         // y0 /= std::sqrt(y0 * My0);
 
         std::cout << std::endl;
-        auto y = solver_fine.run(V, y0, options.beta, options_gd, 1);
+        auto y = solver_fine.run(y0, options.beta, options_gd, 1);
     }
 }

@@ -14,7 +14,6 @@ namespace gpe
 struct GPE_Options
 {
     int dimension;          // dimension of domain
-    int n_levels;           // number of levels for global refinement
     int degree;             // degree of shape functions
     double radius;          // radius of the cube (square, line) domain
     double beta;            // factor for the non-linear term in GPE
@@ -42,10 +41,10 @@ public:
         dirichlet_boundary_ids = {0};
     }
 
-    void make_grid()
+    void make_grid(unsigned int n_levels)
     {
         // step 1 - regularly refined mesh
-        make_cube(triangulation, options.radius, options.n_levels);
+        make_cube(triangulation, options.radius, n_levels);
         has_grid = true;
 
         std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
