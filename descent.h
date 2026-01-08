@@ -107,7 +107,7 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
 }
 
 // Gradient for inverse iteration / model problem
-inline Vector<double>
+//inline Vector<double>
 // gradient(const SparseMatrix<double>& A, const Vector<double>& x,
 //     const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
 //     unsigned int& last_step)

@@ -12,6 +12,7 @@
 using namespace dealii;
 using namespace gpe;
 
+// TODO: use multigrid transfer/matrices
 template <int dim, typename ExecPolicy>
 static void
 prolongate_between_meshes(const GPE_Solve<dim, ExecPolicy> &coarse,
@@ -25,9 +26,6 @@ prolongate_between_meshes(const GPE_Solve<dim, ExecPolicy> &coarse,
     VectorTools::interpolate_to_finer_mesh(coarse.get_dofs(), x_coarse,
                                            fine.get_dofs(), fine.get_constraints(),
                                            y0_fine);
-
-    // Good practice: enforce constraints explicitly
-    fine.get_constraints().distribute(y0_fine);
 }
 
 int main()

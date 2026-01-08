@@ -54,6 +54,7 @@ to_string(SolverMethod method)
 }
 
 // TODO: return SolverInfo (converged/did_not_converge/error)
+//       output vector (reference) for solution
 template <typename PreconditionerType>
 std::pair<Vector<double>,unsigned int>
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
