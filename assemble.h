@@ -139,23 +139,23 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     PerTaskData<dim> data(fe);
 
     // generic cell worker: works for active and level cells
-    auto cell_worker = [&assemble_cell](const auto& cell, ScratchData<dim>& scratch, PerTaskData<dim>& data)
+    auto cell_worker = [&assemble_cell](const auto& cell, ScratchData<dim>& scratch_data, PerTaskData<dim>& task_data)
     {
-        scratch.fe_values.reinit(cell); // cell is active_cell_iterator or level_cell_iterator
-        data.cell_matrix = 0;
+        scratch_data.fe_values.reinit(cell); // cell is active_cell_iterator or level_cell_iterator
+        task_data.cell_matrix = 0;
 
         //const unsigned int dofs_per_cell = fe.dofs_per_cell;
         //data.local_dof_indices.resize(dofs_per_cell);
 
-        cell->get_active_or_mg_dof_indices(data.local_dof_indices);
+        cell->get_active_or_mg_dof_indices(task_data.local_dof_indices);
 
         // user-provided local assembly
-        assemble_cell(scratch.fe_values, data.cell_matrix, data.local_dof_indices);
+        assemble_cell(scratch_data.fe_values, task_data.cell_matrix, task_data.local_dof_indices);
     };
 
-    auto copier = [&constraints, &system_matrix](const PerTaskData<dim>& data)
+    auto copier = [&constraints, &system_matrix](const PerTaskData<dim>& task_data)
     {
-        constraints.distribute_local_to_global(data.cell_matrix, data.local_dof_indices, system_matrix);
+        constraints.distribute_local_to_global(task_data.cell_matrix, task_data.local_dof_indices, system_matrix);
     };
 
     if (level == dealii::numbers::invalid_unsigned_int) {
@@ -176,13 +176,20 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
 
 } // namespace parallel
 
+namespace matrix_free
+{
+
+} // namespace matrix_free
+
 namespace execution
 {
 struct seq_t {};
-struct par_t {};
+struct par_t {};  // parallel
+struct mul_t {};  // matrix-free
 
 inline constexpr seq_t seq{};
 inline constexpr par_t par{};
+inline constexpr mul_t mul{};
 }
 
 // Tag-based approach for selecting parallel or sequential version

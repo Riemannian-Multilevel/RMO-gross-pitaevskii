@@ -67,7 +67,7 @@ public:
     }
 
     [[maybe_unused]] MGLevelObject<Vector<double>>
-    run(const double x0d, double beta, GdOptions options_rgd, int n_check_res) const
+    run(const double x0d, double beta, GdOptions options_rgd, int n_check_res, std::ostream& os) const
     {
         if (!is_assembled)
             throw dealii::ExcEmptyObject("GPE_Solve_MG::run(): call assemble_matrix() first");
@@ -124,7 +124,7 @@ public:
 
             // Gradient descent + enforce boundary conditions
             x_v[level] = gp_energy_rgd<dim>(A0_v[level], M_v[level], Mpp,
-                update_mpp_level, x0, beta, level_constraints, options_rgd, n_check_res);
+                update_mpp_level, x0, beta, level_constraints, options_rgd, n_check_res, os);
             std::cerr << std::endl;
         }
         return x_v;

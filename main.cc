@@ -52,14 +52,14 @@ void output_hdf5(const Vector<double>& solution, const dealii::DoFHandler<dim>& 
 }
 
 template <int dim, typename Solver>
-void package(Solver& GS, const double beta, const GdOptions& options_rgd)
+void package(Solver& GS, const double beta, const GdOptions& options_rgd, std::ostream& os = std::cerr)
 {
     Square<dim> V;
     GS.setup();
     GS.assemble_matrix(V);
 
     // Run gradient descent
-    auto x = GS.run(1.0, beta, options_rgd, N_CHECK_RES);
+    auto x = GS.run(1.0, beta, options_rgd, N_CHECK_RES, os);
 
     // Plot solution
     if constexpr (gpe::is_solver_kind_v<Solver, gpe::plain_solver_tag>) {

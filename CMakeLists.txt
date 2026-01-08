@@ -41,3 +41,8 @@ add_executable(bench bench.cc)
 target_sources(bench PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(bench)
 target_link_libraries(bench fmt::fmt)
+
+add_executable(bench2 bench2.cc)
+target_sources(bench2 PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(bench2)
+target_link_libraries(bench2 fmt::fmt)

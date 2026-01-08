@@ -27,8 +27,11 @@ struct GdOptions
     SolverMethod solver;  // method for solving sparse linear equations
 };
 
+namespace energy
+{
+
 template <typename Matrix>
-void energy_residual(GdControl& control, const Vector<double>& x,
+void residual(GdControl& control, const Vector<double>& x,
                      const Matrix& A, const Matrix& M)
 {
     Vector<double> Mx(x.size());
@@ -50,7 +53,7 @@ void energy_residual(GdControl& control, const Vector<double>& x,
 
 template <typename Matrix>
 [[maybe_unused]] double
-energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
+function_value(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
 {
     Vector<double> Bx(x.size());
     A_0.vmult(Bx, x);
@@ -63,16 +66,58 @@ energy(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
     return x * Bx;
 }
 
+// case x != v
 inline Vector<double>
-energy_gradient(const SparseMatrix<double>& A, const Vector<double>& x,
+project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
+    const SparseMatrix<double>& M, const Vector<double>& v)
+{
+    AssertDimension(x.size(), v.size());
+    AssertDimension(x.size(), Ainv_Mx.size());
+
+    Vector<double> Proj_v(v);
+    Vector<double> My(x.size());
+    M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
+
+    Vector<double> Mv(v.size());
+    M.vmult(Mv, v);
+
+    double denom = x * My;
+    Assert(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
+
+    Proj_v.add(-(x*Mv)/denom, Ainv_Mx);
+    return Proj_v;
+}
+
+// case x == v
+inline Vector<double>
+project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
+    const SparseMatrix<double>& M)
+{
+    AssertDimension(x.size(), Ainv_Mx.size());
+
+    Vector<double> Proj_v(x);
+    Vector<double> My(x.size());
+    M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
+
+    double denom = x * My;
+    Assert(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
+
+    Proj_v.add(-1.0/denom, Ainv_Mx);
+    return Proj_v;
+}
+
+// Gradient for inverse iteration / model problem
+inline Vector<double>
+gradient(const SparseMatrix<double>& A, const Vector<double>& x,
     const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
     unsigned int& last_step)
 {
     dealii::PreconditionIdentity precondition{};
 
-    // y <- A^-1 x
+    // y <- A^{-1} x
     auto [y,y_iter] = solve_sparse(A, x, options.solver,
         precondition, options.max_inner, options.tol_inner);
+    last_step = y_iter;
 
     // Apply boundary condition
     constraints.distribute(y);
@@ -86,14 +131,34 @@ energy_gradient(const SparseMatrix<double>& A, const Vector<double>& x,
     // g <- x - z
     Vector<double> g(x);
     g.add(-1.0, z);
-
-    last_step = y_iter;
     return g;
+}
+
+// Riemannian gradient in S^{n-1} with energy metric
+inline Vector<double>
+gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vector<double>& x,
+    const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
+    unsigned int& last_step)
+{
+    dealii::PreconditionIdentity precondition{};
+
+    // y <- A^{-1} Mx
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+
+    auto [y,y_iter] = solve_sparse(A, Mx, options.solver,
+        precondition, options.max_inner, options.tol_inner);
+    last_step = y_iter;
+
+    // Apply boundary condition
+    constraints.distribute(y);
+
+    return project_onto_tangent_space(y, x, M); // \Pi_x(x): R^n -> T_x S^{n-1}
 }
 
 // Retraction by normalization
 inline void
-energy_retract(const SparseMatrix<double>& M, const Vector<double>& g, Vector<double>& x, double step_size)
+retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& g, Vector<double>& x, double step_size)
 {
     // x <- x - h g
     x.add(-step_size, g);
@@ -104,16 +169,12 @@ energy_retract(const SparseMatrix<double>& M, const Vector<double>& g, Vector<do
     x /= std::sqrt(x * Mx);
 }
 
-// TODO: gradient norm termination (when gradient is computed)
-template <typename Matrix>
-bool energy_terminate_iteration(const Matrix& M, const Matrix& A,
-                                const Vector<double>& x, GdControl& ctrl,
-                                double tol_lambda, double tol_residual)
-{
-    // Compute criteria
-    const GdControl ctrl_prev(ctrl);
-    energy_residual(ctrl, x, A, M);
+} // namespace energy
 
+// TODO: gradient norm termination (when gradient is computed)
+bool terminate_iteration(const GdControl& ctrl, const GdControl& ctrl_prev,
+    const double tol_lambda, const double tol_residual)
+{
     // Check criteria
     const double lmb_diff   = std::abs(ctrl.lambda - ctrl_prev.lambda);
     const double lmb_factor = 1.0 + std::abs(ctrl.lambda);  // avoid numerical issues near lmb ~ 0
@@ -147,12 +208,11 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
 
     Vector x(x0);
-    GdControl control{};
+    GdControl ctrl{}, ctrl_prev{};
     unsigned int last_step = 0;  // number of iterations in inner solver taken
     int iter;
 
     // TODO: unnecessary copies g, z
-    //       dealii::Function with value() and grad_value()
     os << "iter,lac_iter,mass,lambda,residual,energy" << std::endl;
 
     SparseMatrix<double> A;
@@ -172,17 +232,22 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         // Termination criteria
         if (iter % check_every == 0) {
             // Update control structure
-            if (energy_terminate_iteration(M, A, x,  control, options.tol_lambda, options.tol_residual)) {
+            ctrl_prev = ctrl;
+            energy::residual(ctrl, x, A, M);
+
+            if (terminate_iteration(ctrl, ctrl_prev, options.tol_lambda,  options.tol_residual)) {
                 break;
             }
-            const double E = energy(x, A_0, Mpp);
+            const double E = energy::function_value(x, A_0, Mpp);
 
             // Values for previous iteration (including starting step)
-            os << iter << "," << last_step << "," << control.mass << "," << control.lambda << ","
-               << control.residual << "," << E << std::endl;
+            os << iter << "," << last_step << "," << ctrl.mass << "," << ctrl.lambda << ","
+               << ctrl.residual << "," << E << std::endl;
         }
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
-        auto g = energy_gradient(A, x, options, constraints, last_step);
+        // TODO: variable function with gradient() / value() methods
+        //       update() method to avoid extra argument (update_mpp)
+        auto g = energy::gradient(A, x, options, constraints, last_step);
 
         // TODO
         // Nash: g(x) <- g(x) + v
@@ -190,16 +255,16 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         // Nash objective: f + < v, x - Ry> - not required for fixed step size GD
 
         // Retraction: x <- (x - h g) / ||x - h g||_M
-        energy_retract(M, g, x, options.step_size);
+        energy::retract_by_norm(M, g, x, options.step_size);
     }
 
     // Print values for last iteration
     if (iter == options.max_iter - 1) {
         constraints.distribute(x);
-        const double E = energy(x, A_0, Mpp);
+        const double E = energy::function_value(x, A_0, Mpp);
 
-        os << iter << "," << last_step << "," << control.mass << "," << control.lambda << ","
-           << control.residual << "," << E << std::endl;
+        os << iter << "," << last_step << "," << ctrl.mass << "," << ctrl.lambda << ","
+           << ctrl.residual << "," << E << std::endl;
     }
     //constraints.distribute(x);
     return x;

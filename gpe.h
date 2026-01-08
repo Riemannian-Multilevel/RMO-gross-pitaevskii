@@ -27,7 +27,8 @@ template <int dim>
 class GPE
 {
 public:
-    // TODO: simplify to radius / hyper cube (later: allow passing in arbitrary meshes?)
+    // TODO: allow passing in meshes
+    //       constructor which accepts finite element (+ObserverPointer, step7)
     GPE(const GPE_Options& options_)
     :
         options(options_),
