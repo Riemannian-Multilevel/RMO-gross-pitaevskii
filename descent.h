@@ -108,31 +108,31 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
 
 // Gradient for inverse iteration / model problem
 inline Vector<double>
-gradient(const SparseMatrix<double>& A, const Vector<double>& x,
-    const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
-    unsigned int& last_step)
-{
-    dealii::PreconditionIdentity precondition{};
-
-    // y <- A^{-1} x
-    auto [y,y_iter] = solve_sparse(A, x, options.solver,
-        precondition, options.max_inner, options.tol_inner);
-    last_step = y_iter;
-
-    // Apply boundary condition
-    constraints.distribute(y);
-
-    // z <- A^{-1}x / (x' A^{-1}x)
-    Vector<double> z(y);
-    double denom1 = x * y; // x' A^-1 x
-    Assert(denom1 > 0, dealii::ExcInternalError("x' A^{-1} x <= 0"));
-    z /= denom1;
-
-    // g <- x - z
-    Vector<double> g(x);
-    g.add(-1.0, z);
-    return g;
-}
+// gradient(const SparseMatrix<double>& A, const Vector<double>& x,
+//     const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
+//     unsigned int& last_step)
+// {
+//     dealii::PreconditionIdentity precondition{};
+//
+//     // y <- A^{-1} x
+//     auto [y,y_iter] = solve_sparse(A, x, options.solver,
+//         precondition, options.max_inner, options.tol_inner);
+//     last_step = y_iter;
+//
+//     // Apply boundary condition
+//     constraints.distribute(y);
+//
+//     // z <- A^{-1}x / (x' A^{-1}x)
+//     Vector<double> z(y);
+//     double denom1 = x * y; // x' A^-1 x
+//     Assert(denom1 > 0, dealii::ExcInternalError("x' A^{-1} x <= 0"));
+//     z /= denom1;
+//
+//     // g <- x - z
+//     Vector<double> g(x);
+//     g.add(-1.0, z);
+//     return g;
+// }
 
 // Riemannian gradient in S^{n-1} with energy metric
 inline Vector<double>
@@ -172,7 +172,8 @@ retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& g, Vector<d
 } // namespace energy
 
 // TODO: gradient norm termination (when gradient is computed)
-bool terminate_iteration(const GdControl& ctrl, const GdControl& ctrl_prev,
+inline bool
+terminate_iteration(const GdControl& ctrl, const GdControl& ctrl_prev,
     const double tol_lambda, const double tol_residual)
 {
     // Check criteria
@@ -247,7 +248,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: variable function with gradient() / value() methods
         //       update() method to avoid extra argument (update_mpp)
-        auto g = energy::gradient(A, x, options, constraints, last_step);
+        auto g = energy::gradient(A, M, x, options, constraints, last_step);
 
         // TODO
         // Nash: g(x) <- g(x) + v
