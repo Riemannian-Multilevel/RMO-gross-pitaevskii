@@ -54,15 +54,14 @@ to_string(SolverMethod method)
 }
 
 // TODO: return SolverInfo (converged/did_not_converge/error)
-//       output vector (reference) for solution
 template <typename PreconditionerType>
-std::pair<Vector<double>,unsigned int>
+[[maybe_unused]] unsigned int
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
-    const SolverMethod method = SolverMethod::GMRES,
+    Vector<double>& solution, const SolverMethod method = SolverMethod::GMRES,
     const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
     const unsigned max_iter = 1000, const double reltol = 1e-6)
 {
-    Vector<double> solution(system_rhs.size());
+    solution = 0.0;
     // TODO: use M-norm for tolerance?
     dealii::SolverControl solver_control(max_iter, reltol * system_rhs.l2_norm());
 
@@ -88,7 +87,7 @@ solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& sy
     default:
         throw std::invalid_argument("Unknown SolverMethod");
     }
-    return std::make_pair(solution,solver_control.last_step());
+    return solver_control.last_step();
 }
 
 } // namespace gpe

@@ -137,8 +137,7 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
 // Riemannian gradient in S^{n-1} with energy metric
 inline Vector<double>
 gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vector<double>& x,
-    const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
-    unsigned int& last_step)
+    const GdOptions& options, const dealii::AffineConstraints<double>& constraints, unsigned int& last_step)
 {
     dealii::PreconditionIdentity precondition{};
 
@@ -146,9 +145,9 @@ gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vec
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
 
-    auto [y,y_iter] = solve_sparse(A, Mx, options.solver,
+    Vector<double> y(x.size());
+    last_step = solve_sparse(A, Mx, y, options.solver,
         precondition, options.max_inner, options.tol_inner);
-    last_step = y_iter;
 
     // Apply boundary condition
     constraints.distribute(y);
