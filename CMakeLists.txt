@@ -15,7 +15,6 @@ set(COMMON_HEADERS
         dofs.h
         assemble.h
         function.h
-        operators.h
         lac.h
         util.h
         descent.h

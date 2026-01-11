@@ -85,7 +85,7 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
     M.vmult(Mv, v);
 
     double denom = x * My;
-    Assert(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
+    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
 
     Proj_v.add(-(x*Mv)/denom, Ainv_Mx);
     return Proj_v;
@@ -103,7 +103,7 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
     M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
 
     double denom = x * My;
-    Assert(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
+    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
 
     Proj_v.add(-1.0/denom, Ainv_Mx);
     return Proj_v;
@@ -196,6 +196,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     // TODO: unnecessary copies g, z
     for (iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints to incumbent solution
+        // TODO: merge to update_mpp (or separate object)
         constraints.distribute(x);
 
         // A = A_0 + beta * M_xx

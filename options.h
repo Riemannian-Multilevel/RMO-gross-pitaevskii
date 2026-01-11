@@ -11,15 +11,12 @@ namespace po = boost::program_options;  // XXX: move to gpe namespace?
 namespace gpe
 {
 
-// TODO: parallel/multigrid to other struct
 struct MG_Options
 {
-    bool parallel;              // parallelize matrix assembly
     bool multigrid;             // build a multigrid hierarchy
     unsigned int n_levels;      // number of levels for global refinement
     unsigned int min_level;     // minimum level for multigrid algorithms
     unsigned int max_level;     // maximum level for multigrid algorithms
-    std::string table;          // file for convergence table
 };
 
 inline SolverMethod
@@ -91,11 +88,7 @@ inline po::options_description mg_cli_options() {
         ("min-level", po::value<int>()->default_value(0),
          "minimal level for multigrid")
         ("max-level", po::value<int>()->default_value(0),
-         "maximal level for multigrid")
-        ("parallel", po::value<bool>()->default_value(false)->implicit_value(true),
-         "parallel assembly for system matrices (0|1)")
-        ("table", po::value<std::string>()->default_value(""),
-         "write convergence table to filename");
+         "maximal level for multigrid");
     return d;
 }
 
@@ -110,9 +103,7 @@ static unsigned int to_unsigned_nonneg(int v, const char* opt_name) {
 inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 {
     mg.multigrid = vm["multigrid"].as<bool>();
-    mg.parallel  = vm["parallel"].as<bool>();
     mg.n_levels  = vm["levels"].as<int>();
-    mg.table     = vm["table"].as<std::string>();
 
     // min_level >= 0
     const int min_i = vm["min-level"].as<int>();

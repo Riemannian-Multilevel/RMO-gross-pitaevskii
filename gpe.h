@@ -1,11 +1,13 @@
 #ifndef GPE_GPE_H
 #define GPE_GPE_H
+#define EXECUTION_POLICY gpe::execution::seq
 
 #include <deal.II/numerics/matrix_creator.h>
 
 #include "lac.h"
 #include "mesh.h"
 #include "dofs.h"
+#include "assemble.h"
 
 namespace gpe
 {
@@ -41,6 +43,7 @@ public:
         options.dimension = dim;
         dirichlet_boundary_ids = {0};
     }
+    virtual ~GPE() = default;
 
     void make_grid(unsigned int n_levels)
     {
@@ -91,44 +94,96 @@ public:
         has_mg_constraints  = true;
     }
 
-    const dealii::DoFHandler<dim>&
-        get_dofs() const
+    // TODO: set execution policy in macro, instead of at runtime
+    template <typename Function>
+    void assemble(Function&& V, SparseMatrix<double>& A0, SparseMatrix<double>& M,
+        SparsityPattern& sparsity_pattern) const
     {
-        return dof_handler;
-    }
-    const dealii::MGConstrainedDoFs&
-        get_mg_dofs() const
-    {
-        return mg_constrained_dofs;
-    }
-    const dealii::Triangulation<dim>&
-        get_triangulation() const
-    {
-        return triangulation;
-    }
-    unsigned int n_levels() const
-    {
-        return triangulation.n_levels();
-    }
-    unsigned int n_dofs() const
-    {
-        return dof_handler.n_dofs();
-    }
-    const dealii::AffineConstraints<double>&
-        get_constraints() const
-    {
-        if (!has_active_constraints)
-            throw dealii::ExcEmptyObject("GPE::get_constraints(): call dofs() or dofs_mg() first");
+        const SparsityPattern sp = make_sparsity_pattern(dof_handler, constraints);
+        sparsity_pattern.copy_from(sp);
 
+        // A0: used for preconditioning (incomplete LU) and sum A0 + M_xx
+        A0.reinit(sparsity_pattern);
+        assemble_A0(EXECUTION_POLICY, A0, V, dof_handler, constraints);
+
+        // M: used for energy metric
+        M.reinit(sparsity_pattern);
+        assemble_mass(EXECUTION_POLICY, M, dof_handler, constraints);
+    }
+
+    template <typename Function>
+    void assemble_mg(Function&& V, SparseMatrix<double>& A0, SparseMatrix<double>& M,
+        SparsityPattern& sparsity_pattern, unsigned int level) const
+    {
+        // "Note that there is [no] need to consider hanging nodes on the typical level matrices,
+        // since only one level is considered."
+        // TODO: we may still want to pass on Dirichlet constraints
+        const SparsityPattern sp = make_sparsity_pattern_mg(dof_handler, level, {});
+        sparsity_pattern.copy_from(sp);
+
+        // A0: used for preconditioning (incomplete LU) and sum A0 + M_xx
+        A0.reinit(sparsity_pattern);
+        assemble_A0(EXECUTION_POLICY, A0, V, dof_handler, get_level_constraints(level), level);
+
+        // M: used for energy metric
+        M.reinit(sparsity_pattern);
+        assemble_mass(EXECUTION_POLICY, M, dof_handler, get_level_constraints(level), level);
+    }
+
+    void assemble_phiphi(SparseMatrix<double>& Mpp, const Vector<double>& x) const
+    {
+        assemble_mass_phiphi<dim>(EXECUTION_POLICY, Mpp, x, dof_handler, constraints);
+    }
+
+    void assemble_phiphi_mg(SparseMatrix<double>& Mpp, const Vector<double>& x, unsigned int level) const
+    {
+        assemble_mass_phiphi<dim>(EXECUTION_POLICY, Mpp, x, dof_handler, get_level_constraints(level), level);
+    }
+
+    const dealii::AffineConstraints<double>&
+    get_constraints() const
+    {
+        if (!has_active_constraints) {
+            throw dealii::ExcEmptyObject("GPE::get_constraints(): call dofs() or dofs_mg() first");
+        }
         return constraints;
     }
-    const dealii::AffineConstraints<double>&
-        get_level_constraints(const unsigned level) const
-    {
-        if (!has_mg_constraints)
-            throw dealii::ExcEmptyObject("GPE::get_mg_constraints(): call dofs_mg() first");
 
+    const dealii::AffineConstraints<double>&
+    get_level_constraints(const unsigned level) const
+    {
+        if (!has_mg_constraints) {
+            throw dealii::ExcEmptyObject("GPE::get_mg_constraints(): call dofs_mg() first");
+        }
         return mg_constrained_dofs.get_level_constraints(level);
+    }
+
+    unsigned int n_levels() const {
+        return triangulation.n_levels();
+    }
+    unsigned int n_levels(unsigned int level) const {
+        return triangulation.n_levels(level);
+    }
+    unsigned int n_cells() const {
+        return triangulation.n_cells();
+    }
+    unsigned int n_cells(unsigned int level) const {
+        return triangulation.n_cells(level);
+    }
+    unsigned int n_active_cells() const {
+        return triangulation.n_active_cells();
+    }
+    unsigned int n_dofs() const {
+        return dof_handler.n_dofs();
+    }
+    unsigned int n_dofs(unsigned int level) const {
+        return dof_handler.n_dofs(level);
+    }
+    const dealii::DoFHandler<dim>& get_dofs() const {
+        return dof_handler;
+    }
+    const dealii::MGConstrainedDoFs& get_mg_dofs() const {
+        return mg_constrained_dofs;
     }
 
 private:

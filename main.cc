@@ -2,7 +2,6 @@
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
 #include "main.h"
-#include "main_mg.h"
 #include "function.h"
 #include "options.h"
 
@@ -12,7 +11,6 @@
 
 using namespace gpe;
 using namespace dealii;
-
 
 //!
 //! @tparam dim Problem dimension
@@ -50,30 +48,15 @@ void output_hdf5(const Vector<double>& solution, const dealii::DoFHandler<dim>& 
 }
 
 template <int dim, typename Solver>
-void package(Solver& GS, const double beta, const GdOptions& options_rgd, std::string filename = {})
+void package(Solver& GS, const double beta, const GdOptions& options_rgd)
 {
-    Square<dim> V;
-    GS.setup();
-    GS.assemble_matrix(V);
-
-    // Save table output to specified file
-    std::fstream logfile;
-    std::ostream* os;
-
-    if (filename.size()) {
-        logfile.exceptions(std::ios_base::failbit | std::ios_base::badbit);
-        logfile.open(filename, std::ios::out | std::ios::trunc);
-        os = &logfile;
-    } else {
-        os = &std::cout;
-    }
     // Run gradient descent
-    auto x = GS.run(1.0, beta, options_rgd, *os);
+    auto x = GS.run(1.0, beta, options_rgd, std::cout);
 
     // Plot solution
     if constexpr (gpe::is_solver_kind_v<Solver, gpe::plain_solver_tag>) {
-        using DataOutBase::OutputFormat::vtu;
-        output_results(x, GS.get_dofs(), vtu, fmt::format("solution_{}d.vtu", dim));
+        using DataOutBase::OutputFormat::vtk;
+        output_results(x, GS.get_dofs(), vtk, fmt::format("solution_{}d.vtk", dim));
     }
 }
 
@@ -107,23 +90,14 @@ int main(int argc, char* argv[])
         {
             constexpr int dim = decltype(D)::value;
 
-            if (options_mg.multigrid && options_mg.parallel) {
-                GPE_Solve_MG<dim, execution::par_t> GS(options,
-                    options_mg.n_levels, options_mg.min_level, options_mg.max_level);
-                package<dim>(GS, options.beta, options_rgd, options_mg.table);
+            if (options_mg.multigrid) {
+                GPE_Solve_MG<dim> GS(options, Square<dim>(), options_mg.n_levels,
+                    options_mg.min_level, options_mg.max_level);
+                package<dim>(GS, options.beta, options_rgd);
             }
-            else if (options_mg.multigrid && !options_mg.parallel) {
-                GPE_Solve_MG<dim, execution::seq_t> GS(options,
-                    options_mg.n_levels, options_mg.min_level, options_mg.max_level);
-                package<dim>(GS, options.beta, options_rgd, options_mg.table);
-            }
-            else if (!options_mg.multigrid && options_mg.parallel) {
-                GPE_Solve<dim, execution::par_t> GS(options, options_mg.n_levels);
-                package<dim>(GS, options.beta, options_rgd, options_mg.table);
-            }
-            else if (!options_mg.multigrid && !options_mg.parallel) {
-                GPE_Solve<dim, execution::seq_t> GS(options, options_mg.n_levels);
-                package<dim>(GS, options.beta, options_rgd, options_mg.table);
+            else {
+                GPE_Solve<dim> GS(options, Square<dim>(), options_mg.n_levels);
+                package<dim>(GS, options.beta, options_rgd);
             }
         });
     }
