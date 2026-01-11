@@ -10,8 +10,6 @@
 #include <fmt/format.h>
 #include <deal.II/numerics/data_out.h>
 
-#define N_CHECK_RES 1
-
 using namespace gpe;
 using namespace dealii;
 
@@ -52,14 +50,25 @@ void output_hdf5(const Vector<double>& solution, const dealii::DoFHandler<dim>& 
 }
 
 template <int dim, typename Solver>
-void package(Solver& GS, const double beta, const GdOptions& options_rgd, std::ostream& os = std::cerr)
+void package(Solver& GS, const double beta, const GdOptions& options_rgd, std::string filename = {})
 {
     Square<dim> V;
     GS.setup();
     GS.assemble_matrix(V);
 
+    // Save table output to specified file
+    std::fstream logfile;
+    std::ostream* os;
+
+    if (filename.size()) {
+        logfile.exceptions(std::ios_base::failbit | std::ios_base::badbit);
+        logfile.open(filename, std::ios::out | std::ios::trunc);
+        os = &logfile;
+    } else {
+        os = &std::cout;
+    }
     // Run gradient descent
-    auto x = GS.run(1.0, beta, options_rgd, N_CHECK_RES, os);
+    auto x = GS.run(1.0, beta, options_rgd, *os);
 
     // Plot solution
     if constexpr (gpe::is_solver_kind_v<Solver, gpe::plain_solver_tag>) {
@@ -86,7 +95,7 @@ int main(int argc, char* argv[])
         po::store(po::parse_command_line(argc, argv, all), vm);
         po::notify(vm);
 
-        if (vm.count("help")) {
+        if (vm.contains("help")) {
             std::cout << all << "\n";
             return 0;
         }
@@ -101,20 +110,20 @@ int main(int argc, char* argv[])
             if (options_mg.multigrid && options_mg.parallel) {
                 GPE_Solve_MG<dim, execution::par_t> GS(options,
                     options_mg.n_levels, options_mg.min_level, options_mg.max_level);
-                package<dim>(GS, options.beta, options_rgd);
+                package<dim>(GS, options.beta, options_rgd, options_mg.table);
             }
             else if (options_mg.multigrid && !options_mg.parallel) {
                 GPE_Solve_MG<dim, execution::seq_t> GS(options,
                     options_mg.n_levels, options_mg.min_level, options_mg.max_level);
-                package<dim>(GS, options.beta, options_rgd);
+                package<dim>(GS, options.beta, options_rgd, options_mg.table);
             }
             else if (!options_mg.multigrid && options_mg.parallel) {
                 GPE_Solve<dim, execution::par_t> GS(options, options_mg.n_levels);
-                package<dim>(GS, options.beta, options_rgd);
+                package<dim>(GS, options.beta, options_rgd, options_mg.table);
             }
             else if (!options_mg.multigrid && !options_mg.parallel) {
                 GPE_Solve<dim, execution::seq_t> GS(options, options_mg.n_levels);
-                package<dim>(GS, options.beta, options_rgd);
+                package<dim>(GS, options.beta, options_rgd, options_mg.table);
             }
         });
     }

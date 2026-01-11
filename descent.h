@@ -3,9 +3,12 @@
 
 #include "lac.h"
 #include <cmath>
+#include <deal.II/base/convergence_table.h>
 
 namespace gpe
 {
+using dealii::ConvergenceTable::RateMode::reduction_rate;
+using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 
 struct GdControl
 {
@@ -18,13 +21,13 @@ struct GdControl
 // TODO: move this to options.h?
 struct GdOptions
 {
-    double tol_inner;     // relative tolerance for inner solver
-    double tol_lambda;    // tolerance for rayleigh quotients
-    double tol_residual;  // tolerance for M-residual
-    double step_size;     // fixed step-size used in iteration steps
-    int max_iter;         // maximum GD iterations
-    int max_inner;        // maximum sparse solver iterations
-    SolverMethod solver;  // method for solving sparse linear equations
+    double tol_inner;       // relative tolerance for inner solver
+    double tol_lambda;      // tolerance for rayleigh quotients
+    double tol_residual;    // tolerance for M-residual
+    double step_size;       // fixed step-size used in iteration steps
+    unsigned int max_iter;  // maximum GD iterations
+    unsigned int max_inner; // maximum sparse solver iterations
+    SolverMethod solver;    // method for solving sparse linear equations
 };
 
 namespace energy
@@ -106,34 +109,6 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
     return Proj_v;
 }
 
-// Gradient for inverse iteration / model problem
-//inline Vector<double>
-// gradient(const SparseMatrix<double>& A, const Vector<double>& x,
-//     const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
-//     unsigned int& last_step)
-// {
-//     dealii::PreconditionIdentity precondition{};
-//
-//     // y <- A^{-1} x
-//     auto [y,y_iter] = solve_sparse(A, x, options.solver,
-//         precondition, options.max_inner, options.tol_inner);
-//     last_step = y_iter;
-//
-//     // Apply boundary condition
-//     constraints.distribute(y);
-//
-//     // z <- A^{-1}x / (x' A^{-1}x)
-//     Vector<double> z(y);
-//     double denom1 = x * y; // x' A^-1 x
-//     Assert(denom1 > 0, dealii::ExcInternalError("x' A^{-1} x <= 0"));
-//     z /= denom1;
-//
-//     // g <- x - z
-//     Vector<double> g(x);
-//     g.add(-1.0, z);
-//     return g;
-// }
-
 // Riemannian gradient in S^{n-1} with energy metric
 inline Vector<double>
 gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vector<double>& x,
@@ -195,7 +170,6 @@ terminate_iteration(const GdControl& ctrl, const GdControl& ctrl_prev,
 //! @param constraints Object for applying FE constraints to the solution
 //! @param update_mpp
 //! @param options Termination criteria
-//! @param check_every Number of iterations after which to check termination criteria
 //! @param os Output stream for diagnostics
 //! @return
 template <int dim, typename Function>
@@ -203,22 +177,23 @@ Vector<double>
 gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
               Function&& update_mpp, const Vector<double>& x0, double beta,
               const dealii::AffineConstraints<double>& constraints,
-              const GdOptions& options, int check_every, std::ostream& os)
+              const GdOptions& options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
 
     Vector x(x0);
     GdControl ctrl{}, ctrl_prev{};
-    unsigned int last_step = 0;  // number of iterations in inner solver taken
-    int iter;
-
-    // TODO: unnecessary copies g, z
-    os << "iter,lac_iter,mass,lambda,residual,energy" << std::endl;
-
+    dealii::ConvergenceTable convergence_table;
     SparseMatrix<double> A;
     A.reinit(A_0.get_sparsity_pattern());
 
+    bool break_on_next = false;
+    unsigned int iter;
+    unsigned int lac_iter = 0;  // number of iterations in inner solver taken
+    std::cerr << "Iteration: ";
+
     // Begin RGD iteration
+    // TODO: unnecessary copies g, z
     for (iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints to incumbent solution
         constraints.distribute(x);
@@ -230,42 +205,49 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         A.add(beta, Mpp);
 
         // Termination criteria
-        if (iter % check_every == 0) {
-            // Update control structure
-            ctrl_prev = ctrl;
-            energy::residual(ctrl, x, A, M);
+        // TODO: check_every, ConvergenceTable == true -> check_every = 1
+        std::cerr << iter << "..";
+        ctrl_prev = ctrl;
+        energy::residual(ctrl, x, A, M);
 
-            if (terminate_iteration(ctrl, ctrl_prev, options.tol_lambda,  options.tol_residual)) {
-                break;
-            }
-            const double E = energy::function_value(x, A_0, Mpp);
+        // Values for previous iteration (including starting step)
+        convergence_table.add_value("iter", iter);
+        convergence_table.add_value("lac_iter", lac_iter);
+        convergence_table.add_value("mass", ctrl.mass);
+        convergence_table.add_value("lambda", ctrl.lambda);
+        convergence_table.add_value("residual", ctrl.residual);
+        convergence_table.add_value("energy", energy::function_value(x, A_0, Mpp));
 
-            // Values for previous iteration (including starting step)
-            os << iter << "," << last_step << "," << ctrl.mass << "," << ctrl.lambda << ","
-               << ctrl.residual << "," << E << std::endl;
+        if (break_on_next) {
+            break;
+        }
+        if (terminate_iteration(ctrl, ctrl_prev, options.tol_lambda,  options.tol_residual)) {
+            // trick so that convergence_table is updated for last step
+            // n iterations + starting solution -> n+1 table entries
+            break_on_next = true;
+            continue;
         }
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
-        // TODO: variable function with gradient() / value() methods
-        //       update() method to avoid extra argument (update_mpp)
-        auto g = energy::gradient(A, M, x, options, constraints, last_step);
-
-        // TODO
-        // Nash: g(x) <- g(x) + v
-        // v <- interpolate(g_fine(x_fine)) - g(interpolate(x_fine))
-        // Nash objective: f + < v, x - Ry> - not required for fixed step size GD
+        // TODO: variable function with gradient() / value() / update() methods
+        auto g = energy::gradient(A, M, x, options, constraints, lac_iter);
 
         // Retraction: x <- (x - h g) / ||x - h g||_M
         energy::retract_by_norm(M, g, x, options.step_size);
     }
+    std::cerr << std::endl << std::endl;
+    convergence_table.set_precision("mass", 4);
+    convergence_table.set_precision("lambda", 4);
+    convergence_table.set_precision("residual", 4);
+    convergence_table.set_precision("energy", 4);
 
-    // Print values for last iteration
-    if (iter == options.max_iter - 1) {
-        constraints.distribute(x);
-        const double E = energy::function_value(x, A_0, Mpp);
+    convergence_table.set_scientific("lambda", true);
+    convergence_table.set_scientific("residual", true);
+    convergence_table.set_scientific("energy", true);
 
-        os << iter << "," << last_step << "," << ctrl.mass << "," << ctrl.lambda << ","
-           << ctrl.residual << "," << E << std::endl;
-    }
+    convergence_table.evaluate_convergence_rates("residual", reduction_rate);
+    convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
+    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::table_with_headers);
+
     //constraints.distribute(x);
     return x;
 }
