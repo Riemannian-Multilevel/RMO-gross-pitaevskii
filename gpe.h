@@ -158,26 +158,8 @@ public:
         return mg_constrained_dofs.get_level_constraints(level);
     }
 
-    unsigned int n_levels() const {
-        return triangulation.n_levels();
-    }
-    unsigned int n_levels(unsigned int level) const {
-        return triangulation.n_levels(level);
-    }
-    unsigned int n_cells() const {
-        return triangulation.n_cells();
-    }
-    unsigned int n_cells(unsigned int level) const {
-        return triangulation.n_cells(level);
-    }
-    unsigned int n_active_cells() const {
-        return triangulation.n_active_cells();
-    }
-    unsigned int n_dofs() const {
-        return dof_handler.n_dofs();
-    }
-    unsigned int n_dofs(unsigned int level) const {
-        return dof_handler.n_dofs(level);
+    const dealii::Triangulation<dim>& get_triangulation() const {
+        return triangulation;
     }
     const dealii::DoFHandler<dim>& get_dofs() const {
         return dof_handler;

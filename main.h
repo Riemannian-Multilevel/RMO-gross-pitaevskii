@@ -33,14 +33,17 @@ public:
         this->make_grid(n_levels);
         this->dofs();
         this->assemble(V, A0, M, sparsity_pattern);
+
+        n_active_cells = this->get_triangulation().n_active_cells();
+        n_dofs = this->get_dofs().n_dofs();
     }
 
     [[maybe_unused]] Vector<double>
     run(const Vector<double>& x0, double beta, GdOptions options_rgd, std::ostream& os) const
     {
         // Compute solution on most refined (active) level
-        std::cerr << "Number of cells: " << this->n_active_cells() << std::endl;
-        std::cerr << "Number of degrees of freedom: " << this->n_dofs() << std::endl;
+        std::cerr << "Number of cells: " << n_active_cells << std::endl;
+        std::cerr << "Number of degrees of freedom: " << n_dofs << std::endl;
 
         // Weighed mass matrix for solution in every step
         SparseMatrix<double> Mpp(sparsity_pattern);
@@ -62,7 +65,7 @@ public:
     run(const double x0d, double beta, GdOptions options_rgd, std::ostream& os) const
     {
         // Define starting value
-        Vector<double> x0(this->n_dofs());
+        Vector<double> x0(n_dofs);
         x0 = x0d;
 
         Vector<double> x = run(x0, beta, options_rgd, os);
@@ -70,7 +73,7 @@ public:
     }
 
 private:
-    unsigned int n_levels;
+    unsigned int n_levels, n_dofs, n_active_cells;
 
     // Linear system parameters
     SparsityPattern sparsity_pattern;
@@ -102,6 +105,7 @@ public:
             // TODO: ensure consistency between level and passed on matrices/sparsity patterns
             this->assemble_mg(V, A0_v[level], M_v[level], sp_v[level], level);
         }
+
     }
 
     [[maybe_unused]] MGLevelObject<Vector<double>>
@@ -115,13 +119,16 @@ public:
         MGLevelObject<Vector<double> > x_v(min_level, max_level-1);
 
         for (unsigned int level = min_level; level < max_level; level++) {
+            unsigned int n_level_dofs = this->get_dofs().n_dofs(level);
+            unsigned int n_level_cells = this->get_triangulation().n_cells(level);
+
             std::cerr << "Level: " << level << std::endl;
-            std::cerr << "Number of cells: " << this->n_cells(level) << std::endl;
-            std::cerr << "Number of degrees of freedom: " << this->n_dofs(level) << std::endl;
+            std::cerr << "Number of cells: " << n_level_cells << std::endl;
+            std::cerr << "Number of degrees of freedom: " << n_level_dofs << std::endl;
 
             // Define starting value
             // TODO: take MGLevelObject of starting vectors, then overload on constant value
-            Vector<double> x0(this->n_dofs(level));
+            Vector<double> x0(n_level_dofs);
             x0 = x0d;
 
             // TODO: check for missing steps in tutorial/step-16
