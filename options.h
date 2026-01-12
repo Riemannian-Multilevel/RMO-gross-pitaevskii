@@ -46,12 +46,6 @@ select_order(const std::string& order_str)
     if (order_str == "CUTHILL_MCKEE") {
         return Ordering::CUTHILL_MCKEE;
     }
-    if (order_str == "KING") {
-        return Ordering::KING;
-    }
-    if (order_str == "MIN_DEG") {
-        return Ordering::MIN_DEG;
-    }
     throw std::runtime_error(order_str + ": invalid ordering");
 }
 

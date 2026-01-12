@@ -1,5 +1,5 @@
 #include "mesh.h"
-#include "dofs.h"
+#include "discrete.h"
 #include "gpe.h"
 #include "options.h"
 #include "util.h"
@@ -10,6 +10,7 @@
 using namespace gpe;
 using namespace dealii;
 
+// TODO: use gpe::DiscreteProblem (dofs.h)
 template <int dim>
 class GPE_Sparsity
 {

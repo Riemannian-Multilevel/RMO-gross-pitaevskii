@@ -6,13 +6,14 @@
 
 #include "lac.h"
 #include "mesh.h"
-#include "dofs.h"
+#include "discrete.h"
 #include "assemble.h"
 
 namespace gpe
 {
 // TODO: lac_types.h to easily change to different matrix implementation
 
+// TODO: use or merge to gpe::DiscreteProblem (dofs.h)
 struct GPE_Options
 {
     int dimension;          // dimension of domain
@@ -55,52 +56,13 @@ public:
         std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
     }
 
-    void plot_grid(const std::string& prefix) const
-    {
-        const std::string filename = prefix + "_" + std::to_string(dim) + "{}";
-        if (dim == 2) {
-            grid2file(filename + ".svg", triangulation, dealii::GridOut::OutputFormat::svg);
-        }
-        grid2file(filename + ".gnuplot", triangulation, dealii::GridOut::OutputFormat::gnuplot);
-    }
 
-    void dofs()
-    {
-        if (!has_grid) {
-            throw dealii::ExcEmptyObject("GPE::dofs(): call make_grid() or make_grid_graded() first");
-        }
-        // step 2 - degrees of freedom
-        distribute_dofs(dof_handler, element, options.order);
-
-        // step 6 - formulate constraints
-        constraints = make_boundary(dof_handler, options.bc, dirichlet_boundary_ids);
-        has_active_constraints = true;
-    }
-
-    void dofs_mg()
-    {
-        if (!has_grid) {
-            throw dealii::ExcEmptyObject("GPE::dofs_mg(): call make_grid() first");
-        }
-        // step 2 - degrees of freedom - ordering applied to every level
-        distribute_mg_dofs(dof_handler, element, options.order);
-
-        // step 6 - formulate constraints
-        constraints = make_boundary(dof_handler, options.bc, dirichlet_boundary_ids);
-        has_active_constraints = true;
-
-        // step 16 - formulate multigrid constraints
-        mg_constrained_dofs = make_boundary_mg(dof_handler, options.bc, dirichlet_boundary_ids);
-        has_mg_constraints  = true;
-    }
-
-    // TODO: set execution policy in macro, instead of at runtime
     template <typename Function>
     void assemble(Function&& V, SparseMatrix<double>& A0, SparseMatrix<double>& M,
         SparsityPattern& sparsity_pattern) const
     {
-        const SparsityPattern sp = make_sparsity_pattern(dof_handler, constraints);
-        sparsity_pattern.copy_from(sp);
+        const DynamicSparsityPattern dsp = make_sparsity_pattern(dof_handler, constraints);
+        sparsity_pattern.copy_from(dsp);
 
         // A0: used for preconditioning (incomplete LU) and sum A0 + M_xx
         A0.reinit(sparsity_pattern);
@@ -118,8 +80,8 @@ public:
         // "Note that there is [no] need to consider hanging nodes on the typical level matrices,
         // since only one level is considered."
         // TODO: we may still want to pass on Dirichlet constraints
-        const SparsityPattern sp = make_sparsity_pattern_mg(dof_handler, level, {});
-        sparsity_pattern.copy_from(sp);
+        const DynamicSparsityPattern dsp = make_sparsity_pattern_mg(dof_handler, level, {});
+        sparsity_pattern.copy_from(dsp);
 
         // A0: used for preconditioning (incomplete LU) and sum A0 + M_xx
         A0.reinit(sparsity_pattern);

@@ -12,7 +12,7 @@ find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 
 set(COMMON_HEADERS
         mesh.h
-        dofs.h
+        discrete.h
         assemble.h
         function.h
         lac.h
@@ -20,6 +20,7 @@ set(COMMON_HEADERS
         descent.h
         gpe.h
         options.h
+        sparsity.h
 )
 deal_ii_initialize_cached_variables()
 

@@ -17,10 +17,8 @@ using dealii::DoFHandler;
 using dealii::MGLevelObject;
 using dealii::MGTransferPrebuilt;
 
-
-// TODO: common GPE_Solve base class with common interface
 template <int dim>
-class GPE_Solve : public GPE<dim>
+class GPE_Solve : public DiscreteProblemActive<dim>
 {
 public:
     using solver_kind = plain_solver_tag;
@@ -36,6 +34,15 @@ public:
 
         n_active_cells = this->get_triangulation().n_active_cells();
         n_dofs = this->get_dofs().n_dofs();
+    }
+
+    void plot_grid(const std::string& prefix) const
+    {
+        const std::string filename = prefix + "_" + std::to_string(dim) + "{}";
+        if (dim == 2) {
+            grid2file(filename + ".svg", triangulation, dealii::GridOut::OutputFormat::svg);
+        }
+        grid2file(filename + ".gnuplot", triangulation, dealii::GridOut::OutputFormat::gnuplot);
     }
 
     [[maybe_unused]] Vector<double>
