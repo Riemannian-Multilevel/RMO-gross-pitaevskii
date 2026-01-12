@@ -20,7 +20,7 @@ void package(Solver& GS, const double beta, const GdOptions& options_rgd, unsign
     auto x = GS.run(1.0, beta, options_rgd, std::cout);
 
     // Plot solution
-    output_results(x, GS.get_dofs(), DataOutBase::OutputFormat::vtk,
+    output_results(x, GS.fe_space().get_dofs(), DataOutBase::OutputFormat::vtk,
         fmt::format("solution_{}d_lvl{}.vtk", dim, level));
 }
 

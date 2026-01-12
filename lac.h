@@ -1,5 +1,6 @@
 #ifndef GPE_LAC_H
 #define GPE_LAC_H
+#define SOLVER_MIN_TOL 1e-30
 
 #include "option_types.h"
 
@@ -43,7 +44,7 @@ private:
 
 // TODO: return SolverInfo (converged/did_not_converge/error)
 template <typename PreconditionerType>
-[[maybe_unused]] unsigned int
+[[maybe_unused]] dealii::SolverControl
 solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
     Vector<double>& solution, const SolverMethod method = SolverMethod::GMRES,
     const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
@@ -51,7 +52,10 @@ solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& sy
 {
     solution = 0.0;
     // TODO: use M-norm for tolerance?
-    dealii::SolverControl solver_control(max_iter, reltol * system_rhs.l2_norm());
+    const double rhs_norm = system_rhs.l2_norm();
+    // Avoid zero tolerance
+    const double tol = std::max(reltol * rhs_norm, SOLVER_MIN_TOL);
+    dealii::SolverControl solver_control(max_iter, tol);
 
     switch (method) {
     case SolverMethod::GMRES:
@@ -75,7 +79,7 @@ solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& sy
     default:
         throw std::invalid_argument("Unknown SolverMethod");
     }
-    return solver_control.last_step();
+    return solver_control;
 }
 
 } // namespace gpe

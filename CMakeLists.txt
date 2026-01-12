@@ -38,7 +38,7 @@ deal_ii_setup_target(main)
 target_link_libraries(main Boost::program_options fmt::fmt)
 
 # Benchmarking
-add_executable(bench bench.cc)
-target_sources(bench PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(bench)
-target_link_libraries(bench fmt::fmt)
+add_executable(main_bench main_bench.cc)
+target_sources(main_bench PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(main_bench)
+target_link_libraries(main_bench fmt::fmt)

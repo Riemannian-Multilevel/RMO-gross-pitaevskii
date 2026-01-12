@@ -20,6 +20,8 @@ struct GdControl
     double rg_norm;
 };
 
+// TODO: avoid allocating vectors in every function/call
+// (struct for temporary vectors passed by reference)
 namespace energy
 {
 
@@ -104,6 +106,7 @@ inline Vector<double>
 gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vector<double>& x,
     const GdOptions& options, const dealii::AffineConstraints<double>& constraints, unsigned int& last_step)
 {
+    // TODO: use simple preconditioner for SPD matrices (e.g Jacobi)
     dealii::PreconditionIdentity precondition{};
 
     // y <- A^{-1} Mx
@@ -111,8 +114,9 @@ gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vec
     M.vmult(Mx, x);
 
     Vector<double> y(x.size());
-    last_step = solve_sparse(A, Mx, y, options.solver,
+    auto solve_control = solve_sparse(A, Mx, y, options.solver,
         precondition, options.max_inner, options.tol_inner);
+    last_step = solve_control.last_step();
 
     // Apply boundary condition
     constraints.distribute(y);
@@ -180,6 +184,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     bool break_on_next = false;
     unsigned int iter;
     unsigned int lac_iter = 0;  // number of iterations in inner solver taken
+    // TODO: turn debug printing into logger/verbosity flag in options
     std::cerr << "Iteration: ";
 
     // Begin RGD iteration
