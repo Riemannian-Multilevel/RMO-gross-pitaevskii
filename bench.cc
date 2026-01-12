@@ -1,5 +1,6 @@
 #include "function.h"
 #include "main.h"
+#include "option.h"
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -13,14 +14,14 @@ using namespace dealii;
 using namespace gpe;
 
 // TODO: use multigrid transfer/matrices
-template <int dim, typename ExecPolicy>
+template <int dim>
 static void
-prolongate_between_meshes(const GPE_Solve<dim, ExecPolicy> &coarse,
+prolongate_between_meshes(const GPE<dim> &coarse,
                           const Vector<double> &x_coarse,
-                          const GPE_Solve<dim, ExecPolicy> &fine,
+                          const GPE<dim> &fine,
                           Vector<double> &y0_fine)
 {
-    y0_fine.reinit(fine.n_dofs());
+    y0_fine.reinit(fine.get_dofs().n_dofs());
     y0_fine = 0.0;
 
     VectorTools::interpolate_to_finer_mesh(coarse.get_dofs(), x_coarse,
@@ -52,18 +53,16 @@ int main()
     constexpr int dim = 2;
     Square<dim> V;
 
-    using Exec = execution::seq_t;
-
     // Refinement-count hierarchy
     const unsigned int ref_min = 8;   // coarse
     const unsigned int ref_max = 11;  // fine
 
     // 1) One solver per refinement count
     // We'll store them in a vector, indexed by (ref - ref_min)
-    std::vector<std::unique_ptr<GPE_Solve<dim, Exec>>> solver(ref_max - ref_min + 1);
+    std::vector<std::unique_ptr<GPE<dim>>> solver(ref_max - ref_min + 1);
 
-    for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
-        solver[ref - ref_min] = std::make_unique<GPE_Solve<dim, Exec>>(options, ref);
+    // for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
+    //     solver[ref - ref_min] = std::make_unique<GPE<dim>>(options, ref);
 
     // 2) Setup + assemble each refinement
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
@@ -71,8 +70,8 @@ int main()
         std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
         TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
 
-        solver[ref - ref_min]->setup();
-        solver[ref - ref_min]->assemble_matrix(V);
+        solver[ref - ref_min] = std::make_unique<GPE<dim>>(options, ref);
+        solver[ref - ref_min]->assemble(V);
     }
 
     // 3) Hierarchy of starting vectors (indexed by refinement count!)
@@ -81,8 +80,8 @@ int main()
 
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
-        y0[ref].reinit(solver[ref - ref_min]->n_dofs());
-        x[ref].reinit(solver[ref - ref_min]->n_dofs());
+        y0[ref].reinit(solver[ref - ref_min]->get_dofs().n_dofs());
+        x[ref].reinit(solver[ref - ref_min]->get_dofs().n_dofs());
     }
 
     // Coarsest guess
@@ -105,21 +104,15 @@ int main()
         std::ofstream file(name.str());
         {
             TimerOutput::Scope t(timer, "Solve - ref " + std::to_string(ref));
-            x[ref] = solver[ref - ref_min]->run(y0[ref],
-                                                options.beta,
-                                                options_gd,
-                                                1,
-                                                file);
+            x[ref] = solver[ref - ref_min]->run(y0[ref], options.beta, options_gd, file);
         }
 
         if (ref < ref_max)
         {
-            prolongate_between_meshes<dim, Exec>(*solver[ref - ref_min], x[ref],
-                                                 *solver[(ref + 1) - ref_min],
-                                                 y0[ref + 1]);
+            prolongate_between_meshes<dim>(*solver[ref - ref_min], x[ref],
+                *solver[(ref + 1) - ref_min],
+                y0[ref + 1]);
         }
     }
-
-
     return 0;
 }

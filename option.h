@@ -1,8 +1,7 @@
 #ifndef GPE_OPTIONS_H
 #define GPE_OPTIONS_H
 
-#include "descent.h"
-#include "fe_space.h"
+#include "option_types.h"
 
 #include <boost/program_options.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
@@ -10,24 +9,6 @@ namespace po = boost::program_options;  // XXX: move to gpe namespace?
 
 namespace gpe
 {
-
-struct GPE_Options
-{
-    int dimension;          // dimension of domain
-    int degree;             // degree of shape functions
-    double radius;          // radius of the cube (square, line) domain
-    double beta;            // factor for the non-linear term in GPE
-    Ordering order;         // ordering for degrees of freedom
-    BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
-};
-
-struct MG_Options
-{
-    bool multilevel;            // build a multilevel hierarchy
-    unsigned int n_levels;      // number of levels for global refinement
-    unsigned int min_level;     // minimum level for multilevel algorithms
-    unsigned int max_level;     // maximum level for multilevel algorithms
-};
 
 inline SolverMethod
 select_solver(const std::string& solver_str)

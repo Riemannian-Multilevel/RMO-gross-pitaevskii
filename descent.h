@@ -2,6 +2,8 @@
 #define GPE_ENERGY_H
 
 #include "lac.h"
+#include "option_types.h"
+
 #include <cmath>
 #include <deal.II/base/convergence_table.h>
 
@@ -18,24 +20,12 @@ struct GdControl
     double rg_norm;
 };
 
-// TODO: move this to options.h?
-struct GdOptions
-{
-    double tol_inner;       // relative tolerance for inner solver
-    double tol_lambda;      // tolerance for rayleigh quotients
-    double tol_residual;    // tolerance for M-residual
-    double step_size;       // fixed step-size used in iteration steps
-    unsigned int max_iter;  // maximum GD iterations
-    unsigned int max_inner; // maximum sparse solver iterations
-    SolverMethod solver;    // method for solving sparse linear equations
-};
-
 namespace energy
 {
 
 template <typename Matrix>
 void residual(GdControl& control, const Vector<double>& x,
-                     const Matrix& A, const Matrix& M)
+              const Matrix& A, const Matrix& M)
 {
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);

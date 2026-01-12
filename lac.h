@@ -1,6 +1,8 @@
 #ifndef GPE_LAC_H
 #define GPE_LAC_H
 
+#include "option_types.h"
+
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
 
@@ -38,27 +40,6 @@ private:
     SparsityPattern sparsity_pattern;
 };
 
-enum class SolverMethod
-{
-    GMRES,
-    MINRES,
-    CG
-};
-
-inline std::string
-to_string(SolverMethod method)
-{
-    switch (method) {
-    case SolverMethod::GMRES:
-        return "GMRES";
-    case SolverMethod::MINRES:
-        return "MINRES";
-    case SolverMethod::CG:
-        return "CG";
-    default:
-        throw std::invalid_argument("Unknown SolverMethod");
-    }
-}
 
 // TODO: return SolverInfo (converged/did_not_converge/error)
 template <typename PreconditionerType>

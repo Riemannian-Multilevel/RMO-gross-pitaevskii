@@ -12,25 +12,28 @@ find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 
 set(COMMON_HEADERS
         fe_space.h
+        grid.h
         assemble.h
         function.h
         lac.h
         util.h
         descent.h
-        options.h
+        option.h
+        option_types.h
         sparsity.h
+        main.h
 )
 deal_ii_initialize_cached_variables()
 
 # Evaluate sparsity patterns for different orderings
-add_executable(sparsity sparsity.cc)
-target_sources(sparsity PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(sparsity)
-target_link_libraries(sparsity Boost::program_options fmt::fmt)
+add_executable(main_sparsity main_sparsity.cc)
+target_sources(main_sparsity PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(main_sparsity)
+target_link_libraries(main_sparsity Boost::program_options fmt::fmt)
 
 # Main GPE program
 add_executable(main main.cc)
-target_sources(main PRIVATE main.h ${COMMON_HEADERS})
+target_sources(main PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(main)
 target_link_libraries(main Boost::program_options fmt::fmt)
 

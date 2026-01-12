@@ -2,7 +2,7 @@
 #define GPE_UTIL_H
 
 #include <deal.II/base/point.h>
-#include <deal.II/grid/grid_out.h>
+#include <deal.II/numerics/data_out.h>
 
 #include <type_traits>
 
@@ -47,29 +47,37 @@ decltype(auto) with_dimension(unsigned dim, F&& f)
 }
 
 //!
-//! @tparam dim Dimension of the grid
-//! @param filename Output file name
-//! @param triangulation Triangulation<> object containing the grid
-//! @param format Output file format
+//! @tparam dim Problem dimension
+//! @param solution
+//! @param dof_handler
+//! @param format
+//! @param filename
 template <int dim>
-void grid2file(const std::string& filename, const dealii::Triangulation<dim>& triangulation,
-    const dealii::GridOut::OutputFormat format)
+void output_results(const dealii::Vector<double>& solution, const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::DataOutBase::OutputFormat format, const std::string& filename)
 {
-    std::ofstream out(filename);
-    const dealii::GridOut grid_out;
+    dealii::DataOut<dim> data_out;
+    data_out.attach_dof_handler(dof_handler);
+    data_out.add_data_vector(solution, "psi");
+    data_out.build_patches(dof_handler.get_fe().degree);
 
-    grid_out.write(triangulation, out, format);
-    std::cout << "Grid written to " + filename << std::endl;
+    std::ofstream output(filename);
+    data_out.write(output, format);
 }
 
-//! Write a VTK file for the 2d grid, colored by refinement
-//!
-//! @tparam dim Dimension of the grid
-//! @param s File name to write to, without extension
-//! @param triangulation Triangulation<> object containing the grid
-inline void grid2svg(const std::string& s, const dealii::Triangulation<2>& triangulation)
+template <int dim>
+void output_hdf5(const dealii::Vector<double>& solution, const dealii::DoFHandler<dim>& dof_handler,
+    const std::string& filename_h5)
 {
-    grid2file(s, triangulation, dealii::GridOut::OutputFormat::svg);
+    dealii::DataOut<dim> data_out;
+    data_out.attach_dof_handler(dof_handler);
+    data_out.add_data_vector(solution, "psi");
+    data_out.build_patches(dof_handler.get_fe().degree);
+
+    dealii::DataOutBase::DataOutFilterFlags flags(true, true);
+    dealii::DataOutBase::DataOutFilter data_filter(flags);
+    data_out.write_filtered_data(data_filter);
+    data_out.write_hdf5_parallel(data_filter, filename_h5, MPI_COMM_WORLD);
 }
 
 } //namespace gpe

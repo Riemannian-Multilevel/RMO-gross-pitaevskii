@@ -1,80 +1,32 @@
+//
+// Created by Ferdinand Vanmaele on 12.01.26.
+//
+
 #ifndef GPE_MAIN_H
 #define GPE_MAIN_H
 
 #include "assemble.h"
-#include "fe_space.h"
+#include "grid.h"
 #include "sparsity.h"
+#include "fe_space.h"
 #include "descent.h"
-#include "util.h"
-
-#include <deal.II/grid/grid_generator.h>
-#include <deal.II/multigrid/mg_transfer.h>
-#include <deal.II/numerics/fe_field_function.h>
-#include <deal.II/grid/grid_out.h>
+#include "option_types.h"
 
 namespace gpe
 {
-using dealii::AffineConstraints;
-using dealii::Triangulation;
-using dealii::DoFHandler;
-using dealii::MGLevelObject;
-using dealii::MGTransferPrebuilt;
-
 
 template <int dim>
-class GPE_Grid
+class GPE : public HyperCube<dim>, public FeSpace<dim>
 {
 public:
-    GPE_Grid(double radius_)
-        : triangulation(dealii::Triangulation<dim>::limit_level_difference_at_vertices), radius(radius_)
-    {}
-    virtual ~GPE_Grid() = default;
-
-    void setup_grid(unsigned int n_levels)
-    {
-        // step 1 - regularly refined mesh
-        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
-
-        // the number of cells increases by a factor of 2^(dim x times)
-        triangulation.refine_global(n_levels-1);
-        AssertDimension(n_levels, triangulation.n_global_levels());
-
-        std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
-        std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
-    }
-
-    void plot_grid(const std::string& prefix) const
-    {
-        const std::string filename = prefix + "_" + std::to_string(dim) + "{}";
-        if (dim == 2) {
-            grid2file(filename + ".svg", triangulation, dealii::GridOut::OutputFormat::svg);
-        }
-        grid2file(filename + ".gnuplot", triangulation, dealii::GridOut::OutputFormat::gnuplot);
-    }
-
-    const Triangulation<dim>& get_triangulation() const {
-        return triangulation;
-    }
-
-protected:
-    Triangulation<dim> triangulation;
-    double radius;
-};
-
-template <int dim>
-class GPE : public GPE_Grid<dim>, public FeSpace<dim>
-{
-public:
-    using solver_kind = plain_solver_tag;
-
-    GPE(double radius, const unsigned int degree, Ordering order, BoundaryCondition bounds,
-        const unsigned int n_levels)
-        : GPE_Grid<dim>(radius)
-        , FeSpace<dim>(GPE_Grid<dim>::get_triangulation(), degree)  // establish relations between objects
+    GPE(const GPE_Options& options, unsigned int n_levels)
+        : HyperCube<dim>(options.radius)
+        , FeSpace<dim>(HyperCube<dim>::get_triangulation(), options.degree)   // establish relations between objects
+        , options_(options)
     {
         this->setup_grid(n_levels);    // do the actual computations
-        this->setup_dofs(order);
-        this->setup_constraints(bounds);
+        this->setup_dofs(options.order);
+        this->setup_constraints(options.bc);
     }
 
     template <typename Function>
@@ -120,6 +72,7 @@ public:
     }
 
 private:
+    GPE_Options options_;
     LevelMatrix system;
 };
 

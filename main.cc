@@ -3,62 +3,25 @@
 //
 #include "main.h"
 #include "function.h"
-#include "options.h"
+#include "option.h"
+#include "util.h"
 
 #include <iostream>
 #include <fmt/format.h>
-#include <deal.II/numerics/data_out.h>
 
 using namespace gpe;
 using namespace dealii;
 
-//!
-//! @tparam dim Problem dimension
-//! @param solution
-//! @param dof_handler
-//! @param format
-//! @param filename
-template <int dim>
-void output_results(const Vector<double>& solution, const dealii::DoFHandler<dim>& dof_handler,
-    const DataOutBase::OutputFormat format, const std::string& filename)
-{
-    DataOut<dim> data_out;
-    data_out.attach_dof_handler(dof_handler);
-    // TODO: add_mg_data_vector()
-    data_out.add_data_vector(solution, "psi");
-    data_out.build_patches(dof_handler.get_fe().degree);
-
-    std::ofstream output(filename);
-    data_out.write(output, format);
-}
-
-template <int dim>
-void output_hdf5(const Vector<double>& solution, const dealii::DoFHandler<dim>& dof_handler,
-    const std::string& filename_h5)
-{
-    DataOut<dim> data_out;
-    data_out.attach_dof_handler(dof_handler);
-    data_out.add_data_vector(solution, "psi");
-    data_out.build_patches(dof_handler.get_fe().degree);
-
-    DataOutBase::DataOutFilterFlags flags(true, true);
-    DataOutBase::DataOutFilter data_filter(flags);
-    data_out.write_filtered_data(data_filter);
-    data_out.write_hdf5_parallel(data_filter, filename_h5, MPI_COMM_WORLD);
-}
-
 template <int dim, typename Solver>
-void package(Solver& GS, const double beta, const GdOptions& options_rgd)
+void package(Solver& GS, const double beta, const GdOptions& options_rgd, unsigned int level)
 {
     // Run gradient descent
     GS.assemble(Square<dim>());
     auto x = GS.run(1.0, beta, options_rgd, std::cout);
 
     // Plot solution
-    if constexpr (gpe::is_solver_kind_v<Solver, gpe::plain_solver_tag>) {
-        using DataOutBase::OutputFormat::vtk;
-        output_results(x, GS.get_dofs(), vtk, fmt::format("solution_{}d.vtk", dim));
-    }
+    output_results(x, GS.get_dofs(), DataOutBase::OutputFormat::vtk,
+        fmt::format("solution_{}d_lvl{}.vtk", dim, level));
 }
 
 int main(int argc, char* argv[])
@@ -94,8 +57,8 @@ int main(int argc, char* argv[])
             unsigned int max_level = options_mg.max_level;
 
             for (unsigned int i = min_level; i < max_level; ++i) {
-                GPE<dim> GS(options.radius, options.degree, options.order, options.bc, i+1);
-                package<dim>(GS, options.beta, options_rgd);
+                GPE<dim> GS(options, i+1);
+                package<dim>(GS, options.beta, options_rgd, i);
             }
         });
     }

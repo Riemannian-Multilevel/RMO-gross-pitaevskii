@@ -5,10 +5,10 @@
 #ifndef GPE_SPARSITY_H
 #define GPE_SPARSITY_H
 
-#include <deal.II/dofs/dof_tools.h>
-#include <deal.II/fe/mapping_q1.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/fe/mapping_q1.h>
+#include <deal.II/multigrid/mg_constrained_dofs.h>
 #include <deal.II/multigrid/mg_tools.h>
 
 namespace gpe
