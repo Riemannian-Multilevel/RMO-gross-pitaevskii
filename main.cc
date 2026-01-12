@@ -90,15 +90,11 @@ int main(int argc, char* argv[])
         with_dimension(options.dimension, [&](auto D)
         {
             constexpr int dim = decltype(D)::value;
+            unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
+            unsigned int max_level = options_mg.max_level;
 
-            if (options_mg.multigrid) {
-                GPE_MG<dim> GS(options.radius, options.degree, options.order, options.bc,
-                    options_mg.n_levels, options_mg.min_level, options_mg.max_level);
-                package<dim>(GS, options.beta, options_rgd);
-            }
-            else {
-                GPE<dim> GS(options.radius, options.degree, options.order, options.bc,
-                    options_mg.n_levels);
+            for (unsigned int i = min_level; i < max_level; ++i) {
+                GPE<dim> GS(options.radius, options.degree, options.order, options.bc, i+1);
                 package<dim>(GS, options.beta, options_rgd);
             }
         });

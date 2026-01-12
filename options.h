@@ -23,10 +23,10 @@ struct GPE_Options
 
 struct MG_Options
 {
-    bool multigrid;             // build a multigrid hierarchy
+    bool multilevel;            // build a multilevel hierarchy
     unsigned int n_levels;      // number of levels for global refinement
-    unsigned int min_level;     // minimum level for multigrid algorithms
-    unsigned int max_level;     // maximum level for multigrid algorithms
+    unsigned int min_level;     // minimum level for multilevel algorithms
+    unsigned int max_level;     // maximum level for multilevel algorithms
 };
 
 inline SolverMethod
@@ -83,16 +83,16 @@ inline std::string upper(std::string s) {
 
 // ---------- MG_Options ----------
 inline po::options_description mg_cli_options() {
-    po::options_description d("Multigrid options");
+    po::options_description d("multilevel options");
     d.add_options()
         ("levels", po::value<int>()->default_value(3),
         "number of times to globally refine the mesh")
-        ("multigrid", po::value<bool>()->default_value(false)->implicit_value(true),
-         "enable multigrid (0|1)")
+        ("multilevel", po::value<bool>()->default_value(false)->implicit_value(true),
+         "enable multilevel (0|1)")
         ("min-level", po::value<int>()->default_value(0),
-         "minimal level for multigrid")
+         "minimal level for multilevel")
         ("max-level", po::value<int>()->default_value(0),
-         "maximal level for multigrid");
+         "maximal level for multilevel");
     return d;
 }
 
@@ -106,7 +106,7 @@ static unsigned int to_unsigned_nonneg(int v, const char* opt_name) {
 
 inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 {
-    mg.multigrid = vm["multigrid"].as<bool>();
+    mg.multilevel = vm["multilevel"].as<bool>();
     mg.n_levels  = vm["levels"].as<int>();
 
     // min_level >= 0
@@ -121,8 +121,7 @@ inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
     // min_level <= max_level
     if (mg.max_level < mg.min_level) {
         throw po::validation_error(po::validation_error::invalid_option_value,
-                                   "max-level",
-                                   "must be >= min-level");
+            "max-level", "must be >= min-level");
     }
 }
 
