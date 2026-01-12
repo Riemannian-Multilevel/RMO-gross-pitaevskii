@@ -19,17 +19,23 @@ using dealii::DynamicSparsityPattern;
 using dealii::Vector;
 using dealii::Point;
 
-// Matrix used for boundary residuals in geometric multigrid
-struct InterfaceMatrix
+struct LevelMatrix
 {
-    SparsityPattern sp;
-    SparseMatrix<double> IM;
+    SparseMatrix<double> A0;
+    SparseMatrix<double> M;
+    SparseMatrix<double> Mpp;
+    unsigned int level;
 
-    void reinit(const SparsityPattern& sparsity)
+    void reinit(DynamicSparsityPattern&& sp)
     {
-        sp.copy_from(sparsity);
-        IM.reinit(sp);
+        sparsity_pattern.copy_from(sp);
+        A0.reinit(sparsity_pattern);
+        M.reinit(sparsity_pattern);
+        Mpp.reinit(sparsity_pattern);
     }
+
+private:
+    SparsityPattern sparsity_pattern;
 };
 
 enum class SolverMethod

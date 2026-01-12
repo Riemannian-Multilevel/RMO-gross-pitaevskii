@@ -1,13 +1,17 @@
 #ifndef GPE_MAIN_H
 #define GPE_MAIN_H
+#define EXECUTION_POLICY gpe::execution::seq
 
 #include "assemble.h"
-#include "gpe.h"
+#include "fe_space.h"
+#include "sparsity.h"
 #include "descent.h"
 #include "util.h"
 
+#include <deal.II/grid/grid_generator.h>
 #include <deal.II/multigrid/mg_transfer.h>
 #include <deal.II/numerics/fe_field_function.h>
+#include <deal.II/grid/grid_out.h>
 
 namespace gpe
 {
@@ -17,23 +21,27 @@ using dealii::DoFHandler;
 using dealii::MGLevelObject;
 using dealii::MGTransferPrebuilt;
 
+
 template <int dim>
-class GPE_Solve : public DiscreteProblemActive<dim>
+class GPE_Grid
 {
 public:
-    using solver_kind = plain_solver_tag;
+    GPE_Grid(double radius_)
+        : triangulation(dealii::Triangulation<dim>::limit_level_difference_at_vertices), radius(radius_)
+    {}
+    virtual ~GPE_Grid() = default;
 
-    template <typename Function>
-    explicit GPE_Solve(const GPE_Options& options, Function&& V, const unsigned int n_levels_)
-        : GPE<dim>(options), n_levels(n_levels_)
+    void setup_grid(unsigned int n_levels)
     {
-        // `this` is required when inheriting from a templated base class
-        this->make_grid(n_levels);
-        this->dofs();
-        this->assemble(V, A0, M, sparsity_pattern);
+        // step 1 - regularly refined mesh
+        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
 
-        n_active_cells = this->get_triangulation().n_active_cells();
-        n_dofs = this->get_dofs().n_dofs();
+        // the number of cells increases by a factor of 2^(dim x times)
+        triangulation.refine_global(n_levels-1);
+        AssertDimension(n_levels, triangulation.n_global_levels());
+
+        std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
+        std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
     }
 
     void plot_grid(const std::string& prefix) const
@@ -45,34 +53,69 @@ public:
         grid2file(filename + ".gnuplot", triangulation, dealii::GridOut::OutputFormat::gnuplot);
     }
 
+    const Triangulation<dim>& get_triangulation() const {
+        return triangulation;
+    }
+
+protected:
+    Triangulation<dim> triangulation;
+    double radius;
+};
+
+template <int dim>
+class GPE : public GPE_Grid<dim>, public FeSpaceActive<dim>
+{
+public:
+    using solver_kind = plain_solver_tag;
+
+    GPE(double radius, const unsigned int degree, Ordering order, BoundaryCondition bounds,
+        const unsigned int n_levels)
+        : GPE_Grid<dim>(radius)
+        , FeSpaceActive<dim>(GPE_Grid<dim>::get_triangulation(), degree)  // establish relations between objects
+    {
+        this->setup_grid(n_levels);    // do the actual computations
+        this->setup_dofs(order);
+        this->setup_constraints(bounds);
+    }
+
+    template <typename Function>
+    void assemble(Function&& V)
+    {
+        system.reinit(make_sparsity_pattern(this->dof_handler, this->constraints));
+
+        // Fixed mass and stiffness matrix
+        assemble_A0  (EXECUTION_POLICY, system.A0, V,
+            this->dof_handler, this->constraints);
+        assemble_mass(EXECUTION_POLICY, system.M,
+            this->dof_handler, this->constraints);
+    }
+
     [[maybe_unused]] Vector<double>
-    run(const Vector<double>& x0, double beta, GdOptions options_rgd, std::ostream& os) const
+    run(const Vector<double>& x0, double beta, GdOptions options_rgd, std::ostream& os)
     {
         // Compute solution on most refined (active) level
-        std::cerr << "Number of cells: " << n_active_cells << std::endl;
-        std::cerr << "Number of degrees of freedom: " << n_dofs << std::endl;
+        std::cerr << "Number of cells: " << this->triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of degrees of freedom: " << this->dof_handler.n_dofs() << std::endl;
 
         // Weighed mass matrix for solution in every step
-        SparseMatrix<double> Mpp(sparsity_pattern);
-
         auto update_mpp = [this](SparseMatrix<double>& matrix, const Vector<double>& x)
         {
-            this->assemble_phiphi(matrix, x);
+            assemble_mass_phiphi(EXECUTION_POLICY, matrix, x, this->dof_handler, this->constraints);
         };
 
         // Run gradient descent + enforce boundary conditions
-        // TODO: abstraction leak get_constraints()
-        Vector<double> x = gp_energy_rgd<dim>(A0, M, Mpp, update_mpp,
-            x0, beta, this->get_constraints(), options_rgd, os);
+        // TODO: abstraction leak `constraints`
+        Vector<double> x = gp_energy_rgd<dim>(system.A0, system.M, system.Mpp, update_mpp,
+            x0, beta, this->constraints, options_rgd, os);
         return x;
     }
 
     // Iteration with constant starting value
     [[maybe_unused]] Vector<double>
-    run(const double x0d, double beta, GdOptions options_rgd, std::ostream& os) const
+    run(const double x0d, double beta, GdOptions options_rgd, std::ostream& os)
     {
         // Define starting value
-        Vector<double> x0(n_dofs);
+        Vector<double> x0(this->dof_handler.n_dofs());
         x0 = x0d;
 
         Vector<double> x = run(x0, beta, options_rgd, os);
@@ -80,53 +123,59 @@ public:
     }
 
 private:
-    unsigned int n_levels, n_dofs, n_active_cells;
-
-    // Linear system parameters
-    SparsityPattern sparsity_pattern;
-    SparseMatrix<double> A0;
-    SparseMatrix<double> M;
+    LevelMatrix system;
 };
 
 template <int dim>
-class GPE_Solve_MG : public GPE<dim>
+class GPE_MG : public GPE_Grid<dim>, public FeSpaceMG<dim>
 {
 public:
     using solver_kind = mg_solver_tag;
 
-    template <typename Function>
-    explicit GPE_Solve_MG(const GPE_Options& options, Function&& V, const unsigned int n_levels_,
-        const unsigned int min_level_,
-        const unsigned int max_level_)
-    :
-        GPE<dim>(options), n_levels(n_levels_), min_level(min_level_), max_level(max_level_),
-        A0_v(min_level, max_level-1),
-         M_v(min_level, max_level-1),
-        sp_v(min_level, max_level-1)
+    explicit GPE_MG(double radius, const unsigned int degree, Ordering order, BoundaryCondition bounds,
+                    const unsigned int n_levels,
+                    const unsigned int min_l,
+                    const unsigned int max_l)
+        : GPE_Grid<dim>(radius)
+        , FeSpaceMG<dim>(GPE_Grid<dim>::get_triangulation(), degree)  // establish relations between objects
+        , min_level(min_l)
+        , max_level(max_l)
     {
-        AssertIndexRange(max_level-1, n_levels);
-        this->make_grid(n_levels);
-        this->dofs_mg();
+        this->setup_grid(n_levels);
+        this->setup_dofs(order);
+        this->setup_constraints(bounds);
 
-        for (unsigned int level = min_level; level < max_level; level++) {
+        system_v.resize(min_level, max_level-1);
+    }
+
+    template <typename Function>
+    void assemble(Function&& V)
+    {
+        for (unsigned int i = min_level; i < max_level; i++) {
+            system_v[i].level = i;
+            system_v[i].reinit(make_sparsity_pattern_mg(this->dof_handler, this->get_mg_dofs(), i));
+
+            // Fixed mass and stiffness matrix
             // TODO: ensure consistency between level and passed on matrices/sparsity patterns
-            this->assemble_mg(V, A0_v[level], M_v[level], sp_v[level], level);
+            assemble_A0(EXECUTION_POLICY, system_v[i].A0, V,
+                this->dof_handler, this->get_level_constraints(i), i);
+            assemble_mass(EXECUTION_POLICY, system_v[i].M,
+                this->dof_handler, this->get_level_constraints(i), i);
         }
-
     }
 
     [[maybe_unused]] MGLevelObject<Vector<double>>
-    run(const double x0d, double beta, GdOptions options_rgd, std::ostream& os) const
+    run(const double x0d, double beta, GdOptions options_rgd, std::ostream& os)
     {
         // Build transfer operators
-        MGTransferPrebuilt<Vector<double> > mg_transfer(this->get_mg_dofs());
+        MGTransferPrebuilt<Vector<double>> mg_transfer(this->get_mg_dofs());
         mg_transfer.build(this->get_dofs());
 
         // Iterate over levels
         MGLevelObject<Vector<double> > x_v(min_level, max_level-1);
 
         for (unsigned int level = min_level; level < max_level; level++) {
-            unsigned int n_level_dofs = this->get_dofs().n_dofs(level);
+            unsigned int n_level_dofs  = this->get_dofs().n_dofs(level);
             unsigned int n_level_cells = this->get_triangulation().n_cells(level);
 
             std::cerr << "Level: " << level << std::endl;
@@ -138,35 +187,16 @@ public:
             Vector<double> x0(n_level_dofs);
             x0 = x0d;
 
-            // TODO: check for missing steps in tutorial/step-16
-            // if (level == min_level) {
-            //     // Constant value on coarsest level
-            //     x0 = x0d;
-            // }
-            // else if (level+1 < max_level) {
-            //     // Linear interpolation of solution on previous level
-            //     mg_transfer.prolongate(level, x0, x_v[level-1]);
-            //
-            //     // Apply fine level constraints
-            //     level_constraints.distribute(x0);
-            //
-            //     // Renormalize in M-norm
-            //     Vector<double> Mx0(x0.size());
-            //     lm_v[level].M.vmult(Mx0, x0);
-            //     x0 /= std::sqrt(x0 * Mx0);
-            // }
-
             // Weighed mass matrix for solution in every step
-            SparseMatrix<double> Mpp(sp_v[level]);
-
-            auto update_mpp_level = [this, level](SparseMatrix<double>& Mpp, const Vector<double>& x)
+            auto update_mpp_level = [this, level](SparseMatrix<double>& matrix, const Vector<double>& x)
             {
-                this->assemble_phiphi_mg(Mpp, x, level);
+                assemble_mass_phiphi(EXECUTION_POLICY, matrix, x,
+                    this->dof_handler, this->get_level_constraints(level), level);
             };
 
             // Gradient descent + enforce boundary conditions
             // TODO: abstraction leak get_level_constraints()
-            x_v[level] = gp_energy_rgd<dim>(A0_v[level], M_v[level], Mpp,
+            x_v[level] = gp_energy_rgd<dim>(system_v[level].A0, system_v[level].M, system_v[level].Mpp,
                 update_mpp_level, x0, beta, this->get_level_constraints(level), options_rgd, os);
             std::cerr << std::endl;
         }
@@ -174,12 +204,9 @@ public:
     }
 
 private:
-    unsigned int n_levels, min_level, max_level;
-
-    // Linear system parameters
-    MGLevelObject<SparseMatrix<double>> A0_v;  // inclusive range
-    MGLevelObject<SparseMatrix<double>> M_v;
-    MGLevelObject<SparsityPattern> sp_v;
+    MGLevelObject<LevelMatrix> system_v;
+    unsigned int min_level;
+    unsigned int max_level;
 };
 
 }

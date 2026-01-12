@@ -8,6 +8,8 @@
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/fe/mapping_q1.h>
 #include <deal.II/lac/sparse_matrix.h>
+#include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/multigrid/mg_tools.h>
 
 namespace gpe
 {
@@ -56,6 +58,49 @@ void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
 
     std::ofstream out(filename);
     dealii::DoFTools::write_gnuplot_dof_support_point_info(out, id_to_point);
+}
+
+template <int dim>
+dealii::DynamicSparsityPattern
+make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
+                      const dealii::AffineConstraints<double>& constraints,
+                      bool keep_constrained_dofs = true)
+{
+    // Create sparsity pattern based on dof numbering
+    const unsigned int n = dof_handler.n_dofs();
+    dealii::DynamicSparsityPattern dsp(n, n);
+
+    dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, keep_constrained_dofs);
+    return dsp;
+}
+
+template <int dim>
+dealii::DynamicSparsityPattern
+make_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler,
+                         const dealii::MGConstrainedDoFs& mg_constrained_dofs,
+                         unsigned int level,
+                         bool keep_constrained_dofs = true)
+{
+    // Create sparsity pattern based on dof numbering
+    const unsigned int n = dof_handler.n_dofs(level);
+    dealii::DynamicSparsityPattern dsp(n, n);
+
+    dealii::MGTools::make_sparsity_pattern(dof_handler, dsp,
+        level, mg_constrained_dofs.get_level_constraints(level), keep_constrained_dofs);
+    return dsp;
+}
+
+template <int dim>
+dealii::DynamicSparsityPattern
+make_interface_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
+                                const dealii::MGConstrainedDoFs& mg_constrained_dofs,
+                                unsigned int level)
+{
+    const unsigned int n = dof_handler.n_dofs(level);
+    dealii::DynamicSparsityPattern dsp(n, n);
+
+    dealii::MGTools::make_interface_sparsity_pattern(dof_handler, mg_constrained_dofs, dsp, level);
+    return dsp;
 }
 
 } // namespace gpe

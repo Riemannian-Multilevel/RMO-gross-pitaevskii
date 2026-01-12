@@ -1,5 +1,5 @@
 #include "mesh.h"
-#include "discrete.h"
+#include "dofs.h"
 #include "gpe.h"
 #include "options.h"
 #include "util.h"

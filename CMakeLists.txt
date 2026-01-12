@@ -11,14 +11,12 @@ find_package(deal.II 9.7.0 REQUIRED
 find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 
 set(COMMON_HEADERS
-        mesh.h
-        discrete.h
+        fe_space.h
         assemble.h
         function.h
         lac.h
         util.h
         descent.h
-        gpe.h
         options.h
         sparsity.h
 )

@@ -51,6 +51,7 @@ template <int dim, typename Solver>
 void package(Solver& GS, const double beta, const GdOptions& options_rgd)
 {
     // Run gradient descent
+    GS.assemble(Square<dim>());
     auto x = GS.run(1.0, beta, options_rgd, std::cout);
 
     // Plot solution
@@ -91,12 +92,13 @@ int main(int argc, char* argv[])
             constexpr int dim = decltype(D)::value;
 
             if (options_mg.multigrid) {
-                GPE_Solve_MG<dim> GS(options, Square<dim>(), options_mg.n_levels,
-                    options_mg.min_level, options_mg.max_level);
+                GPE_MG<dim> GS(options.radius, options.degree, options.order, options.bc,
+                    options_mg.n_levels, options_mg.min_level, options_mg.max_level);
                 package<dim>(GS, options.beta, options_rgd);
             }
             else {
-                GPE_Solve<dim> GS(options, Square<dim>(), options_mg.n_levels);
+                GPE<dim> GS(options.radius, options.degree, options.order, options.bc,
+                    options_mg.n_levels);
                 package<dim>(GS, options.beta, options_rgd);
             }
         });
