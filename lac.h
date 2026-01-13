@@ -1,6 +1,6 @@
 #ifndef GPE_LAC_H
 #define GPE_LAC_H
-#define SOLVER_MIN_TOL 1e-30
+#define SOLVER_MIN_TOL 1e-10
 
 #include "option_types.h"
 
