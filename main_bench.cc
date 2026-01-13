@@ -21,7 +21,7 @@ prolongate_between_meshes(const GPE<dim> &coarse,
                           const GPE<dim> &fine,
                           Vector<double> &y0_fine)
 {
-    y0_fine.reinit(fine.get_dofs().n_dofs());
+    y0_fine.reinit(fine.n_dofs());
     y0_fine = 0.0;
 
     VectorTools::interpolate_to_finer_mesh(coarse.get_dofs(), x_coarse,
@@ -45,7 +45,7 @@ int main()
 
     GPE_Options options{};
     options.dimension = 2;
-    options.degree    = 1;
+    options.degree    = 1;  // piecewise linear (1) or quadratic (2) elements
     options.radius    = 10;
     options.beta      = 100;
     options.bc        = BoundaryCondition::DIRICHLET;
@@ -80,8 +80,8 @@ int main()
 
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
-        y0[ref].reinit(solver[ref - ref_min]->get_dofs().n_dofs());
-        x[ref].reinit(solver[ref - ref_min]->get_dofs().n_dofs());
+        y0[ref].reinit(solver[ref - ref_min]->n_dofs());
+        x[ref].reinit(solver[ref - ref_min]->n_dofs());
     }
 
     // Coarsest guess

@@ -29,6 +29,14 @@ enum class SolverMethod
     CG
 };
 
+enum class SolverPC
+{
+    IDENTITY,
+    JACOBI,
+    SSOR,
+    ILU0,
+};
+
 struct MG_Options
 {
     bool multilevel;            // build a multilevel hierarchy

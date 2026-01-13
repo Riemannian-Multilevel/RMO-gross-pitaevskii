@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <deal.II/base/convergence_table.h>
+#include <deal.II/lac/sparse_ilu.h>
 
 namespace gpe
 {
@@ -20,14 +21,11 @@ struct GdControl
     double rg_norm;
 };
 
-// TODO: avoid allocating vectors in every function/call
-// (struct for temporary vectors passed by reference)
 namespace energy
 {
-
-template <typename Matrix>
-void residual(GdControl& control, const Vector<double>& x,
-              const Matrix& A, const Matrix& M)
+inline void
+residual(GdControl& control, const Vector<double>& x,
+              const SparseMatrix<double>& A, const SparseMatrix<double>& M)
 {
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
@@ -46,12 +44,12 @@ void residual(GdControl& control, const Vector<double>& x,
     control.residual = std::sqrt(r * Mr);
 }
 
-template <typename Matrix>
-[[maybe_unused]] double
-function_value(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
+inline double
+function_value(const Vector<double>& x, const SparseMatrix<double>& A0,
+    const SparseMatrix<double>& Mpp)
 {
     Vector<double> Bx(x.size());
-    A_0.vmult(Bx, x);
+    A0.vmult(Bx, x);
     Bx *= 0.5;
 
     Vector<double> Mpp_x(x.size());
@@ -62,53 +60,51 @@ function_value(const Vector<double>& x, const Matrix& A_0, const Matrix& Mpp)
 }
 
 // case x != v
-inline Vector<double>
+inline void
 project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
-    const SparseMatrix<double>& M, const Vector<double>& v)
+    const SparseMatrix<double>& M, const Vector<double>& v, Vector<double>& output)
 {
     AssertDimension(x.size(), v.size());
     AssertDimension(x.size(), Ainv_Mx.size());
 
-    Vector<double> Proj_v(v);
     Vector<double> My(x.size());
     M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
+
+    double denom = x * My;
+    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
 
     Vector<double> Mv(v.size());
     M.vmult(Mv, v);
+    double nom = x*Mv;
 
-    double denom = x * My;
-    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
-
-    Proj_v.add(-(x*Mv)/denom, Ainv_Mx);
-    return Proj_v;
+    output = v;
+    output.add(-nom / denom, Ainv_Mx);
 }
 
 // case x == v
-inline Vector<double>
+inline void
 project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
-    const SparseMatrix<double>& M)
+    const SparseMatrix<double>& M, Vector<double>& output)
 {
     AssertDimension(x.size(), Ainv_Mx.size());
 
-    Vector<double> Proj_v(x);
     Vector<double> My(x.size());
     M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
 
     double denom = x * My;
     AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
 
-    Proj_v.add(-1.0/denom, Ainv_Mx);
-    return Proj_v;
+    output = x;
+    output.add(-1.0/denom, Ainv_Mx);
 }
 
 // Riemannian gradient in S^{n-1} with energy metric
-inline Vector<double>
-gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vector<double>& x,
-    const GdOptions& options, const dealii::AffineConstraints<double>& constraints, unsigned int& last_step)
+template <typename PreconditionType>
+void gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M,
+              const Vector<double>& x, Vector<double>& output,
+              const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
+              const PreconditionType& precondition, unsigned int& last_step)
 {
-    // TODO: use simple preconditioner for SPD matrices (e.g Jacobi)
-    dealii::PreconditionIdentity precondition{};
-
     // y <- A^{-1} Mx
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
@@ -121,18 +117,19 @@ gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M, const Vec
     // Apply boundary condition
     constraints.distribute(y);
 
-    return project_onto_tangent_space(y, x, M); // \Pi_x(x): R^n -> T_x S^{n-1}
+    project_onto_tangent_space(y, x, M, output); // \Pi_x(x): R^n -> T_x S^{n-1}
 }
 
 // Retraction by normalization
 inline void
-retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& g, Vector<double>& x, double step_size)
+retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& g,
+    Vector<double>& x, double step_size)
 {
     // x <- x - h g
     x.add(-step_size, g);
 
     // x <- x / ||x||_M
-    Vector<double> Mx(x.size());  // TODO: unnecessary allocation
+    Vector<double> Mx(x.size());
     M.vmult(Mx, x);
     x /= std::sqrt(x * Mx);
 }
@@ -188,7 +185,13 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     std::cerr << "Iteration: ";
 
     // Begin RGD iteration
-    // TODO: unnecessary copies g, z
+    Vector<double> g(x.size());
+
+    // Set up ILU preconditioner
+    // TODO: select other preconditioner types from command-line (Jacobi, SSOR on A, AMG)
+    dealii::SparseILU<double> precondition;
+    precondition.initialize(A_0);
+
     for (iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints to incumbent solution
         // TODO: merge to update_mpp (or separate object)
@@ -225,7 +228,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         }
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: variable function with gradient() / value() / update() methods
-        auto g = energy::gradient(A, M, x, options, constraints, lac_iter);
+        energy::gradient(A, M, x, g, options, constraints, precondition, lac_iter);
 
         // Retraction: x <- (x - h g) / ||x - h g||_M
         energy::retract_by_norm(M, g, x, options.step_size);

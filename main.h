@@ -20,10 +20,12 @@ class GPE
 {
 public:
     GPE(const GPE_Options& options, unsigned int n_levels)
-        : grid(options.radius)
-        , space(grid.get_triangulation(), options.degree)   // establish relations between objects
+        : grid{}, system{}, space(grid.triangulation, options.degree)   // establish relations between objects
     {
-        grid.setup_grid(n_levels);    // do the actual computations
+        grid.setup_grid(options.radius, n_levels);    // do the actual computations
+        std::cerr << "Number of levels: " << grid.triangulation.n_global_levels() << std::endl;
+        std::cerr << "Number of vertices: " << grid.triangulation.n_vertices() << std::endl;
+
         space.setup_dofs(options.order);
         space.setup_constraints(options.bc);
     }
@@ -48,7 +50,7 @@ public:
         const auto& constraints = space.get_constraints();
 
         // Compute solution on most refined (active) level
-        std::cerr << "Number of cells: " << grid.get_triangulation().n_active_cells() << std::endl;
+        std::cerr << "Number of cells: " << grid.triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of degrees of freedom: " << space.n_dofs() << std::endl;
 
         // Weighed mass matrix for solution in every step
@@ -77,11 +79,14 @@ public:
     }
 
     const FeSpace<dim>& fe_space() const { return space; }
+    unsigned int n_dofs() const { return space.n_dofs(); }
+    const dealii::DoFHandler<dim>& get_dofs() const { return space.get_dofs(); }
+    const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
 
 private:
     HyperCube<dim> grid;
-    FeSpace<dim>   space;
     LevelMatrix    system;
+    FeSpace<dim>   space;
 };
 
 }

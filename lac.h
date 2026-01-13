@@ -24,9 +24,8 @@ using dealii::Point;
 
 struct LevelMatrix
 {
-    SparseMatrix<double> A0;
-    SparseMatrix<double> M;
-    SparseMatrix<double> Mpp;
+    SparseMatrix<double> A0, M, Mpp;
+    SparsityPattern sparsity_pattern;
     unsigned int level;
 
     void reinit(DynamicSparsityPattern&& sp)
@@ -36,11 +35,7 @@ struct LevelMatrix
         M.reinit(sparsity_pattern);
         Mpp.reinit(sparsity_pattern);
     }
-
-private:
-    SparsityPattern sparsity_pattern;
 };
-
 
 // TODO: return SolverInfo (converged/did_not_converge/error)
 template <typename PreconditionerType>

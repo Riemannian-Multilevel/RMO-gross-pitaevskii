@@ -12,30 +12,28 @@ using namespace dealii;
 
 // TODO: use gpe::DiscreteProblem (dofs.h)
 template <int dim>
-class Sparsity : public HyperCube<dim>, public FeSpace<dim>
+class Sparsity
 {
 public:
     Sparsity(GPE_Options options, const unsigned int n_levels)
-    : HyperCube<dim>(options.radius)
-    , FeSpace<dim>(HyperCube<dim>::get_triangulation(), options.degree)  // establish relations between objects
-    , options_(options)
+        : grid{}, space(grid.triangulation, options.degree)   // establish relations between objects
     {
-        this->setup_grid(n_levels);    // do the actual computations
-        this->setup_dofs(options.order);
-        this->setup_constraints(options.bc);
+        grid.setup_grid(options.radius, n_levels);    // do the actual computations
+        space.setup_dofs(options.order);
+        space.setup_constraints(options.bc);
 
-        auto dsp = make_sparsity_pattern(this->dof_handler, this->constraints);
+        auto dsp = make_sparsity_pattern(space.get_dofs(), space.get_constraints());
         sparsity_pattern.copy_from(dsp);
     }
 
     void run(const std::string& prefix, unsigned int level) const
     {
-        std::cerr << "Number of active cells: " << this->triangulation.n_active_cells() << std::endl;
-        std::cerr << "Number of levels: " << this->triangulation.n_levels() << std::endl;
+        std::cerr << "Number of active cells: " << grid.triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of levels: " << grid.triangulation.n_levels() << std::endl;
 
-        plot_grid(this->triangulation, prefix);
+        plot_grid(grid.triangulation, prefix);
 
-        write_dof_locations(this->dof_handler, fmt::format("{}_{}d_dof.gnuplot", prefix, dim));
+        write_dof_locations(space.get_dofs(), fmt::format("{}_{}d_dof.gnuplot", prefix, dim));
         {
             std::ofstream out(fmt::format("{}_{}d_lvl{}_sparsity.svg", prefix, dim, level));
             sparsity_pattern.print_svg(out);
@@ -43,8 +41,9 @@ public:
     }
 
 private:
-    GPE_Options options_;
+    HyperCube<dim> grid;
     SparsityPattern sparsity_pattern;
+    FeSpace<dim> space;
 };
 
 int main(int argc, char** argv)

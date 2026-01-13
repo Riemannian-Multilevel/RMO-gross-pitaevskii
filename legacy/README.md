@@ -8,6 +8,7 @@ stiffness matrices) did not increase convergence - at least, when created by han
 
 Later approaches with Kelly-like (a-posteriori) estimators may still be investigated.
 
+
 ## `mgtools.h`
 
 We can distinguish two approaches for a hierarchical structure of discretizations:
@@ -32,6 +33,7 @@ restriction operator, without setting up the geometric multigrid machinery
 above, it does have generic interpolation/restriction functions for degrees of
 freedom between different meshes, that result from refining/coarsening of a
 single mesh.
+
 
 ## `workstream.h`
 

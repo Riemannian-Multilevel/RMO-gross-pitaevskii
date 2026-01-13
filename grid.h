@@ -13,15 +13,11 @@ namespace gpe
 {
 
 template <int dim>
-class HyperCube
+struct HyperCube
 {
-public:
-    HyperCube(double radius_)
-        : triangulation(dealii::Triangulation<dim>::limit_level_difference_at_vertices), radius(radius_)
-    {}
-    virtual ~HyperCube() = default;
+    dealii::Triangulation<dim> triangulation;
 
-    void setup_grid(unsigned int n_levels)
+    void setup_grid(double radius, unsigned int n_levels)
     {
         // step 1 - regularly refined mesh
         dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
@@ -29,18 +25,7 @@ public:
         // the number of cells increases by a factor of 2^(dim x times)
         triangulation.refine_global(n_levels-1);
         AssertDimension(n_levels, triangulation.n_global_levels());
-
-        std::cerr << "Number of levels: " << triangulation.n_global_levels() << std::endl;
-        std::cerr << "Number of vertices: " << triangulation.n_vertices() << std::endl;
     }
-
-    const dealii::Triangulation<dim>& get_triangulation() const {
-        return triangulation;
-    }
-
-protected:
-    dealii::Triangulation<dim> triangulation;
-    double radius;
 };
 
 //!
