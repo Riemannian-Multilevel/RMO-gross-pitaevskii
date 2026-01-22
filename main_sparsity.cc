@@ -11,14 +11,18 @@ using namespace gpe;
 using namespace dealii;
 
 // TODO: use gpe::DiscreteProblem (dofs.h)
-template <int dim>
+template <int dim, typename ElementType>
 class Sparsity
 {
 public:
     Sparsity(GPE_Options options, const unsigned int n_levels)
         : grid{}, space(grid.triangulation, options.degree)   // establish relations between objects
     {
-        grid.setup_grid(options.radius, n_levels);    // do the actual computations
+        if (std::is_same_v<ElementType,dealii::FE_SimplexP<dim>>) {
+            grid.setup_grid_simplex(options.radius, n_levels);
+        } else {
+            grid.setup_grid(options.radius, n_levels);    // do the actual computations
+        }
         space.setup_dofs(options.order);
         space.setup_constraints(options.bc);
 
@@ -43,7 +47,7 @@ public:
 private:
     HyperCube<dim> grid;
     SparsityPattern sparsity_pattern;
-    FeSpace<dim> space;
+    FeSpace<dim, ElementType> space;
 };
 
 int main(int argc, char** argv)
@@ -75,7 +79,7 @@ int main(int argc, char** argv)
             unsigned int max_level = options_mg.max_level;
 
             for (unsigned int i = min_level; i < max_level; ++i) {
-                Sparsity<dim> GS(options, i+1);
+                Sparsity<dim,dealii::FE_SimplexP<dim>> GS(options, i+1);
                 GS.run("domain", i);
             }
         });

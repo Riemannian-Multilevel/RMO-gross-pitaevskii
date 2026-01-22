@@ -5,6 +5,8 @@
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/base/quadrature_lib.h>
+#include <deal.II/fe/mapping_q1.h>
+#include <deal.II/fe/mapping_fe.h>
 
 namespace gpe
 {
@@ -19,19 +21,21 @@ using dealii::numbers::invalid_unsigned_int;
 //! @param flags Required update flags, typically set in Assembly object
 //! @param assemble_cell Function object which iterates over local cells
 //! @param constraints Affine constraints applied to matrix rows and columns
+//! @param mapping Polynomial mapping between reference cell and real cell
 template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
 void assemble_system(dealii::SparseMatrix<double>& system_matrix,
                      const dealii::DoFHandler<dim>& dof_handler,
                      dealii::UpdateFlags flags, Assembly&& assemble_cell,
-                     const dealii::AffineConstraints<double>& constraints)
+                     const dealii::AffineConstraints<double>& constraints,
+                     const dealii::Mapping<dim>& mapping = dealii::MappingQ1<dim>())
 {
     // Quadrature formula for the evaluation of the integrals on each cell
     const auto& element = dof_handler.get_fe();
     const dealii::QGauss<dim> quadrature_formula(element.degree + 1);
 
     // Class which handles finite element, quadrature, and mapping objects
-    dealii::FEValues<dim> fe_values(element, quadrature_formula, flags);
+    dealii::FEValues<dim> fe_values(mapping, element, quadrature_formula, flags);
 
     // Compute contributions of each cell in a local dense matrix, to avoid
     // updating a large sparse matrix in every step

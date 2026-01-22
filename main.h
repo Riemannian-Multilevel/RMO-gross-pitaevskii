@@ -14,6 +14,20 @@
 
 namespace gpe
 {
+struct LevelMatrix
+{
+    SparseMatrix<double> A0, M, Mpp;
+    SparsityPattern sparsity_pattern;
+    unsigned int level;
+
+    void reinit(DynamicSparsityPattern&& sp)
+    {
+        sparsity_pattern.copy_from(sp);
+        A0.reinit(sparsity_pattern);
+        M.reinit(sparsity_pattern);
+        Mpp.reinit(sparsity_pattern);
+    }
+};
 
 template <int dim>
 class GPE

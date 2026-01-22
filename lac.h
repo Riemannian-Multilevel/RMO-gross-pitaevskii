@@ -22,21 +22,6 @@ using dealii::DynamicSparsityPattern;
 using dealii::Vector;
 using dealii::Point;
 
-struct LevelMatrix
-{
-    SparseMatrix<double> A0, M, Mpp;
-    SparsityPattern sparsity_pattern;
-    unsigned int level;
-
-    void reinit(DynamicSparsityPattern&& sp)
-    {
-        sparsity_pattern.copy_from(sp);
-        A0.reinit(sparsity_pattern);
-        M.reinit(sparsity_pattern);
-        Mpp.reinit(sparsity_pattern);
-    }
-};
-
 // TODO: return SolverInfo (converged/did_not_converge/error)
 template <typename PreconditionerType>
 [[maybe_unused]] dealii::SolverControl

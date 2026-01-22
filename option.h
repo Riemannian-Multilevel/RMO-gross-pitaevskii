@@ -55,6 +55,18 @@ select_boundary_condition(const std::string& boundary_str)
     throw std::runtime_error(boundary_str + ": invalid boundary condition");
 }
 
+inline MeshKind
+select_mesh_kind(const std::string& mesh_str)
+{
+    if (mesh_str == "QUADRILATERAL") {
+        return MeshKind::QUADRILATERAL;
+    }
+    if (mesh_str == "SIMPLEX") {
+        return MeshKind::SIMPLEX;
+    }
+    throw std::runtime_error(mesh_str + ": invalid mesh kind");
+}
+
 inline std::string upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c){ return std::toupper(c); });
@@ -122,16 +134,20 @@ inline po::options_description gpe_cli_options() {
         ("radius", po::value<double>()->default_value(10.0),
          "default radius of the cube domain")
         ("beta", po::value<double>()->default_value(100.0),
-         "non-linearity factor");
+         "non-linearity factor")
+        ("mesh", po::value<std::string>()->default_value("quadrilateral"),
+         "type of mesh elements used (quadrilateral|simplex)");
     return d;
 }
 
 inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options) {
     const auto order_str    = upper(vm["order"].as<std::string>());
     const auto boundary_str = upper(vm["boundary"].as<std::string>());
+    const auto mesh_str     = upper(vm["mesh"].as<std::string>());
 
     options.order     = select_order(order_str);
     options.bc        = select_boundary_condition(boundary_str);
+    options.mesh_kind = select_mesh_kind(mesh_str);
     options.degree    = vm["degree"].as<int>();
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();

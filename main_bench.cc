@@ -14,6 +14,8 @@ using namespace dealii;
 using namespace gpe;
 
 // TODO: use multigrid transfer/matrices
+//       multiple runs with average time/stddev
+//       comparison against fine-level solve
 template <int dim>
 static void
 prolongate_between_meshes(const GPE<dim> &coarse,

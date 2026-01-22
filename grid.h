@@ -17,12 +17,21 @@ struct HyperCube
 {
     dealii::Triangulation<dim> triangulation;
 
+    // Regularly refined mesh - quadrilaterals
     void setup_grid(double radius, unsigned int n_levels)
     {
-        // step 1 - regularly refined mesh
         dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
 
         // the number of cells increases by a factor of 2^(dim x times)
+        triangulation.refine_global(n_levels-1);
+        AssertDimension(n_levels, triangulation.n_global_levels());
+    }
+
+    // TODO: Regularly refined mesh - simplices
+    void setup_grid_simplex(double radius, unsigned int n_levels)
+    {
+        dealii::GridGenerator::subdivided_hyper_cube_with_simplices(triangulation, 1, -radius, radius);
+
         triangulation.refine_global(n_levels-1);
         AssertDimension(n_levels, triangulation.n_global_levels());
     }

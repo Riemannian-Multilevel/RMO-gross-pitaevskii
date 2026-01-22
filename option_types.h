@@ -29,6 +29,12 @@ enum class SolverMethod
     CG
 };
 
+enum class MeshKind
+{
+    QUADRILATERAL,
+    SIMPLEX
+};
+
 enum class SolverPC
 {
     IDENTITY,
@@ -64,6 +70,7 @@ struct GPE_Options
     double beta;            // factor for the non-linear term in GPE
     Ordering order;         // ordering for degrees of freedom
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
+    MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
 };
 
 }

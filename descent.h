@@ -1,5 +1,8 @@
 #ifndef GPE_ENERGY_H
 #define GPE_ENERGY_H
+#ifndef M_NORM_RESIDUAL
+#define M_NORM_RESIDUAL 0
+#endif
 
 #include "lac.h"
 #include "option_types.h"
@@ -37,11 +40,14 @@ residual(GdControl& control, const Vector<double>& x,
 
     Vector<double> r(Ax);
     r.add(-control.lambda, Mx);        // r = A x - lambda M x
-    //double res = r.l2_norm(); // or M-norm, see below
 
-    Vector<double> Mr(r.size());
-    M.vmult(Mr, r);
-    control.residual = std::sqrt(r * Mr);
+    if (M_NORM_RESIDUAL) {
+        Vector<double> Mr(r.size());
+        M.vmult(Mr, r);
+        control.residual = std::sqrt(r * Mr);
+    } else {
+        control.residual = r.l2_norm();
+    }
 }
 
 inline double
