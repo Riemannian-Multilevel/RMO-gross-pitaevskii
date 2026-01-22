@@ -92,7 +92,7 @@ public:
         return x;
     }
 
-    const FeSpace<dim>& fe_space() const { return space; }
+    const FeSpace<dim,dealii::FE_Q<dim>>& fe_space() const { return space; }
     unsigned int n_dofs() const { return space.n_dofs(); }
     const dealii::DoFHandler<dim>& get_dofs() const { return space.get_dofs(); }
     const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
@@ -100,7 +100,7 @@ public:
 private:
     HyperCube<dim> grid;
     LevelMatrix    system;
-    FeSpace<dim>   space;
+    FeSpace<dim,dealii::FE_Q<dim>>   space;
 };
 
 }
