@@ -9,6 +9,7 @@
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 
 #include <deal.II/fe/mapping_q1.h>
+#include <deal.II/fe/mapping_fe.h>
 #include <deal.II/multigrid/mg_constrained_dofs.h>
 #include <deal.II/multigrid/mg_tools.h>
 
@@ -18,13 +19,15 @@ namespace gpe
 //! @tparam dim
 //! @param dof_handler
 //! @param filename
+//! @param mapping
 template <int dim>
-void write_dof_locations(const dealii::DoFHandler<dim>& dof_handler, const std::string& filename)
+void write_dof_locations(const dealii::DoFHandler<dim>& dof_handler, const std::string& filename,
+    const dealii::Mapping<dim>& mapping = dealii::MappingQ1<dim>())
 {
     // Mapping from reference element to linear elements, using shape functions of degree 1
     // Combining this with FE_Q of degree 1 yields an isoparametric element
     const std::map<dealii::types::global_dof_index, dealii::Point<dim>> dof_location_map =
-        dealii::DoFTools::map_dofs_to_support_points(dealii::MappingQ1<dim>(), dof_handler);
+        dealii::DoFTools::map_dofs_to_support_points(mapping, dof_handler);
 
     std::ofstream dof_location_file(filename);
     dealii::DoFTools::write_gnuplot_dof_support_point_info(dof_location_file, dof_location_map);

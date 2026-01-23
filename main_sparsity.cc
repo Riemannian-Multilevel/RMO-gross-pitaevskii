@@ -10,20 +10,28 @@
 using namespace gpe;
 using namespace dealii;
 
-// TODO: use gpe::DiscreteProblem (dofs.h)
-template <int dim, typename ElementType>
+template <int dim>
 class Sparsity
 {
 public:
     Sparsity(GPE_Options options, const unsigned int n_levels)
-        : grid{}, space(grid.triangulation, options.degree)   // establish relations between objects
+        : grid(options.radius, options.mesh_kind == MeshKind::SIMPLEX)
+        , space(grid.triangulation)   // establish relations between objects
     {
-        if (std::is_same_v<ElementType,dealii::FE_SimplexP<dim>>) {
-            grid.setup_grid_simplex(options.radius, n_levels);
-        } else {
-            grid.setup_grid(options.radius, n_levels);    // do the actual computations
+        // Note: assumes grid has no mixed cells (contains either quadrilaterals or simplices)
+        if (grid.has_simplex) {
+            mapping = std::make_unique<MappingFE<dim>>(FE_SimplexP<dim>(1));
+            element = std::make_unique<FE_SimplexP<dim>>(options.degree);
         }
-        space.setup_dofs(options.order);
+        else {
+            mapping = std::make_unique<MappingQ1<dim>>();
+            element = std::make_unique<FE_Q<dim>>(options.degree);
+        }
+        grid.refine(n_levels);   // do the actual computations
+        std::cerr << "Number of active cells: " << grid.triangulation.n_active_cells() << std::endl;
+        std::cerr << "Number of levels: " << grid.triangulation.n_levels() << std::endl;
+
+        space.setup_dofs(options.order, *element);
         space.setup_constraints(options.bc);
 
         auto dsp = make_sparsity_pattern(space.get_dofs(), space.get_constraints());
@@ -32,22 +40,35 @@ public:
 
     void run(const std::string& prefix, unsigned int level) const
     {
-        std::cerr << "Number of active cells: " << grid.triangulation.n_active_cells() << std::endl;
-        std::cerr << "Number of levels: " << grid.triangulation.n_levels() << std::endl;
+        std::string mesh = grid.has_simplex ? "simplex" : "quads";
+        std::string grid_file = fmt::format("{}_{}d_{}_lvl{}", prefix, dim, mesh, level);
 
-        plot_grid(grid.triangulation, prefix);
-
-        write_dof_locations(space.get_dofs(), fmt::format("{}_{}d_dof.gnuplot", prefix, dim));
-        {
-            std::ofstream out(fmt::format("{}_{}d_lvl{}_sparsity.svg", prefix, dim, level));
-            sparsity_pattern.print_svg(out);
+        if (dim == 2) {
+            write_grid<dim>(grid_file + ".svg", grid.triangulation, dealii::GridOut::OutputFormat::svg);
+            std::cerr << "Saving " + grid_file + ".svg" << std::endl;
         }
+        // only for quadrilateral mesh
+        // write_grid<dim>(grid_file + ".gnuplot", grid.triangulation, dealii::GridOut::OutputFormat::gnuplot);
+        // std::cerr << "Saving " + grid_file + ".svg" << std::endl;
+
+        std::string dof_file = fmt::format("{}_{}d_{}_dof.gnuplot", prefix, dim, mesh);
+        write_dof_locations(space.get_dofs(), dof_file, *mapping);
+        std::cerr << "Saving " + dof_file << std::endl;
+
+        std::string sparsity_file = fmt::format("{}_{}d_{}_lvl{}_sparsity.svg", prefix, dim, mesh, level);
+        std::ofstream out(sparsity_file);
+        sparsity_pattern.print_svg(out);
+        std::cerr << "Saving " + sparsity_file << std::endl;
     }
 
 private:
     HyperCube<dim> grid;
     SparsityPattern sparsity_pattern;
-    FeSpace<dim, ElementType> space;
+    FeSpace<dim> space;
+
+    // Variable for simplex or quadrilateral meshes
+    std::unique_ptr<Mapping<dim>> mapping;
+    std::unique_ptr<FiniteElement<dim>> element;
 };
 
 int main(int argc, char** argv)
@@ -79,7 +100,7 @@ int main(int argc, char** argv)
             unsigned int max_level = options_mg.max_level;
 
             for (unsigned int i = min_level; i < max_level; ++i) {
-                Sparsity<dim,dealii::FE_SimplexP<dim>> GS(options, i+1);
+                Sparsity<dim> GS(options, i+1);
                 GS.run("domain", i);
             }
         });

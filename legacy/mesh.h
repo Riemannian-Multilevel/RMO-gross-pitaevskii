@@ -75,7 +75,7 @@ void make_cube_graded(dealii::Triangulation<dim>& triangulation, double radius,
 //! @param triangulation Triangulation<> object containing the grid
 //! @param format Output file format
 template <int dim>
-void grid2file(const std::string& filename, const dealii::Triangulation<dim>& triangulation,
+void write_grid(const std::string& filename, const dealii::Triangulation<dim>& triangulation,
     const dealii::GridOut::OutputFormat format)
 {
     std::ofstream out(filename);
@@ -92,7 +92,7 @@ void grid2file(const std::string& filename, const dealii::Triangulation<dim>& tr
 //! @param triangulation Triangulation<> object containing the grid
 inline void grid2svg(const std::string& s, const dealii::Triangulation<2>& triangulation)
 {
-    grid2file(s, triangulation, dealii::GridOut::OutputFormat::svg);
+    write_grid(s, triangulation, dealii::GridOut::OutputFormat::svg);
 }
 
 } // namespace gpe

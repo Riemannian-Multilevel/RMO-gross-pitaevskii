@@ -34,13 +34,27 @@ class GPE
 {
 public:
     GPE(const GPE_Options& options, unsigned int n_levels)
-        : grid{}, system{}, space(grid.triangulation, options.degree)   // establish relations between objects
+    // establish relations between objects
+        : grid(options.radius, options.mesh_kind == MeshKind::SIMPLEX)
+        , space(grid.triangulation)
+        , system{}
     {
-        grid.setup_grid(options.radius, n_levels);    // do the actual computations
+        // Note: assumes grid has no mixed cells (contains either quadrilaterals or simplices)
+        if (grid.has_simplex) {
+            mapping    = std::make_unique<dealii::MappingFE<dim>>(dealii::FE_SimplexP<dim>(1));
+            element    = std::make_unique<dealii::FE_SimplexP<dim>>(options.degree);
+            quadrature = std::make_unique<dealii::QGaussSimplex<dim>>(options.degree + 1);
+        }
+        else {
+            mapping    = std::make_unique<dealii::MappingQ1<dim>>();
+            element    = std::make_unique<dealii::FE_Q<dim>>(options.degree);
+            quadrature = std::make_unique<dealii::QGauss<dim>>(options.degree + 1);
+        }
+        grid.refine(n_levels);    // do the actual computations
         std::cerr << "Number of levels: " << grid.triangulation.n_global_levels() << std::endl;
         std::cerr << "Number of vertices: " << grid.triangulation.n_vertices() << std::endl;
 
-        space.setup_dofs(options.order);
+        space.setup_dofs(options.order, *element);
         space.setup_constraints(options.bc);
     }
 
@@ -53,8 +67,8 @@ public:
         system.reinit(make_sparsity_pattern(dof_handler, constraints));
 
         // Fixed mass and stiffness matrix
-        assemble_A0  (system.A0, V, dof_handler, constraints);
-        assemble_mass(system.M, dof_handler, constraints);
+        assemble_A0  (system.A0, V, dof_handler, *quadrature, *mapping, constraints);
+        assemble_mass(system.M, dof_handler, *quadrature, *mapping, constraints);
     }
 
     [[maybe_unused]] Vector<double>
@@ -68,9 +82,9 @@ public:
         std::cerr << "Number of degrees of freedom: " << space.n_dofs() << std::endl;
 
         // Weighed mass matrix for solution in every step
-        auto update_mpp = [&dof_handler, &constraints](SparseMatrix<double>& matrix, const Vector<double>& x)
+        auto update_mpp = [this, &dof_handler, &constraints](SparseMatrix<double>& matrix, const Vector<double>& x)
         {
-            assemble_mass_phiphi(matrix, x, dof_handler, constraints);
+            assemble_mass_phiphi(matrix, x, dof_handler, *quadrature, *mapping, constraints);
         };
 
         // Run gradient descent + enforce boundary conditions
@@ -92,15 +106,21 @@ public:
         return x;
     }
 
-    const FeSpace<dim,dealii::FE_Q<dim>>& fe_space() const { return space; }
+    const FeSpace<dim>& fe_space() const { return space; }
     unsigned int n_dofs() const { return space.n_dofs(); }
+
     const dealii::DoFHandler<dim>& get_dofs() const { return space.get_dofs(); }
     const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
 
 private:
-    HyperCube<dim> grid;
-    LevelMatrix    system;
-    FeSpace<dim,dealii::FE_Q<dim>>   space;
+    HyperCube<dim> grid;    // cells
+    FeSpace<dim>   space;   // degrees of freedom
+    LevelMatrix    system;  // linear system
+
+    // Variables for simplex or quadrilateral meshes
+    std::unique_ptr<dealii::Mapping<dim>> mapping;
+    std::unique_ptr<dealii::FiniteElement<dim>> element;
+    std::unique_ptr<dealii::Quadrature<dim>> quadrature;
 };
 
 }

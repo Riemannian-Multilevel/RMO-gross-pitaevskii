@@ -16,24 +16,34 @@ template <int dim>
 struct HyperCube
 {
     dealii::Triangulation<dim> triangulation;
+    const bool has_simplex = false;
 
-    // Regularly refined mesh - quadrilaterals
-    void setup_grid(double radius, unsigned int n_levels)
+    // For extension with other cell shapes, use MeshKind{} (option_types.h)
+    // TODO: expose number of subdivisions
+    HyperCube(const double radius, bool simplex_mesh) : has_simplex(simplex_mesh)
     {
-        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
+        simplex_mesh ? simplex(radius) : quadrilateral(radius);
+    }
 
-        // the number of cells increases by a factor of 2^(dim x times)
-        triangulation.refine_global(n_levels-1);
+    void refine(unsigned int n_levels)
+    {
+        triangulation.refine_global(n_levels-1);   // #cells *= 2^*(dim x times)
         AssertDimension(n_levels, triangulation.n_global_levels());
     }
 
-    // TODO: Regularly refined mesh - simplices
-    void setup_grid_simplex(double radius, unsigned int n_levels)
+private:
+    void simplex(double radius)
     {
-        dealii::GridGenerator::subdivided_hyper_cube_with_simplices(triangulation, 1, -radius, radius);
+        dealii::Triangulation<dim> tmp;
+        dealii::GridGenerator::hyper_cube(tmp, -radius, radius);
 
-        triangulation.refine_global(n_levels-1);
-        AssertDimension(n_levels, triangulation.n_global_levels());
+        // uses default number of subdivisions (dm==2 ? 8u : 24u)
+        // TODO: is it better to subdivide after, or before refinement? (possible distinction on dim 2, 3)
+        dealii::GridGenerator::convert_hypercube_to_simplex_mesh(tmp, triangulation);
+    }
+    void quadrilateral(double radius)
+    {
+        dealii::GridGenerator::hyper_cube(triangulation, -radius, radius);
     }
 };
 
@@ -43,24 +53,13 @@ struct HyperCube
 //! @param triangulation Triangulation<> object containing the grid
 //! @param format Output file format
 template <int dim>
-void grid2file(const std::string& filename, const dealii::Triangulation<dim>& triangulation,
+void write_grid(const std::string& filename, const dealii::Triangulation<dim>& triangulation,
     const dealii::GridOut::OutputFormat format)
 {
     std::ofstream out(filename);
     const dealii::GridOut grid_out;
 
     grid_out.write(triangulation, out, format);
-    std::cout << "Grid written to " + filename << std::endl;
-}
-
-template <int dim>
-void plot_grid(const dealii::Triangulation<dim>& triangulation, const std::string& prefix)
-{
-    const std::string filename = prefix + "_" + std::to_string(dim) + "d_lvl" + std::to_string(triangulation.n_levels());
-    if (dim == 2) {
-        grid2file<dim>(filename + ".svg", triangulation, dealii::GridOut::OutputFormat::svg);
-    }
-    grid2file<dim>(filename + ".gnuplot", triangulation, dealii::GridOut::OutputFormat::gnuplot);
 }
 
 //! Write a VTK file for the 2d grid, colored by refinement
@@ -69,9 +68,9 @@ void plot_grid(const dealii::Triangulation<dim>& triangulation, const std::strin
 //! @param s File name to write to, without extension
 //! @param triangulation Triangulation<> object containing the grid
 inline void
-grid2svg(const std::string& s, const dealii::Triangulation<2>& triangulation)
+write_grid_svg(const std::string& s, const dealii::Triangulation<2>& triangulation)
 {
-    grid2file(s, triangulation, dealii::GridOut::OutputFormat::svg);
+    write_grid(s, triangulation, dealii::GridOut::OutputFormat::svg);
 }
 
 }
