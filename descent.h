@@ -177,6 +177,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
               const GdOptions& options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
+    Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
 
     Vector x(x0);
     GdControl ctrl{}, ctrl_prev{};

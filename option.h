@@ -3,73 +3,101 @@
 
 #include "option_types.h"
 
+#include <stdexcept>
+#include <string>
 #include <boost/program_options.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
+#include <boost/describe.hpp>
+#include <boost/mp11.hpp>
+
 namespace po = boost::program_options;  // XXX: move to gpe namespace?
 
 namespace gpe
 {
+BOOST_DESCRIBE_STRUCT(GdOptions, (),
+    (tol_inner, tol_lambda, tol_residual, step_size, max_iter, max_inner));
+BOOST_DESCRIBE_STRUCT(MG_Options, (),
+    (multilevel, n_levels, min_level, max_level));
+BOOST_DESCRIBE_STRUCT(GPE_Options, (),
+    (dimension, degree, radius, beta));
 
-inline SolverMethod
-select_solver(const std::string& solver_str)
-{
-    if (solver_str == "GMRES") {
-        return SolverMethod::GMRES;
-    }
-    if (solver_str == "MINRES") {
-        return SolverMethod::MINRES;
-    }
-    if (solver_str == "CG") {
-        return SolverMethod::CG;
-    }
-    throw std::runtime_error(solver_str + ": invalid solver");
+BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
+BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
+BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
+BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
+
+template<class E>
+std::string enum_to_string(E v) {
+    using namespace boost::describe;
+    bool found = false;
+    std::string result;
+
+    // Iterate over enumerators to find the matching value
+    using DescribedEnum = describe_enumerators<E>;
+    boost::mp11::mp_for_each<DescribedEnum>([&](auto D) {
+        if (!found && D.value == v) {
+            result = D.name;
+            found = true;
+        }
+    });
+    return found ? result : "UNKNOWN";
 }
 
-inline Ordering
-select_order(const std::string& order_str)
-{
-    if (order_str == "DEFAULT") {
-        return Ordering::DEFAULT;
-    }
-    if (order_str == "RANDOM") {
-        return Ordering::RANDOM;
-    }
-    if (order_str == "CUTHILL_MCKEE") {
-        return Ordering::CUTHILL_MCKEE;
-    }
-    throw std::runtime_error(order_str + ": invalid ordering");
+template<class E>
+E string_to_enum(const std::string& name) {
+    using namespace boost::describe;
+    bool found = false;
+    E result = {};
+
+    // Iterate over all enumerators of E
+    boost::mp11::mp_for_each<describe_enumerators<E>>([&](auto D) {
+        // D.name is a const char*, so it compares easily with std::string
+        if (!found && D.name == name) {
+            result = D.value;
+            found = true;
+        }
+    });
+
+    if (found) return result;
+
+    throw std::runtime_error(name + ": invalid enum value");
 }
 
-inline BoundaryCondition
-select_boundary_condition(const std::string& boundary_str)
+template<class T>
+void dump_options(const T& obj, std::ostream& out)
 {
-    if (boundary_str == "NEUMANN") {
-        return BoundaryCondition::NEUMANN;
-    }
-    if (boundary_str == "DIRICHLET") {
-        return BoundaryCondition::DIRICHLET;
-    }
-    if (boundary_str == "ROBIN") {
-        return BoundaryCondition::ROBIN;
-    }
-    throw std::runtime_error(boundary_str + ": invalid boundary condition");
-}
+    using namespace boost::describe;
+    using namespace boost::mp11;
 
-inline MeshKind
-select_mesh_kind(const std::string& mesh_str)
-{
-    if (mesh_str == "QUADRILATERAL") {
-        return MeshKind::QUADRILATERAL;
-    }
-    if (mesh_str == "SIMPLEX") {
-        return MeshKind::SIMPLEX;
-    }
-    throw std::runtime_error(mesh_str + ": invalid mesh kind");
+    mp_for_each<describe_members<T, mod_public>>([&](auto D) {
+        auto value = obj.*D.pointer;
+        out << D.name << " = ";
+
+        // 1. Check if the member is a float or double
+        if constexpr (std::is_floating_point_v<decltype(value)>) {
+            // Save current stream state to restore it later
+            std::ios old_state(nullptr);
+            old_state.copyfmt(out);
+
+            // Set to scientific notation with maximum precision
+            out << std::scientific << std::setprecision(6);
+            out << value;
+
+            // Restore old state (so integers/enums don't get messed up later)
+            out.copyfmt(old_state);
+        }
+        else {
+            // Print everything else normally
+            out << value;
+        }
+
+        out << std::endl;
+    });
 }
 
 inline std::string upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c){ return std::toupper(c); });
+                   [](unsigned const char c){ return std::toupper(c); });
     return s;
 }
 
@@ -145,9 +173,9 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     const auto boundary_str = upper(vm["boundary"].as<std::string>());
     const auto mesh_str     = upper(vm["mesh"].as<std::string>());
 
-    options.order     = select_order(order_str);
-    options.bc        = select_boundary_condition(boundary_str);
-    options.mesh_kind = select_mesh_kind(mesh_str);
+    options.order     = string_to_enum<Ordering>(order_str);
+    options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
+    options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
     options.degree    = vm["degree"].as<int>();
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
@@ -185,7 +213,7 @@ inline void apply_gd_options(const po::variables_map& vm, GdOptions& options_rgd
     options_rgd.tol_inner    = vm["tol-inner"].as<double>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
-    options_rgd.solver       = select_solver(solver_str);
+    options_rgd.solver       = string_to_enum<SolverMethod>(solver_str);
 }
 
 } // namespace gpe

@@ -16,6 +16,7 @@ using namespace gpe;
 // TODO: use multigrid transfer/matrices
 //       multiple runs with average time/stddev
 //       comparison against fine-level solve
+//       adjust tolerances by level
 template <int dim>
 static void
 prolongate_between_meshes(const GPE<dim> &coarse,
@@ -33,17 +34,18 @@ prolongate_between_meshes(const GPE<dim> &coarse,
 
 int main()
 {
+    // Global timer
     TimerOutput timer(std::cout, TimerOutput::summary, TimerOutput::wall_times);
 
     // --- options as before ---
     GdOptions options_gd{};
-    options_gd.tol_inner    = 1e-6;
-    options_gd.tol_lambda   = 1e-8;
-    options_gd.tol_residual = 1e-6;
     options_gd.step_size    = 1.0;
-    options_gd.max_iter     = 20;
     options_gd.max_inner    = 500;
     options_gd.solver       = SolverMethod::MINRES;
+    options_gd.tol_inner    = 1e-6;
+    options_gd.tol_lambda   = 1e-8;
+    options_gd.tol_residual = 1e-4;
+    options_gd.max_iter     = 20;
 
     GPE_Options options{};
     options.dimension = 2;
@@ -51,6 +53,8 @@ int main()
     options.radius    = 10;
     options.beta      = 100;
     options.bc        = BoundaryCondition::DIRICHLET;
+    options.mesh_kind = MeshKind::QUADRILATERAL;
+    options.order     = Ordering::CUTHILL_MCKEE;
 
     constexpr int dim = 2;
     Square<dim> V;
@@ -59,9 +63,23 @@ int main()
     const unsigned int ref_min = 8;   // coarse
     const unsigned int ref_max = 11;  // fine
 
+    // Adjust tolerances per level
+    MGLevelObject<GdOptions> options_gd_level(ref_min, ref_max);
+
+    for (unsigned int ref = ref_min; ref <= ref_max; ++ref) {
+        options_gd_level[ref] = options_gd;
+
+        if (ref < ref_max) {
+            double factor = std::pow(10,ref_max-ref);  // 1.0 for ref_max
+            options_gd_level[ref].tol_inner  = 1e-6*factor;  // lower precision for multigrid
+            //options_gd_level[ref].tol_lambda   = 1e-8/factor;
+            //options_gd_level[ref].tol_residual = 1e-4/factor;
+        }
+        //dump_options(options_gd_level[ref], std::cerr);
+    }
+
     // 1) One solver per refinement count
-    // We'll store them in a vector, indexed by (ref - ref_min)
-    std::vector<std::unique_ptr<GPE<dim>>> solver(ref_max - ref_min + 1);
+    MGLevelObject<std::unique_ptr<GPE<dim>>> solver(ref_min, ref_max);
 
     // for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     //     solver[ref - ref_min] = std::make_unique<GPE<dim>>(options, ref);
@@ -72,8 +90,8 @@ int main()
         std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
         TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
 
-        solver[ref - ref_min] = std::make_unique<GPE<dim>>(options, ref);
-        solver[ref - ref_min]->assemble(V);
+        solver[ref] = std::make_unique<GPE<dim>>(options, ref);
+        solver[ref]->assemble(V);
     }
 
     // 3) Hierarchy of starting vectors (indexed by refinement count!)
@@ -82,39 +100,58 @@ int main()
 
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
-        y0[ref].reinit(solver[ref - ref_min]->n_dofs());
-        x[ref].reinit(solver[ref - ref_min]->n_dofs());
+        y0[ref].reinit(solver[ref]->n_dofs());
+        x[ref].reinit(solver[ref]->n_dofs());
     }
 
-    // Coarsest guess
-    y0[ref_min] = 1.0; // or 0.0
+    {   // Multiresolution
+        TimerOutput::Scope u(timer, "Solve - coarse to fine");
+        // Local timer
+        TimerOutput timer_ref(std::cout, TimerOutput::summary, TimerOutput::wall_times);
 
-    // 4) Nested iteration: solve and prolongate to next refinement
-    std::cout << "\n---- COARSE -> FINE (BY REFINEMENT COUNT) ----\n";
+        // Coarsest guess
+        y0[ref_min] = 1.0; // or 0.0
 
-    const unsigned int width = std::to_string(ref_max).size();
+        // 4) Nested iteration: solve and prolongate to next refinement
+        std::cout << "\n---- COARSE -> FINE (BY REFINEMENT COUNT) ----\n";
 
-    for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
-    {
-        std::cout << "\nSOLVE REF " << ref << "\n";
+        const unsigned int width = std::to_string(ref_max).size();
 
-        std::ostringstream name;
-        name << "solve_ref_"
-             << std::setw(width) << std::setfill('0') << ref
-             << ".csv";
-
-        std::ofstream file(name.str());
+        for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
         {
-            TimerOutput::Scope t(timer, "Solve - ref " + std::to_string(ref));
-            x[ref] = solver[ref - ref_min]->run(y0[ref], options.beta, options_gd, file);
-        }
+            std::cout << "\nSOLVE REF " << ref << "\n";
 
-        if (ref < ref_max)
-        {
-            prolongate_between_meshes<dim>(*solver[ref - ref_min], x[ref],
-                *solver[(ref + 1) - ref_min],
-                y0[ref + 1]);
+            std::ostringstream name;
+            name << "solve_ref_"
+                 << std::setw(width) << std::setfill('0') << ref
+                 << ".csv";
+
+            std::ofstream file(name.str());
+            {
+                TimerOutput::Scope t(timer_ref, "Solve - ref " + std::to_string(ref));
+                x[ref] = solver[ref]->run(y0[ref], options.beta, options_gd_level[ref], file);
+            }
+
+            if (ref < ref_max)
+            {
+                prolongate_between_meshes<dim>(*solver[ref], x[ref],
+                    *solver[ref + 1], y0[ref + 1]);
+            }
         }
     }
-    return 0;
+
+    {   // Comparison to GD on most-refined level
+        TimerOutput::Scope t(timer, "Solve - ref_max");
+
+        Vector<double> y0_fine(solver[ref_max]->n_dofs());
+        y0_fine = 1.0;
+
+        std::cout << "\nSOLVE - fine\n";
+
+        std::ofstream file("solve_ref_max.csv");
+        {
+            solver[ref_max]->run(y0_fine, options.beta, options_gd, file);
+        }
+    }
+
 }

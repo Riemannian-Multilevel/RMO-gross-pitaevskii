@@ -18,8 +18,7 @@ enum class Ordering
 enum class BoundaryCondition
 {
     NEUMANN,
-    DIRICHLET,
-    ROBIN
+    DIRICHLET
 };
 
 enum class SolverMethod
@@ -33,14 +32,6 @@ enum class MeshKind
 {
     QUADRILATERAL,
     SIMPLEX
-};
-
-enum class SolverPC
-{
-    IDENTITY,
-    JACOBI,
-    SSOR,
-    ILU0,
 };
 
 struct MG_Options
