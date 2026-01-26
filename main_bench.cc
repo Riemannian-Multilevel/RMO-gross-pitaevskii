@@ -1,6 +1,5 @@
 #include "function.h"
 #include "main.h"
-#include "option.h"
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -8,7 +7,6 @@
 
 #include <fstream>
 #include <memory>
-#include <vector>
 
 using namespace dealii;
 using namespace gpe;
