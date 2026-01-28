@@ -12,6 +12,7 @@ find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 
 set(COMMON_HEADERS
         fe_space.h
+        fe_space_mg.h
         grid.h
         assemble.h
         function.h
