@@ -20,7 +20,6 @@ set(COMMON_HEADERS
         util.h
         descent.h
         option.h
-        option_util.h
         option_types.h
         sparsity.h
         main.h
