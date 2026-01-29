@@ -12,8 +12,18 @@
 #include "descent.h"
 #include "option_types.h"
 
+#include <deal.II/fe/fe_simplex_p.h>
+#include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/fe_simplex_p_bubbles.h>  // for higher degree simplex elements with mass lumping
+
 namespace gpe
 {
+
+// TODO: Base class to provide methods for:
+//       Assembly of A0 (matrix-free or otherwise)
+//       Preconditioning
+//       Assembly of M_phiphi (matrix-free or otherwise)
+// Move to lac.h?
 struct LevelMatrix
 {
     SparseMatrix<double> A0, M, Mpp;
@@ -42,7 +52,15 @@ public:
         // Note: assumes grid has no mixed cells (contains either quadrilaterals or simplices)
         if (grid.has_simplex) {
             mapping    = std::make_unique<dealii::MappingFE<dim>>(dealii::FE_SimplexP<dim>(1));
-            element    = std::make_unique<dealii::FE_SimplexP<dim>>(options.degree);
+            if (options.degree > 1) {
+                // add basis function corresponding to interpolation at the centroid (in 2d)
+                // -> valid nodal quadrature formula for mass lumping
+                // the polynomial degree is typically one higher than the specified degree
+                // (for degree == 1, FE_SimplexP_Bubbles is equivalent to FE_SimplexP)
+                element = std::make_unique<dealii::FE_SimplexP_Bubbles<dim>>(options.degree);
+            } else {
+                element = std::make_unique<dealii::FE_SimplexP<dim>>(options.degree);
+            }
             quadrature = std::make_unique<dealii::QGaussSimplex<dim>>(options.degree + 1);
         }
         else {

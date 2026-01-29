@@ -24,8 +24,10 @@ struct GdControl
     double rg_norm;
 };
 
+
 namespace energy
 {
+// TODO: object that supplies vmult(), instead of SparseMatrix (matrix-free methods)
 inline void
 residual(GdControl& control, const Vector<double>& x,
               const SparseMatrix<double>& A, const SparseMatrix<double>& M)
@@ -50,6 +52,7 @@ residual(GdControl& control, const Vector<double>& x,
     }
 }
 
+// TODO: object that supplies vmult(), instead of SparseMatrix (matrix-free methods)
 inline double
 function_value(const Vector<double>& x, const SparseMatrix<double>& A0,
     const SparseMatrix<double>& Mpp)
