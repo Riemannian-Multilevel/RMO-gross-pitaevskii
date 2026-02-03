@@ -9,6 +9,7 @@
 #include "grid.h"
 #include "sparsity.h"
 #include "fe_space.h"
+#include "function.h"
 #include "descent.h"
 #include "option_types.h"
 
@@ -19,26 +20,102 @@
 namespace gpe
 {
 
-// TODO: Base class to provide methods for:
-//       Assembly of A0 (matrix-free or otherwise)
-//       Preconditioning
-//       Assembly of M_phiphi (matrix-free or otherwise)
-// Move to lac.h?
-struct LevelMatrix
+template <int dim>
+class EnergyOracle
 {
-    SparseMatrix<double> A0, M, Mpp;
-    SparsityPattern sparsity_pattern;
-    unsigned int level;
-
-    void reinit(DynamicSparsityPattern&& sp)
+public:
+    // setup before step 1 (discretization)
+    template <typename Potential>
+    EnergyOracle(const dealii::DoFHandler<dim>& dofs,
+                 const dealii::Quadrature<dim>& quad,
+                 const dealii::Mapping<dim>& map,
+                 const dealii::AffineConstraints<double>& cstr,
+                 Potential&& V)
+    : dof_handler(dofs)
+    , quadrature(quad)
+    , mapping(map)
+    , constraints(cstr)
     {
-        sparsity_pattern.copy_from(sp);
+        auto dsp = make_sparsity_pattern(dof_handler, constraints);
+        sparsity_pattern.copy_from(dsp);
+
+        // Assemble S (stiffness) + M_V (weighed mass)
         A0.reinit(sparsity_pattern);
+        assemble_A0(A0, V, dof_handler, *quadrature, *mapping, constraints);
+
+        // Assemble M (mass)
         M.reinit(sparsity_pattern);
-        Mpp.reinit(sparsity_pattern);
+        assemble_mass(M, dof_handler, *quadrature, *mapping, constraints);
+
+        // Assemble preconditioner
+        A.reinit(A0.get_sparsity_pattern());
+        precondition.initialize(A0);
+
+        // Sanity check / post-condition
+        has_A = true;
     }
+
+    // setup before step k
+    template <typename MppStrategy>
+    void initialize(Vector<double>& x, double beta, MppStrategy&& update_mpp)
+    {
+        if (!has_A) throw dealii::ExcNotInitialized();
+
+        // Apply constraints to incumbent solution
+        constraints.distribute(x);
+
+        // A = A_0 + beta * M_xx
+        assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
+
+        // TODO: matrix copy in every iteration - assemble A in single call, or use matrix-free operator
+        A.copy_from(A0);
+        A.add(beta, Mpp);
+    }
+
+    double value(const Vector<double>& x) const
+    {
+        return energy::function_value(x, A0, Mpp);
+    }
+
+    // TODO: general solver object
+    unsigned int
+    gradient(const Vector<double>& x, Vector<double>& dst, const GdOptions& options_) const
+    {
+        return energy::gradient(A, M, x, dst, constraints, precondition, options.solver, options.max_inner, options.tol_inner);
+    }
+
+    // Note: this writes the retraction to the base point x (x <- R_x(factor*z))
+    // TODO: support other retractions
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const
+    {
+        energy::retract_by_norm(M, z, x, factor);
+    }
+
+    const SparseMatrix<double>& get_A() const { return A; }
+
+private:
+    // Finite element parameters
+    const dealii::DoFHandler<dim>& dof_handler;
+    const dealii::AffineConstraints<double>& constraints;
+    const dealii::Quadrature<dim>& quadrature;
+    const dealii::Mapping<dim>& mapping;
+
+    // Data for discrete problem
+    SparseMatrix<double> A0, M;
+    SparseMatrix<double> Mpp;  // changes in every iteration step
+    SparsityPattern sparsity_pattern;
+
+    // Linear solver parameters
+    dealii::SparseILU<double> precondition;
+    GdOptions options;
+
+    // Temporary matrix for building A = A0 + M_pp
+    SparseMatrix<double> A;
+    bool has_A = false;
 };
 
+
+// Put it all together
 template <int dim>
 class GPE
 {
@@ -47,11 +124,10 @@ public:
     // establish relations between objects
         : grid(options.radius, options.mesh_kind == MeshKind::SIMPLEX)
         , space(grid.triangulation)
-        , system{}
     {
         // Note: assumes grid has no mixed cells (contains either quadrilaterals or simplices)
         if (grid.has_simplex) {
-            mapping    = std::make_unique<dealii::MappingFE<dim>>(dealii::FE_SimplexP<dim>(1));
+            mapping = std::make_unique<dealii::MappingFE<dim>>(dealii::FE_SimplexP<dim>(1));
             if (options.degree > 1) {
                 // add basis function corresponding to interpolation at the centroid (in 2d)
                 // -> valid nodal quadrature formula for mass lumping
@@ -76,34 +152,22 @@ public:
         space.setup_constraints(options.bc);
     }
 
-    template <typename Function>
-    void assemble(Function&& V)
-    {
-        const auto& dof_handler = space.get_dofs();
-        const auto& constraints = space.get_constraints();
-
-        system.reinit(make_sparsity_pattern(dof_handler, constraints));
-
-        // Fixed mass and stiffness matrix
-        assemble_A0  (system.A0, V, dof_handler, *quadrature, *mapping, constraints);
-        assemble_mass(system.M, dof_handler, *quadrature, *mapping, constraints);
-    }
-
     [[maybe_unused]] Vector<double>
     run(const Vector<double>& x0, double beta, GdOptions options_rgd, std::ostream& os)
     {
         const auto& dof_handler = space.get_dofs();
         const auto& constraints = space.get_constraints();
 
+        // EnergyOracle(const dealii::DoFHandler<dim>& dofs,
+        //       const dealii::Quadrature<dim>& quad,
+        //       const dealii::Mapping<dim>& map,
+        //       const dealii::AffineConstraints<double>& cstr,
+        //       Potential&& V)
+        EnergyOracle<dim> oracle(dof_handler, *quadrature, *mapping, constraints, Square<dim>{});
+
         // Compute solution on most refined (active) level
         std::cerr << "Number of cells: " << grid.triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of degrees of freedom: " << space.n_dofs() << std::endl;
-
-        // Weighed mass matrix for solution in every step
-        auto update_mpp = [this, &dof_handler, &constraints](SparseMatrix<double>& matrix, const Vector<double>& x)
-        {
-            assemble_mass_phiphi(matrix, x, dof_handler, *quadrature, *mapping, constraints);
-        };
 
         // Run gradient descent + enforce boundary conditions
         // TODO: abstraction leak `constraints`
@@ -131,14 +195,13 @@ public:
     const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
 
 private:
-    HyperCube<dim> grid;    // cells
-    FeSpace<dim>   space;   // degrees of freedom
-    LevelMatrix    system;  // linear system
+    HyperCube<dim>    grid;    // cell
+    FeSpace<dim>      space;   // degrees of freedom
 
     // Variables for simplex or quadrilateral meshes
-    std::unique_ptr<dealii::Mapping<dim>> mapping;
+    std::unique_ptr<dealii::Mapping<dim>>       mapping;
     std::unique_ptr<dealii::FiniteElement<dim>> element;
-    std::unique_ptr<dealii::Quadrature<dim>> quadrature;
+    std::unique_ptr<dealii::Quadrature<dim>>    quadrature;
 };
 
 }

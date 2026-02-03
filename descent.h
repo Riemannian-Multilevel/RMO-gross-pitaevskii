@@ -1,8 +1,5 @@
 #ifndef GPE_ENERGY_H
 #define GPE_ENERGY_H
-#ifndef M_NORM_RESIDUAL
-#define M_NORM_RESIDUAL 0
-#endif
 
 #include "lac.h"
 #include "option_types.h"
@@ -16,168 +13,41 @@ namespace gpe
 using dealii::ConvergenceTable::RateMode::reduction_rate;
 using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 
-struct GdControl
-{
-    double mass;
-    double lambda;
-    double residual;
-    double rg_norm;
-};
+// enum class SolverStatus {
+//     CONVERGED,          // iterative method, diverged for given tolerance
+//     NOT_CONVERGED,      // iterative method, converged for given tolerance
+//     SOLUTION,           // non-iterative method
+//     ERROR               // solver error
+// };
+//
+// struct SolverInfo {
+//     SolverStatus status;
+//     size_t num_iter;
+//     Vector solution;
+//     size_t elapsed_time;
+// };
+//
+// enum class SolverNorm {
+//     L1,
+//     L2,
+//     LINF,
+//     UNKNOWN
+// };
 
-
-namespace energy
-{
-// TODO: object that supplies vmult(), instead of SparseMatrix (matrix-free methods)
-inline void
-residual(GdControl& control, const Vector<double>& x,
-              const SparseMatrix<double>& A, const SparseMatrix<double>& M)
-{
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-    control.mass = x * Mx;      // should be ~ 1 (energy constraint)
-
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-    control.lambda = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
-
-    Vector<double> r(Ax);
-    r.add(-control.lambda, Mx);        // r = A x - lambda M x
-
-    if (M_NORM_RESIDUAL) {
-        Vector<double> Mr(r.size());
-        M.vmult(Mr, r);
-        control.residual = std::sqrt(r * Mr);
-    } else {
-        control.residual = r.l2_norm();
-    }
-}
-
-// TODO: object that supplies vmult(), instead of SparseMatrix (matrix-free methods)
-inline double
-function_value(const Vector<double>& x, const SparseMatrix<double>& A0,
-    const SparseMatrix<double>& Mpp)
-{
-    Vector<double> Bx(x.size());
-    A0.vmult(Bx, x);
-    Bx *= 0.5;
-
-    Vector<double> Mpp_x(x.size());
-    Mpp.vmult(Mpp_x, x);
-
-    Bx.add(0.25, Mpp_x);
-    return x * Bx;
-}
-
-// case x != v
-inline void
-project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
-    const SparseMatrix<double>& M, const Vector<double>& v, Vector<double>& output)
-{
-    AssertDimension(x.size(), v.size());
-    AssertDimension(x.size(), Ainv_Mx.size());
-
-    Vector<double> My(x.size());
-    M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
-
-    double denom = x * My;
-    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
-
-    Vector<double> Mv(v.size());
-    M.vmult(Mv, v);
-    double nom = x*Mv;
-
-    output = v;
-    output.add(-nom / denom, Ainv_Mx);
-}
-
-// case x == v
-inline void
-project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
-    const SparseMatrix<double>& M, Vector<double>& output)
-{
-    AssertDimension(x.size(), Ainv_Mx.size());
-
-    Vector<double> My(x.size());
-    M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
-
-    double denom = x * My;
-    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
-
-    output = x;
-    output.add(-1.0/denom, Ainv_Mx);
-}
-
-// Riemannian gradient in S^{n-1} with energy metric
-template <typename PreconditionType>
-void gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M,
-              const Vector<double>& x, Vector<double>& output,
-              const GdOptions& options, const dealii::AffineConstraints<double>& constraints,
-              const PreconditionType& precondition, unsigned int& last_step)
-{
-    // y <- A^{-1} Mx
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-
-    Vector<double> y(x.size());
-    auto solve_control = solve_sparse(A, Mx, y, options.solver,
-        precondition, options.max_inner, options.tol_inner);
-    last_step = solve_control.last_step();
-
-    // Apply boundary condition
-    constraints.distribute(y);
-
-    project_onto_tangent_space(y, x, M, output); // \Pi_x(x): R^n -> T_x S^{n-1}
-}
-
-// Retraction by normalization
-inline void
-retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& g,
-    Vector<double>& x, double step_size)
-{
-    // x <- x - h g
-    x.add(-step_size, g);
-
-    // x <- x / ||x||_M
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-    x /= std::sqrt(x * Mx);
-}
-
-} // namespace energy
-
-// TODO: gradient norm termination (when gradient is computed)
-inline bool
-terminate_iteration(const GdControl& ctrl, const GdControl& ctrl_prev,
-    const double tol_lambda, const double tol_residual)
-{
-    // Check criteria
-    const double lmb_diff   = std::abs(ctrl.lambda - ctrl_prev.lambda);
-    const double lmb_factor = 1.0 + std::abs(ctrl.lambda);  // avoid numerical issues near lmb ~ 0
-
-    if (lmb_diff < tol_lambda * lmb_factor && ctrl.residual < tol_residual) {
-        return true;
-    }
-    return false;
-}
+// TODO: Armijo line search (cf. fcvx/descent.h)
 
 //! Riemannian gradient descent for the GPE energy minimization
 //! @tparam dim Problem dimension
-//! @param A_0 Sum of (potential) weighed mass matrix and stiffness matrix
-//! @param M Mass matrix
-//! @param Mpp Weighed mass matrix, updated in every iteration step
+//! @param O Oracle for function value and (Riemannian) gradient
 //! @param x0 Starting value
 //! @param beta Non-linearity factor for GPE
-//! @param constraints Object for applying FE constraints to the solution
-//! @param update_mpp
 //! @param options Termination criteria
 //! @param os Output stream for diagnostics
 //! @return
-template <int dim, typename Function>
+template <int dim, typename Oracle>
 Vector<double>
-gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, SparseMatrix<double>& Mpp,
-              Function&& update_mpp, const Vector<double>& x0, double beta,
-              const dealii::AffineConstraints<double>& constraints,
-              const GdOptions& options, std::ostream& os)
+gradient_descent(Oracle&& O, const Vector<double>& x0, double beta,
+                 const GdOptions& options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
     Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
@@ -203,6 +73,8 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
     precondition.initialize(A_0);
 
     for (iter = 0; iter < options.max_iter; iter++) {
+        // --- prepare gradient
+
         // Apply constraints to incumbent solution
         // TODO: merge to update_mpp (or separate object)
         constraints.distribute(x);
@@ -213,7 +85,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         update_mpp(Mpp, x);
         A.add(beta, Mpp);
 
-        // Termination criteria
+        // --- compute termination criteria
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
         ctrl_prev = ctrl;
@@ -227,6 +99,7 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
         convergence_table.add_value("residual", ctrl.residual);
         convergence_table.add_value("energy", energy::function_value(x, A_0, Mpp));
 
+        // --- riemannian gradient descent
         if (break_on_next) {
             break;
         }
@@ -237,11 +110,11 @@ gp_energy_rgd(const SparseMatrix<double>& A_0, const SparseMatrix<double>& M, Sp
             continue;
         }
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
-        // TODO: variable function with gradient() / value() / update() methods
-        energy::gradient(A, M, x, g, options, constraints, precondition, lac_iter);
+        // TODO: Riemannian function with gradient() / retract() / value() / residual() / init() / control() methods
+        energy::gradient(A, M, x, g, constraints, precondition, TODO, TODO, TODO);
 
         // Retraction: x <- (x - h g) / ||x - h g||_M
-        energy::retract_by_norm(M, g, x, options.step_size);
+        energy::retract_by_norm(M, g, x, -options.step_size);
     }
     std::cerr << std::endl << std::endl;
     convergence_table.set_precision("mass", 4);
