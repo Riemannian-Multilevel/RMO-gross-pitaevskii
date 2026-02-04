@@ -85,6 +85,7 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
 }
 
 // Riemannian gradient in S^{n-1} with energy metric
+// TODO: A = A0 + Mpp, use vmult() + vmult() instead of matrix copy
 template <typename PreconditionType>
 unsigned gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M,
                   const Vector<double>& x, Vector<double>& output,
@@ -112,7 +113,7 @@ unsigned gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M,
 }
 
 // Retraction by normalization, with base point x and argument z
-// TODO: version with output argument?
+// Note: this overwrites the vector x
 inline void
 retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& z,
                 Vector<double>& x, const double factor)
@@ -128,70 +129,55 @@ retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& z,
 
 // TODO: add other retractions (orthographic, exponential)
 inline void
-retract_by_ortho(const SparseMatrix<double>& M, const Vector<double>& z,
-                 Vector<double>& x, const double factor)
+retract_by_ortho(const SparseMatrix<double>&, const Vector<double>&,
+                 Vector<double>&, const double)
 {
     throw dealii::ExcNotImplemented();
 }
 
 inline void
-retract_by_exp(const SparseMatrix<double>& M, const Vector<double>& z,
-               Vector<double>& x, const double factor)
+retract_by_exp(const SparseMatrix<double>&, const Vector<double>&,
+               Vector<double>&, const double)
 {
     throw dealii::ExcNotImplemented();
 }
 
 // Termination criteria for energy function minimization
-struct IterationValues
+// TODO: make this generic?
+struct Property
 {
     double mass{0};
     double lambda{0};
     double residual{0};
 };
 
-// TODO: gradient norm termination (for computed gradient)
-struct Iteration
+inline Property
+residual(const Vector<double>& x, const SparseMatrix<double>& A, const SparseMatrix<double>& M)
 {
-    IterationValues vals, vals_prev;
+    Property prop;
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+    prop.mass = x * Mx;      // should be ~ 1 (energy constraint)
 
-    bool check_termination(double tol_lambda, double tol_residual)
-    {
-        const double lmb_diff   = std::abs(vals.lambda - vals_prev.lambda);
-        const double lmb_factor = 1.0 + std::abs(vals.lambda);  // avoid numerical issues near lmb ~ 0
+    Vector<double> Ax(x.size());
+    A.vmult(Ax, x);
+    prop.lambda = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
 
-        if (lmb_diff < tol_lambda * lmb_factor && vals.residual < tol_residual) {
-            return true;
-        }
-        return false;
+    Vector<double> r(Ax);
+    r.add(-prop.lambda, Mx);        // r = A x - lambda M x
+
+    // TODO: use enum for setting norm at runtime
+    prop.residual = 0.0;
+
+    if (M_NORM_RESIDUAL) {
+        Vector<double> Mr(r.size());
+        M.vmult(Mr, r);
+        prop.residual = std::sqrt(r * Mr);
+    } else {
+        prop.residual = r.l2_norm();
     }
-
-    // TODO: object that supplies vmult(), instead of SparseMatrix (matrix-free methods)
-    void update(const Vector<double>& x, const SparseMatrix<double>& A, const SparseMatrix<double>& M)
-    {
-        vals_prev = vals;        // save previous values
-        Vector<double> Mx(x.size());
-        M.vmult(Mx, x);
-        vals.mass = x * Mx;      // should be ~ 1 (energy constraint)
-
-        Vector<double> Ax(x.size());
-        A.vmult(Ax, x);
-        vals.lambda = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
-
-        Vector<double> r(Ax);
-        r.add(-vals.lambda, Mx);        // r = A x - lambda M x
-
-        // TODO: use enum for setting norm at runtime
-        vals.residual = 0.0;
-
-        if (M_NORM_RESIDUAL) {
-            Vector<double> Mr(r.size());
-            M.vmult(Mr, r);
-            vals.residual = std::sqrt(r * Mr);
-        } else {
-            vals.residual = r.l2_norm();
-        }
-    }
-};
+    return prop;
+}
 
 } // namespace energy
 

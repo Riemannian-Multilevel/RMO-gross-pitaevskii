@@ -23,9 +23,9 @@ using dealii::Vector;
 using dealii::Point;
 
 // TODO: return SolverInfo (converged/did_not_converge/error)
-template <typename PreconditionerType>
+template <typename MatrixType, typename PreconditionerType>
 [[maybe_unused]] dealii::SolverControl
-solve_sparse(const SparseMatrix<double>& system_matrix, const Vector<double>& system_rhs,
+solve_sparse(const MatrixType& system_matrix, const Vector<double>& system_rhs,
     Vector<double>& solution, const SolverMethod method = SolverMethod::GMRES,
     const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
     const unsigned max_iter = 1000, const double reltol = 1e-6)

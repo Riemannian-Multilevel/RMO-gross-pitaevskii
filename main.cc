@@ -16,8 +16,7 @@ template <int dim, typename Solver>
 void package(Solver& GS, const double beta, const GdOptions& options_rgd, unsigned int level)
 {
     // Run gradient descent
-    GS.assemble(Square<dim>());
-    auto x = GS.run(1.0, beta, options_rgd, std::cout);
+    auto x = GS.run(Square<dim>(), 1.0, beta, options_rgd, std::cout);
 
     // Plot solution
     output_results(x, GS.fe_space().get_dofs(), DataOutBase::OutputFormat::vtk,

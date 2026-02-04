@@ -44,7 +44,7 @@ using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 //! @param options Termination criteria
 //! @param os Output stream for diagnostics
 //! @return
-template <int dim, typename Oracle>
+template <typename Oracle>
 Vector<double>
 gradient_descent(Oracle&& O, const Vector<double>& x0, double beta,
                  const GdOptions& options, std::ostream& os)
@@ -53,10 +53,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, double beta,
     Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
 
     Vector x(x0);
-    GdControl ctrl{}, ctrl_prev{};
     dealii::ConvergenceTable convergence_table;
-    SparseMatrix<double> A;
-    A.reinit(A_0.get_sparsity_pattern());
 
     bool break_on_next = false;
     unsigned int iter;
@@ -67,54 +64,39 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, double beta,
     // Begin RGD iteration
     Vector<double> g(x.size());
 
-    // Set up ILU preconditioner
-    // TODO: select other preconditioner types from command-line (Jacobi, SSOR on A, AMG)
-    dealii::SparseILU<double> precondition;
-    precondition.initialize(A_0);
-
     for (iter = 0; iter < options.max_iter; iter++) {
-        // --- prepare gradient
+        // Apply constraints and assemble iteration matrices
+        O.initialize(x, beta);
 
-        // Apply constraints to incumbent solution
-        // TODO: merge to update_mpp (or separate object)
-        constraints.distribute(x);
-
-        // A = A_0 + beta * M_xx
-        // TODO: matrix copy in every iteration - assemble A in single call, or use matrix-free operator
-        A.copy_from(A_0);
-        update_mpp(Mpp, x);
-        A.add(beta, Mpp);
-
-        // --- compute termination criteria
+        // Compute termination criteria
+        auto ctrl = O.residual();
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
-        ctrl_prev = ctrl;
-        energy::residual(ctrl, x, A, M);
 
-        // Values for previous iteration (including starting step)
+        // TODO: generalize to oracle method (different objectives have different properties)
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", lac_iter);
         convergence_table.add_value("mass", ctrl.mass);
         convergence_table.add_value("lambda", ctrl.lambda);
         convergence_table.add_value("residual", ctrl.residual);
-        convergence_table.add_value("energy", energy::function_value(x, A_0, Mpp));
+        convergence_table.add_value("energy", O.value(x));
 
         // --- riemannian gradient descent
         if (break_on_next) {
             break;
         }
-        if (terminate_iteration(ctrl, ctrl_prev, options.tol_lambda,  options.tol_residual)) {
+        if (O.is_optimal(options)) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break_on_next = true;
             continue;
         }
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
-        // TODO: Riemannian function with gradient() / retract() / value() / residual() / init() / control() methods
-        energy::gradient(A, M, x, g, constraints, precondition, TODO, TODO, TODO);
+        // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
+        lac_iter = O.gradient(x, g, options);
 
         // Retraction: x <- (x - h g) / ||x - h g||_M
-        energy::retract_by_norm(M, g, x, -options.step_size);
+        O.retract(g, x, -options.step_size);
     }
     std::cerr << std::endl << std::endl;
     convergence_table.set_precision("mass", 4);

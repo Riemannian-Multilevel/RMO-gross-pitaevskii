@@ -52,7 +52,7 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     // Generic lambda: works for active-cell range and mg-level range
     auto assemble_over_cells = [&](const auto &cell_range)
     {
-        for (const auto &cell : dof_handler.active_cell_iterators())  // cell is a DoFHandler<dim>::(active|level)_cell_iterator
+        for (const auto &cell : cell_range)  // cell is a DoFHandler<dim>::(active|level)_cell_iterator
         {
             fe_values.reinit(cell); // convertible to Triangulation::cell_iterator
             cell_matrix = 0;

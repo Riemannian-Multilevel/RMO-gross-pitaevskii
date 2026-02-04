@@ -20,6 +20,7 @@
 namespace gpe
 {
 
+// TODO: common base class (virtual? constructor: `using Oracle::Oracle`)
 template <int dim>
 class EnergyOracle
 {
@@ -41,26 +42,21 @@ public:
 
         // Assemble S (stiffness) + M_V (weighed mass)
         A0.reinit(sparsity_pattern);
-        assemble_A0(A0, V, dof_handler, *quadrature, *mapping, constraints);
+        assemble_A0(A0, V, dof_handler, quadrature, mapping, constraints);
 
         // Assemble M (mass)
         M.reinit(sparsity_pattern);
-        assemble_mass(M, dof_handler, *quadrature, *mapping, constraints);
+        assemble_mass(M, dof_handler, quadrature, mapping, constraints);
 
         // Assemble preconditioner
-        A.reinit(A0.get_sparsity_pattern());
+        Mpp.reinit(sparsity_pattern);
+        A.reinit(sparsity_pattern);
         precondition.initialize(A0);
-
-        // Sanity check / post-condition
-        has_A = true;
     }
 
     // setup before step k
-    template <typename MppStrategy>
-    void initialize(Vector<double>& x, double beta, MppStrategy&& update_mpp)
+    void initialize(Vector<double>& x, double beta)
     {
-        if (!has_A) throw dealii::ExcNotInitialized();
-
         // Apply constraints to incumbent solution
         constraints.distribute(x);
 
@@ -70,6 +66,10 @@ public:
         // TODO: matrix copy in every iteration - assemble A in single call, or use matrix-free operator
         A.copy_from(A0);
         A.add(beta, Mpp);
+
+        // Compute residuals for current iteration
+        iter_prev = iter;
+        iter = energy::residual(x, A, M);
     }
 
     double value(const Vector<double>& x) const
@@ -77,18 +77,37 @@ public:
         return energy::function_value(x, A0, Mpp);
     }
 
-    // TODO: general solver object
+    // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
     unsigned int
-    gradient(const Vector<double>& x, Vector<double>& dst, const GdOptions& options_) const
+    gradient(const Vector<double>& x, Vector<double>& dst,
+             const GdOptions& options) const
     {
-        return energy::gradient(A, M, x, dst, constraints, precondition, options.solver, options.max_inner, options.tol_inner);
+        return energy::gradient(A, M, x, dst, constraints, precondition,
+            options.solver, options.max_inner, options.tol_inner);
     }
 
     // Note: this writes the retraction to the base point x (x <- R_x(factor*z))
-    // TODO: support other retractions
+    // TODO: support other retractions (enum class)
     void retract(const Vector<double>& z, Vector<double>& x, double factor) const
     {
         energy::retract_by_norm(M, z, x, factor);
+    }
+
+    energy::Property residual() const
+    {
+        return iter;
+    }
+
+    // TODO: forwarding of options (AdditionalData)
+    bool is_optimal(const GdOptions& options)
+    {
+        const double lmb_diff   = std::abs(iter.lambda - iter_prev.lambda);
+        const double lmb_factor = 1.0 + std::abs(iter.lambda);  // avoid numerical issues near lmb ~ 0
+
+        if (lmb_diff < options.tol_lambda * lmb_factor && iter.residual < options.tol_residual) {
+            return true;
+        }
+        return false;
     }
 
     const SparseMatrix<double>& get_A() const { return A; }
@@ -96,9 +115,9 @@ public:
 private:
     // Finite element parameters
     const dealii::DoFHandler<dim>& dof_handler;
-    const dealii::AffineConstraints<double>& constraints;
     const dealii::Quadrature<dim>& quadrature;
     const dealii::Mapping<dim>& mapping;
+    const dealii::AffineConstraints<double>& constraints;
 
     // Data for discrete problem
     SparseMatrix<double> A0, M;
@@ -107,11 +126,13 @@ private:
 
     // Linear solver parameters
     dealii::SparseILU<double> precondition;
-    GdOptions options;
 
     // Temporary matrix for building A = A0 + M_pp
     SparseMatrix<double> A;
-    bool has_A = false;
+    bool has_AM = false;
+
+    // Information on last iteration
+    energy::Property iter, iter_prev;
 };
 
 
@@ -127,7 +148,11 @@ public:
     {
         // Note: assumes grid has no mixed cells (contains either quadrilaterals or simplices)
         if (grid.has_simplex) {
-            mapping = std::make_unique<dealii::MappingFE<dim>>(dealii::FE_SimplexP<dim>(1));
+            // MappingFE stores a reference to an FE_SimplexP object, which lifetime must
+            // match the lifetime of the mapping object
+            mapping_fe = std::make_unique<dealii::FE_SimplexP<dim>>(1);
+            mapping    = std::make_unique<dealii::MappingFE<dim>>(*mapping_fe);
+
             if (options.degree > 1) {
                 // add basis function corresponding to interpolation at the centroid (in 2d)
                 // -> valid nodal quadrature formula for mass lumping
@@ -140,6 +165,7 @@ public:
             quadrature = std::make_unique<dealii::QGaussSimplex<dim>>(options.degree + 1);
         }
         else {
+            mapping_fe = nullptr;
             mapping    = std::make_unique<dealii::MappingQ1<dim>>();
             element    = std::make_unique<dealii::FE_Q<dim>>(options.degree);
             quadrature = std::make_unique<dealii::QGauss<dim>>(options.degree + 1);
@@ -152,18 +178,14 @@ public:
         space.setup_constraints(options.bc);
     }
 
+    template <typename Potential>
     [[maybe_unused]] Vector<double>
-    run(const Vector<double>& x0, double beta, GdOptions options_rgd, std::ostream& os)
+    run(Potential&& V, const Vector<double>& x0, double beta, GdOptions options_rgd, std::ostream& os)
     {
         const auto& dof_handler = space.get_dofs();
         const auto& constraints = space.get_constraints();
-
-        // EnergyOracle(const dealii::DoFHandler<dim>& dofs,
-        //       const dealii::Quadrature<dim>& quad,
-        //       const dealii::Mapping<dim>& map,
-        //       const dealii::AffineConstraints<double>& cstr,
-        //       Potential&& V)
-        EnergyOracle<dim> oracle(dof_handler, *quadrature, *mapping, constraints, Square<dim>{});
+        // Assemble matrices M, A0 = M_V + S
+        EnergyOracle<dim> oracle(dof_handler, *quadrature, *mapping, constraints, V);
 
         // Compute solution on most refined (active) level
         std::cerr << "Number of cells: " << grid.triangulation.n_active_cells() << std::endl;
@@ -171,20 +193,20 @@ public:
 
         // Run gradient descent + enforce boundary conditions
         // TODO: abstraction leak `constraints`
-        Vector<double> x = gp_energy_rgd<dim>(system.A0, system.M, system.Mpp, update_mpp,
-            x0, beta, constraints, options_rgd, os);
+        Vector<double> x = gradient_descent(oracle, x0, beta, options_rgd, os);
         return x;
     }
 
     // Iteration with constant starting value
+    template <typename Potential>
     [[maybe_unused]] Vector<double>
-    run(const double x0d, double beta, GdOptions options_rgd, std::ostream& os)
+    run(Potential&& V, const double x0d, double beta, GdOptions options_rgd, std::ostream& os)
     {
         // Define starting value
         Vector<double> x0(space.n_dofs());
         x0 = x0d;
 
-        Vector<double> x = run(x0, beta, options_rgd, os);
+        Vector<double> x = run(V, x0, beta, options_rgd, os);
         return x;
     }
 
@@ -199,6 +221,7 @@ private:
     FeSpace<dim>      space;   // degrees of freedom
 
     // Variables for simplex or quadrilateral meshes
+    std::unique_ptr<dealii::FiniteElement<dim>> mapping_fe;
     std::unique_ptr<dealii::Mapping<dim>>       mapping;
     std::unique_ptr<dealii::FiniteElement<dim>> element;
     std::unique_ptr<dealii::Quadrature<dim>>    quadrature;
