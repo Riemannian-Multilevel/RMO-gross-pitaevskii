@@ -113,32 +113,96 @@ gradient(const MatrixType& A, const MatrixType& M,
 
 // Retraction by normalization, with base point x and argument z
 // Note: this overwrites the vector x
+// The factor argument is an optimization for gradient descent (FMA operation)
 template <typename MatrixType>
-void retract_by_norm(const MatrixType& M, const Vector<double>& z,
-                     Vector<double>& x, const double factor)
+void retract_by_norm(const MatrixType& M, const Vector<double>& z, Vector<double>& x,
+                     const double factor = 1.0)
 {
-    // x <- x + h z
-    x.add(factor, z);
+    AssertThrow(factor != 0.0, dealii::ExcMessage("factor must be nonzero"));
+    x.add(factor, z);           // x' <- x + h z
 
-    // x <- x / ||x||_M
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
-    x /= std::sqrt(x * Mx);
+    x /= std::sqrt(x * Mx);     // x' <- x' / ||x'||_M
 }
 
-// TODO: add other retractions (orthographic, exponential)
+// Inverse retraction / lift by normalization, S -> TS
+// Note: this overwrites the vector v
 template <typename MatrixType>
-void retract_by_ortho(const MatrixType&, const Vector<double>&,
-                      Vector<double>&, const double)
+void inverse_by_norm(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
 {
-    throw dealii::ExcNotImplemented();
+    Vector<double> Mv(v.size());
+    M.vmult(Mv, v);
+
+    const double xMv = x*Mv;
+    AssertThrow(xMv > 0, dealii::ExcInternalError("x'Mv must be nonzero"));
+
+    v /= xMv;
+    v.add(-1.0, x);
 }
 
 template <typename MatrixType>
-void retract_by_exp(const MatrixType&, const Vector<double>&,
-                    Vector<double>&, const double)
+void retract_by_ortho(const MatrixType& M, const Vector<double>& z,
+                      Vector<double>& x, const double factor = 1.0)
 {
-    throw dealii::ExcNotImplemented();
+    AssertThrow(factor != 0.0, dealii::ExcMessage("factor must be non-zero"));
+    Vector<double> Mz(x.size());
+    M.vmult(Mz, z);
+
+    double zMz = z*Mz;
+    zMz *= factor;
+    zMz *= factor;  // (hz) * M(hZ) = h^2 zMz
+    AssertThrow(zMz < 1.0, ExcInternalError("z'Mz required < 1"));
+
+    x *= std::sqrt(1-zMz);
+    x.add(factor, z);
+}
+
+template <typename MatrixType>
+void inverse_by_ortho(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
+{
+    Vector<double> Mv(v.size());
+    M.vmult(Mv, v);
+
+    double xMv = x*Mv;
+    v.add(-xMv, x);
+}
+
+// Exponential map
+template <typename MatrixType>
+void retract_by_exp(const MatrixType& M, const Vector<double>& z, Vector<double>& x,
+                    const double factor = 1.0)
+{
+    AssertThrow(factor != 0.0, dealii::ExcMessage("factor must be non-zero"));
+    Vector<double> Mz(x.size());
+    M.vmult(Mz, z);
+
+    double zMz = z*Mz;
+    double z_Mnorm = std::sqrt(zMz);
+    AssertThrow(z_Mnorm > 0.0, dealii::ExcInternalError("|z|_M must be positive"));
+
+    //                  |hz|_M  =  h |z|_M
+    //             hz / |hz|_M  =  z / |z|_M
+    // sin(|hz|_M) hz / |hz|_M  =  sin(h|z|_M) z / |z|_M
+    x *= std::cos(factor*z_Mnorm);
+    x.add(std::sin(factor*z_Mnorm) / z_Mnorm, z);
+}
+
+// Logarithmic map
+template <typename MatrixType>
+void inverse_by_exp(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
+{
+    Vector<double> Mv(v.size());
+    M.vmult(Mv, v);
+
+    double xMv = x*Mv;
+    v.add(-xMv, x);
+
+    double nom   = std::acos(xMv);
+    double denom = std::sin(nom);
+
+    AssertThrow(denom != 0, dealii::ExcInternalError("sin(arccos(x' M v)) must be non-zero"));
+    v *= (nom/denom);
 }
 
 // Termination criteria for energy function minimization

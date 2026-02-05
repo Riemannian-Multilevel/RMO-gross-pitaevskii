@@ -127,10 +127,12 @@ public:
     }
 
     // Note: this writes the retraction to the base point x (x <- R_x(factor*z))
-    // TODO: support other retractions (enum class)
+    // TODO: retractions at run-time (enum class)
     void retract(const Vector<double>& z, Vector<double>& x, double factor) const
     {
         energy::retract_by_norm(GP.get_M(), z, x, factor);
+        //energy::retract_by_ortho(GP.get_M(), z, x, factor);
+        //energy::retract_by_exp(GP.get_M(), z, x, factor);
     }
 
     energy::Property residual() const
