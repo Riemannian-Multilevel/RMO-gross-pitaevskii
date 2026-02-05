@@ -105,10 +105,6 @@ gradient(const MatrixType& A, const MatrixType& M,
     auto solve_control = solve_sparse(A, Mx, y, solver,
         precondition, max_inner, tol_inner);
 
-    // Apply boundary condition
-    // TODO: move to call site
-    //constraints.distribute(y);
-
     // \Pi_x(x): R^n -> T_x S^{n-1}
     project_onto_tangent_space(y, x, M, output);
 

@@ -85,9 +85,10 @@ public:
 
     // setup before step 1 (discretization)
     EnergyOracle(GrossPitaevskiiProblem<dim>& GP_, double beta_)
-        : GP(GP_), beta(beta_)
+        : GP(GP_), beta(beta_)  // parameter beta stored for residual computations
     {
         // Set up sparse ILU for linear term
+        // TODO: this decreases in effectiveness as beta increases
         precondition.initialize(GP.get_A0());
         const Vector<double> prototype(GP.get_A0().m());
 
@@ -120,6 +121,7 @@ public:
     // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
     unsigned gradient(const Vector<double>& x, Vector<double>& output, const GdOptions& options) const
     {
+        // parameter beta is implicitly included with linear operator `Aop`
         return energy::gradient(Aop, Mop, x, output, precondition,
             options.solver, options.max_inner, options.tol_inner);
     }
