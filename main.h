@@ -81,7 +81,8 @@ template <int dim>
 class EnergyOracle
 {
 public:
-    using OperatorType = LinearCombinationMatrix<SparseMatrix<double>, Vector<double>>;
+    using OperatorType  = LinearCombinationMatrix<SparseMatrix<double>, Vector<double>>;
+    using InverseOpType = InverseMatrix<OperatorType, Vector<double>,dealii::SparseILU<double>>;
 
     // setup before step 1 (discretization)
     EnergyOracle(GrossPitaevskiiProblem<dim>& GP_, double beta_)
@@ -89,7 +90,7 @@ public:
     {
         // Set up sparse ILU for linear term
         // TODO: this decreases in effectiveness as beta increases
-        precondition.initialize(GP.get_A0());
+        precond.initialize(GP.get_A0());
         const Vector<double> prototype(GP.get_A0().m());
 
         // Set up the linear operator A = A0 + beta * Mpp
@@ -122,8 +123,10 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output, const GdOptions& options) const
     {
         // parameter beta is implicitly included with linear operator `Aop`
-        return energy::gradient(Aop, Mop, x, output, precondition,
-            options.solver, options.max_inner, options.tol_inner);
+        InverseOpType Aop_inv(Aop, options.solver, precond, options.max_iter, options.tol_inner);
+
+        energy::gradient(Aop_inv, Mop, x, output);
+        return Aop_inv.control().last_step();
     }
 
     // Note: this writes the retraction to the base point x (x <- R_x(factor*z))
@@ -155,7 +158,7 @@ public:
 private:
     GrossPitaevskiiProblem<dim>& GP;
     double beta;
-    dealii::SparseILU<double> precondition;
+    dealii::SparseILU<double> precond;
 
     // Linear combinations for gradient descent / matrix inversion
     // This type contains weights and references to stored matrices.

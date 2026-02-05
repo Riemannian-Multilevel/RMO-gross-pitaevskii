@@ -86,15 +86,8 @@ void project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<doub
 }
 
 // Riemannian gradient in S^{n-1} with energy metric
-// TODO: use linear operator representing A^-1 (M), instead of exposing
-//       inner solve parameters in the gradient function
-template <typename MatrixType, typename PreconditionType>
-[[maybe_unused]] unsigned int
-gradient(const MatrixType& A, const MatrixType& M,
-         const Vector<double>& x,
-         Vector<double>& output,
-         const PreconditionType& precondition,
-         SolverMethod solver, unsigned int max_inner, double tol_inner)
+template <typename MatrixType, typename InverseMatrixType>
+void gradient(const InverseMatrixType& Ainv, const MatrixType& M, const Vector<double>& x, Vector<double>& output)
 {
     // y <- A^{-1} Mx
     Vector<double> Mx(x.size());
@@ -102,13 +95,10 @@ gradient(const MatrixType& A, const MatrixType& M,
 
     // inner solve (linear system)
     Vector<double> y(x.size());
-    auto solve_control = solve_sparse(A, Mx, y, solver,
-        precondition, max_inner, tol_inner);
+    Ainv.vmult(y, Mx);
 
     // \Pi_x(x): R^n -> T_x S^{n-1}
     project_onto_tangent_space(y, x, M, output);
-
-    return solve_control.last_step();
 }
 
 // Retraction by normalization, with base point x and argument z

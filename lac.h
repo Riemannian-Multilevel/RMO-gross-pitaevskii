@@ -112,44 +112,52 @@ private:
 
 
 // Represents the operation x = M^-1 * b
-// TODO: use in gpe::gradient_descent()
-template <typename VectorType, typename MatrixType, typename PreconditionerType>
+// TODO: compare step-22 for relative tolerances
+template <typename MatrixType, typename VectorType, typename PreconditionerType>
 class InverseMatrix
 {
 public:
     InverseMatrix(const MatrixType& matrix_,
-                  const PreconditionerType& precond_,
                   const SolverMethod method_,
-                  SolverControl &control_)
+                  const PreconditionerType& precond_ = dealii::PreconditionIdentity(),
+                  const unsigned max_iter_ = 1000,
+                  const double reltol_ = 1e-6)
         : matrix(matrix_)
         , precond(precond_)
         , method(method_)
-        , control(control_)
+        , max_iter(max_iter_)
+        , reltol(reltol_)
+        , ctrl(max_iter, SOLVER_MIN_TOL)
     {}
 
-    // This is the magic: "Multiplying" by the inverse is "Solving" the system
-    void vmult(VectorType &dst, const VectorType &src) const
+    // "Multiplying" by the inverse is "solving" the system
+    void vmult(VectorType &dst, const VectorType &rhs) const
     {
         // Reset entries of destination vector
         dst = 0.0;
+        // TODO: use M-norm for tolerance?
+        const double rhs_norm = rhs.l2_norm();
+        // Avoid zero tolerance
+        const double tol = std::max(reltol * rhs_norm, SOLVER_MIN_TOL);
+        ctrl = SolverControl(max_iter, tol);
 
         switch (method) {
             case SolverMethod::GMRES:
                 {
-                    dealii::SolverGMRES solver(control);
-                    solver.solve(matrix, dst, src, precond);
+                    dealii::SolverGMRES solver(ctrl);
+                    solver.solve(matrix, dst, rhs, precond);
                 }
                 break;
             case SolverMethod::MINRES:
                 {
-                    dealii::SolverMinRes solver(control);
-                    solver.solve(matrix, dst, src, precond);
+                    dealii::SolverMinRes solver(ctrl);
+                    solver.solve(matrix, dst, rhs, precond);
                 }
                 break;
             case SolverMethod::CG:
                 {
-                    dealii::SolverCG solver(control);
-                    solver.solve(matrix, dst, src, precond);
+                    dealii::SolverCG solver(ctrl);
+                    solver.solve(matrix, dst, rhs, precond);
                 }
                 break;
             default:
@@ -157,56 +165,18 @@ public:
         }
     }
 
+    const SolverControl& control() const { return ctrl; }
+
 private:
     const MatrixType &matrix;
     const PreconditionerType &precond;
+
     const SolverMethod method;
-    SolverControl &control;
+    unsigned max_iter;
+    double reltol;
+    // Note: use thread-local storage for this class
+    mutable SolverControl ctrl;  // for const vmult()
 };
-
-
-// TODO: replace usages with InverseMatrix and remove this (SolverControl at call site)
-template <typename MatrixType, typename PreconditionerType>
-[[maybe_unused]] dealii::SolverControl
-solve_sparse(const MatrixType& system_matrix,
-             const Vector<double>& system_rhs,
-             Vector<double>& solution,
-             const SolverMethod method = SolverMethod::GMRES,
-             const PreconditionerType& preconditioner = dealii::PreconditionIdentity(),
-             const unsigned max_iter = 1000,
-             const double reltol = 1e-6)
-{
-    solution = 0.0;
-    // TODO: use M-norm for tolerance?
-    const double rhs_norm = system_rhs.l2_norm();
-    // Avoid zero tolerance
-    const double tol = std::max(reltol * rhs_norm, SOLVER_MIN_TOL);
-    dealii::SolverControl solver_control(max_iter, tol);
-
-    switch (method) {
-    case SolverMethod::GMRES:
-        {
-            dealii::SolverGMRES solver(solver_control);
-            solver.solve(system_matrix, solution, system_rhs, preconditioner);
-        }
-        break;
-    case SolverMethod::MINRES:
-        {
-            dealii::SolverMinRes solver(solver_control);
-            solver.solve(system_matrix, solution, system_rhs, preconditioner);
-        }
-        break;
-    case SolverMethod::CG:
-        {
-            dealii::SolverCG solver(solver_control);
-            solver.solve(system_matrix, solution, system_rhs, preconditioner);
-        }
-        break;
-    default:
-        throw std::invalid_argument("Unknown SolverMethod");
-    }
-    return solver_control;
-}
 
 } // namespace gpe
 
