@@ -46,7 +46,7 @@ using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 //! @return
 template <typename Oracle>
 Vector<double>
-gradient_descent(Oracle&& O, const Vector<double>& x0, double beta,
+gradient_descent(Oracle&& O, const Vector<double>& x0,
                  const GdOptions& options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
@@ -66,7 +66,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, double beta,
 
     for (iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints and assemble iteration matrices
-        O.initialize(x, beta);
+        O.initialize(x);
 
         // Compute termination criteria
         auto ctrl = O.residual();

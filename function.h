@@ -29,10 +29,9 @@ public:
 namespace energy
 {
 
-// TODO: object that supplies vmult(), instead of SparseMatrix (matrix-free methods)
-inline double
-function_value(const Vector<double>& x, const SparseMatrix<double>& A0,
-               const SparseMatrix<double>& Mpp)
+// MatrixType can be any object providing vmult() (TODO: requires?)
+template <typename MatrixType>
+double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp)
 {
     Vector<double> Bx(x.size());
     A0.vmult(Bx, x);
@@ -46,9 +45,10 @@ function_value(const Vector<double>& x, const SparseMatrix<double>& A0,
 }
 
 // case x != v
-inline void
-project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
-    const SparseMatrix<double>& M, const Vector<double>& v, Vector<double>& output)
+template <typename MatrixType>
+void project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
+                                const MatrixType& M, const Vector<double>& v,
+                                Vector<double>& output)
 {
     AssertDimension(x.size(), v.size());
     AssertDimension(x.size(), Ainv_Mx.size());
@@ -68,9 +68,10 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
 }
 
 // case x == v
-inline void
-project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
-    const SparseMatrix<double>& M, Vector<double>& output)
+template <typename MatrixType>
+void project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& x,
+                                const MatrixType& M,
+                                Vector<double>& output)
 {
     AssertDimension(x.size(), Ainv_Mx.size());
 
@@ -85,13 +86,16 @@ project_onto_tangent_space(const Vector<double>& Ainv_Mx, const Vector<double>& 
 }
 
 // Riemannian gradient in S^{n-1} with energy metric
-// TODO: A = A0 + Mpp, use vmult() + vmult() instead of matrix copy
-template <typename PreconditionType>
-unsigned gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M,
-                  const Vector<double>& x, Vector<double>& output,
-                  const dealii::AffineConstraints<double>& constraints,
-                  const PreconditionType& precondition,
-                  SolverMethod solver, unsigned int max_inner, double tol_inner)
+// TODO: use linear operator representing A^-1 (M), instead of exposing
+//       inner solve parameters in the gradient function
+template <typename MatrixType, typename PreconditionType>
+[[maybe_unused]] unsigned int
+gradient(const MatrixType& A, const MatrixType& M,
+         const Vector<double>& x,
+         Vector<double>& output,
+         const dealii::AffineConstraints<double>& constraints,
+         const PreconditionType& precondition,
+         SolverMethod solver, unsigned int max_inner, double tol_inner)
 {
     // y <- A^{-1} Mx
     Vector<double> Mx(x.size());
@@ -108,15 +112,14 @@ unsigned gradient(const SparseMatrix<double>& A, const SparseMatrix<double>& M,
     // \Pi_x(x): R^n -> T_x S^{n-1}
     project_onto_tangent_space(y, x, M, output);
 
-    unsigned int last_step = solve_control.last_step();
-    return last_step;  // TODO: return general status object
+    return solve_control.last_step();
 }
 
 // Retraction by normalization, with base point x and argument z
 // Note: this overwrites the vector x
-inline void
-retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& z,
-                Vector<double>& x, const double factor)
+template <typename MatrixType>
+void retract_by_norm(const MatrixType& M, const Vector<double>& z,
+                     Vector<double>& x, const double factor)
 {
     // x <- x + h z
     x.add(factor, z);
@@ -128,16 +131,16 @@ retract_by_norm(const SparseMatrix<double>& M, const Vector<double>& z,
 }
 
 // TODO: add other retractions (orthographic, exponential)
-inline void
-retract_by_ortho(const SparseMatrix<double>&, const Vector<double>&,
-                 Vector<double>&, const double)
+template <typename MatrixType>
+void retract_by_ortho(const MatrixType&, const Vector<double>&,
+                      Vector<double>&, const double)
 {
     throw dealii::ExcNotImplemented();
 }
 
-inline void
-retract_by_exp(const SparseMatrix<double>&, const Vector<double>&,
-               Vector<double>&, const double)
+template <typename MatrixType>
+void retract_by_exp(const MatrixType&, const Vector<double>&,
+                    Vector<double>&, const double)
 {
     throw dealii::ExcNotImplemented();
 }
@@ -151,19 +154,28 @@ struct Property
     double residual{0};
 };
 
-inline Property
-residual(const Vector<double>& x, const SparseMatrix<double>& A, const SparseMatrix<double>& M)
+// TODO: x*Mx is only for debugging/diagnostic purposes
+template <typename MatrixType>
+Property residual(const Vector<double>& x,
+                  const MatrixType& A0,
+                  const MatrixType& Mpp,
+                  const MatrixType& M, double beta)
 {
     Property prop;
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
-    prop.mass = x * Mx;      // should be ~ 1 (energy constraint)
+    prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
 
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-    prop.lambda = x * Ax;   // Rayleigh quotient (x'Ax / x'Mx)
+    Vector<double> Ax1(x.size()); // A0 x
+    A0.vmult(Ax1, x);
 
-    Vector<double> r(Ax);
+    Vector<double> Ax2(x.size()); // Mpp x
+    Mpp.vmult(Ax2, x);
+
+    Ax1.add(beta, Ax2);             // (A0 + beta Mpp) x
+    prop.lambda = x * Ax1;          // Rayleigh quotient (x'Ax / x'Mx)
+
+    Vector<double> r(Ax1);
     r.add(-prop.lambda, Mx);        // r = A x - lambda M x
 
     // TODO: use enum for setting norm at runtime
@@ -173,7 +185,8 @@ residual(const Vector<double>& x, const SparseMatrix<double>& A, const SparseMat
         Vector<double> Mr(r.size());
         M.vmult(Mr, r);
         prop.residual = std::sqrt(r * Mr);
-    } else {
+    }
+    else {
         prop.residual = r.l2_norm();
     }
     return prop;

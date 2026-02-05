@@ -20,6 +20,27 @@
 namespace gpe
 {
 
+class GrossPitaevskiProblem
+{
+    // TODO: separation concerns for EnergyOracle (shared discretization between regular GD and coarse models)
+
+    //
+    // const FeSpace<dim>& space;
+    // SparseMatrix<double> A0; // Linear part
+    // SparseMatrix<double> Mpp; // Nonlinear part
+    // // ... constraints, mapping, etc.
+    //
+    // void assemble_nonlinear_term(const Vector<double>& x);
+
+};
+
+Vector<double> zeros_like(const Vector<double>& x)
+{
+    Vector<double> z(x.size());
+    z = 0.0;
+    return z;
+}
+
 // TODO: common base class (virtual? constructor: `using Oracle::Oracle`)
 template <int dim>
 class EnergyOracle
@@ -31,11 +52,12 @@ public:
                  const dealii::Quadrature<dim>& quad,
                  const dealii::Mapping<dim>& map,
                  const dealii::AffineConstraints<double>& cstr,
-                 Potential&& V)
+                 Potential&& V, double beta_)
     : dof_handler(dofs)
     , quadrature(quad)
     , mapping(map)
     , constraints(cstr)
+    , beta(beta_)
     {
         auto dsp = make_sparsity_pattern(dof_handler, constraints);
         sparsity_pattern.copy_from(dsp);
@@ -48,14 +70,15 @@ public:
         M.reinit(sparsity_pattern);
         assemble_mass(M, dof_handler, quadrature, mapping, constraints);
 
-        // Assemble preconditioner
+        // Initialize non-linear term (varies between iterations)
         Mpp.reinit(sparsity_pattern);
-        A.reinit(sparsity_pattern);
+
+        // Assemble preconditioner (fixed between iterations)
         precondition.initialize(A0);
     }
 
     // setup before step k
-    void initialize(Vector<double>& x, double beta)
+    void initialize(Vector<double>& x)
     {
         // Apply constraints to incumbent solution
         constraints.distribute(x);
@@ -63,13 +86,9 @@ public:
         // A = A_0 + beta * M_xx
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
 
-        // TODO: matrix copy in every iteration - assemble A in single call, or use matrix-free operator
-        A.copy_from(A0);
-        A.add(beta, Mpp);
-
         // Compute residuals for current iteration
         iter_prev = iter;
-        iter = energy::residual(x, A, M);
+        iter = energy::residual(x, A0, Mpp, M, beta);
     }
 
     double value(const Vector<double>& x) const
@@ -78,11 +97,18 @@ public:
     }
 
     // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-    unsigned int
-    gradient(const Vector<double>& x, Vector<double>& dst,
-             const GdOptions& options) const
+    unsigned gradient(const Vector<double>& x, Vector<double>& dst, const GdOptions& options) const
     {
-        return energy::gradient(A, M, x, dst, constraints, precondition,
+        LinearCombinationMatrix Aop;
+        Aop.add_component(1.0, A0);
+        Aop.add_component(beta, Mpp);
+        Aop.reinit(x.size());
+
+        LinearCombinationMatrix Mop;
+        Mop.add_component(1.0, M);
+        Mop.reinit(x.size());
+
+        return energy::gradient(Aop, Mop, x, dst, constraints, precondition,
             options.solver, options.max_inner, options.tol_inner);
     }
 
@@ -110,8 +136,6 @@ public:
         return false;
     }
 
-    const SparseMatrix<double>& get_A() const { return A; }
-
 private:
     // Finite element parameters
     const dealii::DoFHandler<dim>& dof_handler;
@@ -120,16 +144,13 @@ private:
     const dealii::AffineConstraints<double>& constraints;
 
     // Data for discrete problem
+    double beta;
     SparseMatrix<double> A0, M;
     SparseMatrix<double> Mpp;  // changes in every iteration step
     SparsityPattern sparsity_pattern;
 
     // Linear solver parameters
     dealii::SparseILU<double> precondition;
-
-    // Temporary matrix for building A = A0 + M_pp
-    SparseMatrix<double> A;
-    bool has_AM = false;
 
     // Information on last iteration
     energy::Property iter, iter_prev;
@@ -185,7 +206,7 @@ public:
         const auto& dof_handler = space.get_dofs();
         const auto& constraints = space.get_constraints();
         // Assemble matrices M, A0 = M_V + S
-        EnergyOracle<dim> oracle(dof_handler, *quadrature, *mapping, constraints, V);
+        EnergyOracle<dim> oracle(dof_handler, *quadrature, *mapping, constraints, V, beta);
 
         // Compute solution on most refined (active) level
         std::cerr << "Number of cells: " << grid.triangulation.n_active_cells() << std::endl;
@@ -193,7 +214,7 @@ public:
 
         // Run gradient descent + enforce boundary conditions
         // TODO: abstraction leak `constraints`
-        Vector<double> x = gradient_descent(oracle, x0, beta, options_rgd, os);
+        Vector<double> x = gradient_descent(oracle, x0, options_rgd, os);
         return x;
     }
 
