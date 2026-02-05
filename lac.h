@@ -14,6 +14,7 @@
 
 namespace gpe
 {
+// TODO: use aliases for Trilinos, PETSc, ... matrices
 using dealii::Vector;
 using dealii::SparseMatrix;
 using dealii::FullMatrix;
@@ -30,7 +31,7 @@ using dealii::Point;
 using namespace dealii;
 
 // Simple alternative to dealii::LinearOperator, which is also performant for small (n < 1000) matrices
-template <typename MatrixType = SparseMatrix<double>, typename VectorType = Vector<double>>
+template <typename MatrixType, typename VectorType>
 class LinearCombinationMatrix
 {
 public:
@@ -52,6 +53,10 @@ public:
     void reinit(unsigned int size)
     {
         tmp_vector.reinit(size);
+    }
+    void reinit(const VectorType& vector)
+    {
+        tmp_vector.reinit(vector);
     }
 
     // Return number of rows (required by solvers)
@@ -107,6 +112,7 @@ private:
 
 
 // Represents the operation x = M^-1 * b
+// TODO: use in gpe::gradient_descent()
 template <typename VectorType, typename MatrixType, typename PreconditionerType>
 class InverseMatrix
 {

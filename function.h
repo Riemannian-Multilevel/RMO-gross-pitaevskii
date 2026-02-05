@@ -93,7 +93,6 @@ template <typename MatrixType, typename PreconditionType>
 gradient(const MatrixType& A, const MatrixType& M,
          const Vector<double>& x,
          Vector<double>& output,
-         const dealii::AffineConstraints<double>& constraints,
          const PreconditionType& precondition,
          SolverMethod solver, unsigned int max_inner, double tol_inner)
 {
@@ -107,7 +106,8 @@ gradient(const MatrixType& A, const MatrixType& M,
         precondition, max_inner, tol_inner);
 
     // Apply boundary condition
-    constraints.distribute(y);
+    // TODO: move to call site
+    //constraints.distribute(y);
 
     // \Pi_x(x): R^n -> T_x S^{n-1}
     project_onto_tangent_space(y, x, M, output);
@@ -180,7 +180,6 @@ Property residual(const Vector<double>& x,
 
     // TODO: use enum for setting norm at runtime
     prop.residual = 0.0;
-
     if (M_NORM_RESIDUAL) {
         Vector<double> Mr(r.size());
         M.vmult(Mr, r);

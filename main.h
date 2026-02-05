@@ -20,44 +20,19 @@
 namespace gpe
 {
 
-class GrossPitaevskiProblem
-{
-    // TODO: separation concerns for EnergyOracle (shared discretization between regular GD and coarse models)
-
-    //
-    // const FeSpace<dim>& space;
-    // SparseMatrix<double> A0; // Linear part
-    // SparseMatrix<double> Mpp; // Nonlinear part
-    // // ... constraints, mapping, etc.
-    //
-    // void assemble_nonlinear_term(const Vector<double>& x);
-
-};
-
-Vector<double> zeros_like(const Vector<double>& x)
-{
-    Vector<double> z(x.size());
-    z = 0.0;
-    return z;
-}
-
-// TODO: common base class (virtual? constructor: `using Oracle::Oracle`)
 template <int dim>
-class EnergyOracle
+class GrossPitaevskiiProblem
 {
 public:
-    // setup before step 1 (discretization)
     template <typename Potential>
-    EnergyOracle(const dealii::DoFHandler<dim>& dofs,
-                 const dealii::Quadrature<dim>& quad,
-                 const dealii::Mapping<dim>& map,
-                 const dealii::AffineConstraints<double>& cstr,
-                 Potential&& V, double beta_)
-    : dof_handler(dofs)
+    GrossPitaevskiiProblem(const dealii::DoFHandler<dim>& dofs,
+                           const dealii::Quadrature<dim>& quad,
+                           const dealii::Mapping<dim>& map,
+                           const dealii::AffineConstraints<double>& cstr,
+                           Potential&& V): dof_handler(dofs)
     , quadrature(quad)
     , mapping(map)
     , constraints(cstr)
-    , beta(beta_)
     {
         auto dsp = make_sparsity_pattern(dof_handler, constraints);
         sparsity_pattern.copy_from(dsp);
@@ -72,43 +47,80 @@ public:
 
         // Initialize non-linear term (varies between iterations)
         Mpp.reinit(sparsity_pattern);
-
-        // Assemble preconditioner (fixed between iterations)
-        precondition.initialize(A0);
     }
 
-    // setup before step k
-    void initialize(Vector<double>& x)
+    void assemble_nonlinear_term(Vector<double>& x)
     {
         // Apply constraints to incumbent solution
         constraints.distribute(x);
 
         // A = A_0 + beta * M_xx
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
+    }
 
-        // Compute residuals for current iteration
+    const SparseMatrix<double>& get_A0() const { return A0; }
+    const SparseMatrix<double>& get_M() const { return M; }
+    const SparseMatrix<double>& get_Mpp() const { return Mpp; }
+
+private:
+    // Finite element parameters
+    // const FeSpace<dim>& space;
+    const dealii::DoFHandler<dim>& dof_handler;
+    const dealii::Quadrature<dim>& quadrature;
+    const dealii::Mapping<dim>& mapping;
+    const dealii::AffineConstraints<double>& constraints;
+
+    // Data for discrete problem
+    SparseMatrix<double> A0, M;
+    SparseMatrix<double> Mpp;  // changes in every iteration step
+    SparsityPattern sparsity_pattern;
+};
+
+// TODO: common base class (virtual? constructor: `using Oracle::Oracle`)
+template <int dim>
+class EnergyOracle
+{
+public:
+    using OperatorType = LinearCombinationMatrix<SparseMatrix<double>, Vector<double>>;
+
+    // setup before step 1 (discretization)
+    EnergyOracle(GrossPitaevskiiProblem<dim>& GP_, double beta_)
+        : GP(GP_), beta(beta_)
+    {
+        // Set up sparse ILU for linear term
+        precondition.initialize(GP.get_A0());
+        const Vector<double> prototype(GP.get_A0().m());
+
+        // Set up the linear operator A = A0 + beta * Mpp
+        // We do this ONCE, the operator class stores pointers.
+        // When Mpp changes values later, this operator automatically uses the new values.
+        Aop.add_component(1.0, GP.get_A0());
+        Aop.add_component(beta, GP.get_Mpp());
+        Aop.reinit(prototype);
+
+        // Same for M
+        Mop.add_component(1.0, GP.get_M());
+        Mop.reinit(prototype);
+    }
+
+    // setup before step k
+    void initialize(Vector<double>& x)
+    {
+        GP.assemble_nonlinear_term(x);   // also applies constraints to `x`
+
         iter_prev = iter;
-        iter = energy::residual(x, A0, Mpp, M, beta);
+        iter = energy::residual(x, GP.get_A0(), GP.get_Mpp(), GP.get_M(), beta);
     }
 
     double value(const Vector<double>& x) const
     {
-        return energy::function_value(x, A0, Mpp);
+        return energy::function_value(x, GP.get_A0(), GP.get_Mpp());
     }
 
     // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-    unsigned gradient(const Vector<double>& x, Vector<double>& dst, const GdOptions& options) const
+    unsigned gradient(const Vector<double>& x, Vector<double>& output, const GdOptions& options) const
     {
-        LinearCombinationMatrix Aop;
-        Aop.add_component(1.0, A0);
-        Aop.add_component(beta, Mpp);
-        Aop.reinit(x.size());
-
-        LinearCombinationMatrix Mop;
-        Mop.add_component(1.0, M);
-        Mop.reinit(x.size());
-
-        return energy::gradient(Aop, Mop, x, dst, constraints, precondition,
+        return energy::gradient(Aop, Mop, x, output, precondition,
             options.solver, options.max_inner, options.tol_inner);
     }
 
@@ -116,7 +128,7 @@ public:
     // TODO: support other retractions (enum class)
     void retract(const Vector<double>& z, Vector<double>& x, double factor) const
     {
-        energy::retract_by_norm(M, z, x, factor);
+        energy::retract_by_norm(GP.get_M(), z, x, factor);
     }
 
     energy::Property residual() const
@@ -125,7 +137,7 @@ public:
     }
 
     // TODO: forwarding of options (AdditionalData)
-    bool is_optimal(const GdOptions& options)
+    bool is_optimal(const GdOptions& options) const
     {
         const double lmb_diff   = std::abs(iter.lambda - iter_prev.lambda);
         const double lmb_factor = 1.0 + std::abs(iter.lambda);  // avoid numerical issues near lmb ~ 0
@@ -137,20 +149,13 @@ public:
     }
 
 private:
-    // Finite element parameters
-    const dealii::DoFHandler<dim>& dof_handler;
-    const dealii::Quadrature<dim>& quadrature;
-    const dealii::Mapping<dim>& mapping;
-    const dealii::AffineConstraints<double>& constraints;
-
-    // Data for discrete problem
+    GrossPitaevskiiProblem<dim>& GP;
     double beta;
-    SparseMatrix<double> A0, M;
-    SparseMatrix<double> Mpp;  // changes in every iteration step
-    SparsityPattern sparsity_pattern;
-
-    // Linear solver parameters
     dealii::SparseILU<double> precondition;
+
+    // Linear combinations for gradient descent / matrix inversion
+    // This type contains weights and references to stored matrices.
+    OperatorType Aop, Mop;
 
     // Information on last iteration
     energy::Property iter, iter_prev;
@@ -205,16 +210,18 @@ public:
     {
         const auto& dof_handler = space.get_dofs();
         const auto& constraints = space.get_constraints();
+
         // Assemble matrices M, A0 = M_V + S
-        EnergyOracle<dim> oracle(dof_handler, *quadrature, *mapping, constraints, V, beta);
+        GrossPitaevskiiProblem<dim> GP(dof_handler, *quadrature, *mapping, constraints, V);
+        EnergyOracle<dim> oracle(GP, beta);
 
         // Compute solution on most refined (active) level
         std::cerr << "Number of cells: " << grid.triangulation.n_active_cells() << std::endl;
         std::cerr << "Number of degrees of freedom: " << space.n_dofs() << std::endl;
 
         // Run gradient descent + enforce boundary conditions
-        // TODO: abstraction leak `constraints`
         Vector<double> x = gradient_descent(oracle, x0, options_rgd, os);
+        constraints.distribute(x);
         return x;
     }
 
