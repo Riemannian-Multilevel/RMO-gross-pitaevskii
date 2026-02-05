@@ -76,6 +76,24 @@ private:
     SparsityPattern sparsity_pattern;
 };
 
+template <int dim>
+class CoarseMassOracle
+{
+public:
+    // TODO: refactor from EnergyOracle
+private:
+
+};
+
+template <int dim>
+class CoarseActiveOracle
+{
+public:
+    // TODO: refactor from EnergyOracle
+private:
+
+};
+
 // TODO: common base class (virtual? constructor: `using Oracle::Oracle`)
 template <int dim>
 class EnergyOracle
@@ -96,6 +114,7 @@ public:
         // Set up the linear operator A = A0 + beta * Mpp
         // We do this ONCE, the operator class stores pointers.
         // When Mpp changes values later, this operator automatically uses the new values.
+        // TODO: merge to GrossPitaevskiiProblem? (common between fine and coarse methods)
         Aop.add_component(1.0, GP.get_A0());
         Aop.add_component(beta, GP.get_Mpp());
         Aop.reinit(prototype);

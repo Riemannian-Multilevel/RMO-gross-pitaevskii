@@ -34,17 +34,22 @@ using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 //     UNKNOWN
 // };
 
+template <typename MatrixType, typename VectorType>
+struct EmptyUpdateStrategy {
+    void operator()(MatrixType& M, const VectorType& v) const
+    {}
+};
+
+
 // TODO: Armijo line search (cf. fcvx/descent.h)
 
 //! Riemannian gradient descent for the GPE energy minimization
-//! @tparam dim Problem dimension
 //! @param O Oracle for function value and (Riemannian) gradient
 //! @param x0 Starting value
-//! @param beta Non-linearity factor for GPE
 //! @param options Termination criteria
 //! @param os Output stream for diagnostics
 //! @return
-template <typename Oracle>
+template <typename Oracle, typename PostSmoothing = EmptyUpdateStrategy<SparseMatrix<double>, Vector<double>>>
 Vector<double>
 gradient_descent(Oracle&& O, const Vector<double>& x0,
                  const GdOptions& options, std::ostream& os)
@@ -91,12 +96,17 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
             break_on_next = true;
             continue;
         }
+        // --- pre-smoothing (multigrid)
+        // TODO
+
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
         lac_iter = O.gradient(x, g, options);
-
         // Retraction: x <- (x - h g) / ||x - h g||_M
         O.retract(g, x, -options.step_size);
+
+        // --- post-smoothing (multigrid)
+        // TODO
     }
     std::cerr << std::endl << std::endl;
     convergence_table.set_precision("mass", 4);
