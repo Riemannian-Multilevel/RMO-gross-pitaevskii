@@ -13,16 +13,29 @@ namespace gpe
 using dealii::types::global_dof_index;
 using dealii::numbers::invalid_unsigned_int;
 
-//! Mass matrix assembly, implementation based on tutorial/step-3
-//! @tparam dim Problem dimension
-//! @tparam Assembly
-//! @param system_matrix Matrix to be populated with entries
-//! @param dof_handler DOF object, contains triangulation and finite element
-//! @param quadrature Quadrature formula used
-//! @param flags Required update flags, typically set in Assembly object
-//! @param assemble_cell Function object which iterates over local cells
-//! @param constraints Affine constraints applied to matrix rows and columns
-//! @param mapping Polynomial mapping between reference cell and real cell
+/**
+ * @brief Generic system assembly loop.
+ *
+ * This function implements the standard finite element assembly loop. It iterates over
+ * all cells (either active cells on the finest grid or cells on a specific multigrid level),
+ * initializes `FEValues`, calls the user-provided `assemble_cell` functor to compute local
+ * integrals, and distributes the result into the global system matrix applying constraints.
+ *
+ * The `assemble_cell` functor must have the signature:
+ * `void(const FEValues<dim>&, FullMatrix<double>&, const std::vector<global_dof_index>&)`
+ *
+ * @tparam dim The spatial dimension.
+ * @tparam Assembly The type of the lambda/functor performing the local integration.
+ * @param[out] system_matrix The sparse matrix to be filled. Existing entries are cleared.
+ * @param[in] dof_handler The DoFHandler object.
+ * @param[in] quadrature The quadrature rule to use for integration.
+ * @param[in] mapping The mapping from reference to real cell.
+ * @param[in] flags Update flags required by the assembly kernel (e.g., update_values, update_gradients).
+ * @param[in] assemble_cell The functor that computes the local matrix on a single cell.
+ * @param[in] constraints Constraints to apply during distribution (e.g., hanging nodes, BCs).
+ * @param[in] level The multigrid level to assemble. If set to `invalid_unsigned_int` (default),
+ * the function assembles on the active cells (global system).
+ */
 template <int dim, typename Assembly>
 // BUG: DoFHandler::get_fe() - error: variable type 'FiniteElement<1, 1>' is an abstract class
 void assemble_system(dealii::SparseMatrix<double>& system_matrix,
@@ -88,6 +101,22 @@ void assemble_system(dealii::SparseMatrix<double>& system_matrix,
     }
 }
 
+/**
+ * @brief Assembles the standard Mass matrix.
+ *
+ * Computes entries:
+ * \f[
+ * M_{ij} = \int_{\Omega} \phi_i(x) \phi_j(x) \, dx
+ * \f]
+ *
+ * @tparam dim The spatial dimension.
+ * @param[out] system_matrix The matrix to store the result.
+ * @param[in] dof_handler The DoFHandler.
+ * @param[in] quadrature The quadrature formula.
+ * @param[in] mapping The geometric mapping.
+ * @param[in] constraints Affine constraints.
+ * @param[in] level MG level (optional).
+ */
 // TODO: cache shape_value(i, q) and shape_grad(i, q) in local arrays for Q2 or higher elements
 template <int dim>
 void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
@@ -116,6 +145,22 @@ void assemble_mass(dealii::SparseMatrix<double>& system_matrix,
         f_mass, constraints, level);
 }
 
+/**
+ * @brief Assembles the Stiffness matrix (Laplacian).
+ *
+ * Computes entries:
+ * \f[
+ * S_{ij} = \int_{\Omega} \nabla \phi_i(x) \cdot \nabla \phi_j(x) \, dx
+ * \f]
+ *
+ * @tparam dim The spatial dimension.
+ * @param[out] system_matrix The matrix to store the result.
+ * @param[in] dof_handler The DoFHandler.
+ * @param[in] quadrature The quadrature formula.
+ * @param[in] mapping The geometric mapping.
+ * @param[in] constraints Affine constraints.
+ * @param[in] level MG level (optional).
+ */
 template <int dim>
 void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
                         const dealii::DoFHandler<dim>& dof_handler,
@@ -143,6 +188,24 @@ void assemble_stiffness(dealii::SparseMatrix<double>& system_matrix,
         f_stiffness, constraints, level);
 }
 
+/**
+ * @brief Assembles a Mass matrix weighted by a scalar potential \f$ V(x) \f$.
+ *
+ * Computes entries:
+ * \f[
+ * (M_V)_{ij} = \int_{\Omega} V(x) \phi_i(x) \phi_j(x) \, dx
+ * \f]
+ *
+ * @tparam dim The spatial dimension.
+ * @tparam Function A functor or function object type that can be called as `double V(Point<dim>)`.
+ * @param[out] system_matrix The matrix to store the result.
+ * @param[in] V The potential function \f$ V(x) \f$.
+ * @param[in] dof_handler The DoFHandler.
+ * @param[in] quadrature The quadrature formula.
+ * @param[in] mapping The geometric mapping.
+ * @param[in] constraints Affine constraints.
+ * @param[in] level MG level (optional).
+ */
 template <int dim, typename Function>
 void assemble_mass_weighted(dealii::SparseMatrix<double>& system_matrix,
                            Function&& V,
@@ -173,7 +236,25 @@ void assemble_mass_weighted(dealii::SparseMatrix<double>& system_matrix,
         f_mass_weighted, constraints, level);
 }
 
-// A0 = stiffness + mass_weighted
+/**
+ * @brief Assembles the linear Hamiltonian operator \f$ A_0 \f$.
+ *
+ * This corresponds to the linear part of the Gross-Pitaevskii operator (Kinetic energy + Potential energy).
+ * Computes entries:
+ * \f[
+ * (A_0)_{ij} = \int_{\Omega} \nabla \phi_i \cdot \nabla \phi_j + V(x) \phi_i \phi_j \, dx
+ * \f]
+ *
+ * @tparam dim The spatial dimension.
+ * @tparam Function Type of the potential function V.
+ * @param[out] system_matrix The matrix to store the result.
+ * @param[in] V The potential function \f$ V(x) \f$.
+ * @param[in] dof_handler The DoFHandler.
+ * @param[in] quadrature The quadrature formula.
+ * @param[in] mapping The geometric mapping.
+ * @param[in] constraints Affine constraints.
+ * @param[in] level MG level (optional).
+ */
 template <int dim, typename Function>
 void assemble_A0(dealii::SparseMatrix<double>& system_matrix,
                  Function&& V,
@@ -208,6 +289,25 @@ void assemble_A0(dealii::SparseMatrix<double>& system_matrix,
         f_A0, constraints, level);
 }
 
+/**
+ * @brief Assembles the nonlinear interaction term \f$ M_{\phi\phi} \f$ based on a current state \f$ u \f$.
+ *
+ * This matrix represents the cubic nonlinearity in the GP equation linearized around \f$ u \f$.
+ * Computes entries:
+ * \f[
+ * (M_{\phi\phi})_{ij} = \int_{\Omega} |u_h(x)|^2 \phi_i(x) \phi_j(x) \, dx
+ * \f]
+ * where \f$ u_h(x) = \sum u_k \phi_k(x) \f$ is the finite element solution defined by vector @p u.
+ *
+ * @tparam dim The spatial dimension.
+ * @param[out] matrix The matrix to store the result.
+ * @param[in] u The current solution vector defining the nonlinearity density \f$ |u|^2 \f$.
+ * @param[in] dof_handler The DoFHandler.
+ * @param[in] quadrature The quadrature formula.
+ * @param[in] mapping The geometric mapping.
+ * @param[in] constraints Affine constraints.
+ * @param[in] level MG level (optional).
+ */
 // TODO: optimizations (symmetry, caching, matrix-free operator)
 template <int dim>
 void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,

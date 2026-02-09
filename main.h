@@ -157,13 +157,14 @@ public:
         //energy::retract_by_exp(GP.get_M(), z, x, factor);
     }
 
-    energy::Property residual() const
+    // TODO: remove
+    energy::State residual() const
     {
         return iter;
     }
 
-    // TODO: forwarding of options (AdditionalData)
-    bool is_optimal(const GdOptions& options) const
+    // TODO: move to function.h
+    bool check_convergence(const GdOptions& options) const
     {
         const double lmb_diff   = std::abs(iter.lambda - iter_prev.lambda);
         const double lmb_factor = 1.0 + std::abs(iter.lambda);  // avoid numerical issues near lmb ~ 0
@@ -184,7 +185,7 @@ private:
     OperatorType Aop, Mop;
 
     // Information on last iteration
-    energy::Property iter, iter_prev;
+    energy::State iter, iter_prev;
 };
 
 

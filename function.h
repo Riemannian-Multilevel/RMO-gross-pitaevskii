@@ -338,7 +338,7 @@ void retract_by_ortho(const MatrixType& M, const Vector<double>& z,
     double zMz = z*Mz;
     zMz *= factor;
     zMz *= factor;  // (hz) * M(hZ) = h^2 zMz
-    AssertThrow(zMz < 1.0, ExcInternalError("z'Mz required < 1"));
+    AssertThrow(zMz < 1.0, dealii::ExcInternalError("z'Mz required < 1"));
 
     x *= std::sqrt(1-zMz);
     x.add(factor, z);
@@ -550,11 +550,9 @@ void coarse_gradient(const MatrixType& M,
     project_onto_tangent_space(A_inv, zeta, M, v, dst);
 }
 
-namespace iteration
-{
 // Termination criteria for energy function minimization
 // TODO: make this generic?
-struct Property
+struct State
 {
     double mass{0};
     double lambda{0};
@@ -563,12 +561,12 @@ struct Property
 
 // TODO: x*Mx is only for debugging/diagnostic purposes
 template <typename MatrixType>
-Property residual(const Vector<double>& x,
+State residual(const Vector<double>& x,
                   const MatrixType& A0,
                   const MatrixType& Mpp,
                   const MatrixType& M, double beta)
 {
-    Property prop;
+    State prop;
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
     prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
@@ -587,7 +585,7 @@ Property residual(const Vector<double>& x,
 
     // TODO: use enum for setting norm at runtime
     prop.residual = 0.0;
-    if (M_NORM_RESIDUAL) {
+    if constexpr (M_NORM_RESIDUAL) {
         Vector<double> Mr(r.size());
         M.vmult(Mr, r);
         prop.residual = std::sqrt(r * Mr);
@@ -597,8 +595,6 @@ Property residual(const Vector<double>& x,
     }
     return prop;
 }
-
-} // namespace iteration
 
 } // namespace energy
 

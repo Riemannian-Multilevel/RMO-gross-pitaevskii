@@ -78,7 +78,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
-        // TODO: generalize to oracle method (different objectives have different properties)
+        // TODO: move to function.h
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", lac_iter);
         convergence_table.add_value("mass", ctrl.mass);
@@ -90,7 +90,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         if (break_on_next) {
             break;
         }
-        if (O.is_optimal(options)) {
+        if (O.check_convergence(options)) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break_on_next = true;

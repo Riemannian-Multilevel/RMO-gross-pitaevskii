@@ -3,6 +3,8 @@
 #define SOLVER_MIN_TOL 1e-10
 
 #include "option_types.h"
+#include <vector>
+#include <utility>
 
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
@@ -23,12 +25,8 @@ using dealii::DynamicSparsityPattern;
 using dealii::Vector;
 using dealii::Point;
 
-#include <deal.II/lac/vector.h>
-#include <deal.II/lac/sparse_matrix.h>
-#include <vector>
-#include <utility>
-
-using namespace dealii;
+using dealii::types::global_dof_index;
+using dealii::SolverControl;
 
 // Simple alternative to dealii::LinearOperator, which is also performant for small (n < 1000) matrices
 template <typename MatrixType, typename VectorType>
@@ -60,16 +58,16 @@ public:
     }
 
     // Return number of rows (required by solvers)
-    types::global_dof_index m() const
+    global_dof_index m() const
     {
-        Assert(!components.empty(), ExcMessage("No matrices added"));
+        Assert(!components.empty(), dealii::ExcMessage("No matrices added"));
         return components[0].second->m();
     }
 
     // Return number of columns (required by solvers)
-    types::global_dof_index n() const
+    global_dof_index n() const
     {
-        Assert(!components.empty(), ExcMessage("No matrices added"));
+        Assert(!components.empty(), dealii::ExcMessage("No matrices added"));
         return components[0].second->n();
     }
 
