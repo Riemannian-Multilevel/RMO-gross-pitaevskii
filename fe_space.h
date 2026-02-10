@@ -303,16 +303,22 @@ public:
         return mg_constraints;
     }
 
-    // active level accessors
+    /** @return Const reference to the underlying DoFHandler. */
     const dealii::DoFHandler<dim>& get_dofs() const {
         return dof_handler;
     }
+
+    /** @return Const reference to the FiniteElement used. */
     const dealii::FiniteElement<dim>& get_fe() const {
         return dof_handler.get_fe();
     }
+
+    /** @return The global number of degrees of freedom. */
     unsigned int n_dofs() const {
         return dof_handler.n_dofs();
     }
+
+    /** @return Const reference to the computed constraints (hanging nodes + BCs). */
     const dealii::AffineConstraints<double>& get_constraints() const{
         return constraints;
     }

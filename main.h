@@ -99,7 +99,7 @@ template <int dim>
 class EnergyOracle
 {
 public:
-    using OperatorType  = LinearCombinationMatrix<SparseMatrix<double>, Vector<double>>;
+    using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using InverseOpType = InverseMatrix<OperatorType, Vector<double>,dealii::SparseILU<double>>;
 
     // setup before step 1 (discretization)
