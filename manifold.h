@@ -614,13 +614,13 @@ namespace mass
  * to \f$ \Pi_x(v) = v - (x^T M v) x \f$.
  *
  * @tparam MatrixType A matrix class type providing a `vmult` method (e.g., SparseMatrix).
- * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
  * @param[in] x The base point on the manifold (assumed to be normalized in the M-metric).
+ * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
  * @param[in] v The vector to be projected.
  * @param[out] output The resulting projected vector in the tangent space \f$ T_x \mathcal{M} \f$.
  */
 template <typename MatrixType>
-void project_onto_tangent_space(const MatrixType& M, const Vector<double>& x, const Vector<double>& v,
+void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
                                 Vector<double>& output)
 {
     Vector<double> Mv(x.size());
@@ -733,7 +733,7 @@ void coarse_gradient(const MatrixType& M,
     v.add(1.0 / s, w);
 
     // 8. Project onto tangent space using the provided mass-based projection
-    project_onto_tangent_space(M, zeta, v, dst);
+    project_onto_tangent_space(zeta, M, v, dst);
 }
 
 } // namespace mass
