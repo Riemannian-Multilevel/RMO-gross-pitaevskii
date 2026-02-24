@@ -127,7 +127,7 @@ public:
         for (const auto &pair : m_components)
         {
             const double weight = pair.first;
-            const auto* matrix  = pair.second;
+            const auto* matrix = pair.second;
 
             matrix->vmult(m_vector, src);
             dst.add(weight, m_vector);

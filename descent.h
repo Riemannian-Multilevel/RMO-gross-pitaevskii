@@ -96,8 +96,6 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
             break_on_next = true;
             continue;
         }
-        // --- pre-smoothing (multigrid)
-        // TODO
 
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
@@ -105,8 +103,6 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         // Retraction: x <- (x - h g) / ||x - h g||_M
         O.retract(g, x, -options.step_size);
 
-        // --- post-smoothing (multigrid)
-        // TODO
     }
     std::cerr << std::endl << std::endl;
     convergence_table.set_precision("mass", 4);
