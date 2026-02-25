@@ -170,7 +170,7 @@ public:
      */
     InverseMatrix(const MatrixType& matrix,
                   const SolverMethod method,
-                  const PreconditionerType& precond = dealii::PreconditionIdentity(),
+                  const PreconditionerType& precond,
                   const unsigned max_iter = 1000,
                   const double reltol = 1e-6)
         : m_matrix(matrix)

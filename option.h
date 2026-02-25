@@ -11,15 +11,16 @@ namespace gpe
 namespace po = boost::program_options;
 
 BOOST_DESCRIBE_STRUCT(GdOptions, (),
-    (tol_inner, tol_lambda, tol_residual, step_size, max_iter, max_inner));
+    (tol_inner, tol_lambda, tol_residual, step_size, max_iter, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (multilevel, n_levels, min_level, max_level));
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta));
+    (dimension, degree, radius, beta, order, bc, mesh_kind));
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
+BOOST_DESCRIBE_ENUM(Precondition, IDENTITY, JACOBI, SSOR, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 
 // ---------- MG_Options ----------
@@ -48,16 +49,16 @@ static unsigned int to_unsigned_nonneg(int v, const char* opt_name) {
 inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 {
     mg.multilevel = vm["multilevel"].as<bool>();
-    mg.n_levels  = vm["levels"].as<int>();
+    mg.n_levels   = vm["levels"].as<int>();
 
     // min_level >= 0
     const int min_i = vm["min-level"].as<int>();
-    mg.min_level = to_unsigned_nonneg(min_i, "min-level");
+    mg.min_level    = to_unsigned_nonneg(min_i, "min-level");
 
     // max_level >= 0, default n_levels
-    const int max_i = vm["max-level"].as<int>();
+    const int max_i      = vm["max-level"].as<int>();
     const unsigned max_u = to_unsigned_nonneg(max_i, "max-level");
-    mg.max_level = (max_u == 0) ? mg.n_levels : max_u;
+    mg.max_level         = (max_u == 0) ? mg.n_levels : max_u;
 
     // min_level <= max_level
     if (mg.max_level < mg.min_level) {
@@ -102,13 +103,15 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.radius    = vm["radius"].as<double>();
 }
 
-
+// TODO: separate linear solver options
 // ---------- GdOptions ----------
 inline po::options_description gd_cli_options() {
     po::options_description d("RGD options");
     d.add_options()
         ("solver", po::value<std::string>()->default_value("gmres"),
          "sparse solver (gmres|minres|cg)")
+        ("precond", po::value<std::string>()->default_value("sparse_ilu"),
+         "preconditioner (identity|jacobi|ssor|sparse_ilu|amg)")
         ("max-iter", po::value<int>()->default_value(25),
          "maximum number of iterations")
         ("max-inner", po::value<int>()->default_value(100),
@@ -126,6 +129,7 @@ inline po::options_description gd_cli_options() {
 
 inline void apply_gd_options(const po::variables_map& vm, GdOptions& options_rgd) {
     const auto solver_str = upper(vm["solver"].as<std::string>());
+    const auto precond_str= upper(vm["precond"].as<std::string>());
 
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
@@ -134,6 +138,7 @@ inline void apply_gd_options(const po::variables_map& vm, GdOptions& options_rgd
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.solver       = string_to_enum<SolverMethod>(solver_str);
+    options_rgd.precond      = string_to_enum<Precondition>(precond_str);
 }
 
 }

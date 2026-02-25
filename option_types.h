@@ -28,6 +28,15 @@ enum class SolverMethod
     CG
 };
 
+enum class Precondition
+{
+    IDENTITY,
+    JACOBI,
+    SSOR,
+    SPARSE_ILU,
+    AMG
+};
+
 enum class MeshKind
 {
     QUADRILATERAL,
@@ -52,6 +61,7 @@ struct GdOptions
     unsigned int max_iter;  // maximum GD iterations
     unsigned int max_inner; // maximum sparse solver iterations
     SolverMethod solver;    // method for solving sparse linear equations
+    Precondition precond;   // preconditioner for solving sparse linear equations
 };
 
 struct GPE_Options
