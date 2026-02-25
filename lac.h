@@ -349,23 +349,21 @@ public:
     {
         switch (precond_type) {
             case Precondition::SPARSE_ILU:
-                return solve_internal(op, dst, src, ilu_precond);
+                return solve_with(op, dst, src, ilu_precond);
             case Precondition::JACOBI:
-                return solve_internal(op, dst, src, jacobi_precond);
+                return solve_with(op, dst, src, jacobi_precond);
             case Precondition::SSOR:
-                return solve_internal(op, dst, src, ssor_precond);
+                return solve_with(op, dst, src, ssor_precond);
             case Precondition::NONE:
             default:
-                return solve_internal(op, dst, src, dealii::PreconditionIdentity());
+                return solve_with(op, dst, src, dealii::PreconditionIdentity());
         }
     }
 
 private:
     template <typename PrecondType>
-    unsigned solve_internal(const OperatorType& op,
-                            VectorType& dst,
-                            const VectorType& src,
-                            const PrecondType& precond) const
+    unsigned solve_with(const OperatorType& op, VectorType& dst, const VectorType& src,
+                        const PrecondType& precond) const
     {
         // InverseMatrix now takes the decoupled parameters perfectly
         const InverseMatrix<OperatorType, VectorType, PrecondType>
