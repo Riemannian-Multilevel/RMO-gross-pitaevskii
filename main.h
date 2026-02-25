@@ -18,6 +18,7 @@ namespace gpe
  *
  * @tparam dim The spatial dimension of the problem.
  */
+// TODO: use PreconditionInverse for preconditioners chosen at runtime
 template <int dim>
 class EnergyOracle
 {

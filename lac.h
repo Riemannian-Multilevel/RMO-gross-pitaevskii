@@ -257,7 +257,7 @@ public:
     const SolverControl& control() const { return m_control; }
 
 private:
-    const OperatorType &m_matrix;
+    const OperatorType &m_matrix;  // TODO: m_oper?
     const PreconditionerType &m_precond;
 
     const SolverMethod m_method;
@@ -298,31 +298,35 @@ class PreconditionInverse
 public:
     /**
      * @brief Constructs the generic preconditioned solver.
-     * @param solver_method_ The Krylov method to use (e.g., CG, MINRES, GMRES).
-     * @param max_iter_ Maximum number of inner iterations for the linear solver.
-     * @param tol_ Target tolerance for the linear solver residual.
+     * @param method The Krylov method to use (e.g., CG, MINRES, GMRES).
+     * @param max_iter Maximum number of inner iterations for the linear solver.
+     * @param reltol Target tolerance for the linear solver residual.
      * @param precond_type_ The preconditioning strategy.
      */
-    PreconditionInverse(SolverMethod solver_method_,
-                         unsigned int max_iter_,
-                         double       tol_,
-                         Precondition precond_type_)
-        : solver_method(solver_method_)
-        , max_iter(max_iter_)
-        , tol(tol_)
-        , precond_type(precond_type_)
+    PreconditionInverse(const OperatorType& matrix,
+                        SolverMethod method,
+                        Precondition precond_type,
+                        unsigned int max_iter = 1000,
+                        double       reltol   = 1e-6)
+        : m_matrix(matrix)
+        , m_method(method)
+        , m_precond_type(precond_type)
+        , m_max_iter(max_iter)
+        , m_reltol(reltol)
+        , m_control(m_max_iter, SOLVER_MIN_TOL)
     {}
 
     /**
      * @brief Builds preconditioners that only need to be set up once.
      * e.g., ILU or AMG on the stationary matrix A0.
      */
-    void setup_static(const MatrixType& static_matrix)
+    // TODO: function name
+    void update_static(const MatrixType& static_matrix)
     {
-        if (precond_type == Precondition::SPARSE_ILU) {
+        if (m_precond_type == Precondition::SPARSE_ILU) {
             ilu_precond.initialize(static_matrix);
         }
-        if (precond_type == Precondition::AMG) {
+        if (m_precond_type == Precondition::AMG) {
             throw std::invalid_argument("Precondition::AMG not implemented");
         }
     }
@@ -330,57 +334,63 @@ public:
     /**
      * @brief Rebuilds dynamic preconditioners using the latest assembled matrix.
      */
+    // TODO: function name
     void update_dynamic(const MatrixType& dynamic_matrix)
     {
-        if (precond_type == Precondition::JACOBI) {
+        if (m_precond_type == Precondition::JACOBI) {
             typename dealii::PreconditionJacobi<MatrixType>::AdditionalData data(0.6);
             jacobi_precond.initialize(dynamic_matrix, data);
         }
-        else if (precond_type == Precondition::SSOR) {
+        else if (m_precond_type == Precondition::SSOR) {
             typename dealii::PreconditionSSOR<MatrixType>::AdditionalData data(1.2);
             ssor_precond.initialize(dynamic_matrix, data);
         }
     }
 
-    /**
-     * @brief Solves op * dst = src.
-     */
-    unsigned solve(const OperatorType& op, const VectorType& src, VectorType& dst) const
+    /** @brief Solves op * dst = src. */
+    void vmult(VectorType& dst, const VectorType& src) const
     {
-        switch (precond_type) {
+        switch (m_precond_type) {
             case Precondition::SPARSE_ILU:
-                return solve_with(op, dst, src, ilu_precond);
+                solve_with(m_matrix, dst, src, ilu_precond);
             case Precondition::JACOBI:
-                return solve_with(op, dst, src, jacobi_precond);
+                solve_with(m_matrix, dst, src, jacobi_precond);
             case Precondition::SSOR:
-                return solve_with(op, dst, src, ssor_precond);
+                solve_with(m_matrix, dst, src, ssor_precond);
             case Precondition::NONE:
             default:
-                return solve_with(op, dst, src, dealii::PreconditionIdentity());
+                solve_with(m_matrix, dst, src, dealii::PreconditionIdentity());
         }
     }
 
+    /** @brief Returns the solver control object used in the last solve. */
+    const SolverControl& control() const { return m_control; }
+
 private:
     template <typename PrecondType>
-    unsigned solve_with(const OperatorType& op, VectorType& dst, const VectorType& src,
-                        const PrecondType& precond) const
+    void solve_with(const OperatorType& matrix, VectorType& dst, const VectorType& src,
+                    const PrecondType& precond) const
     {
         // InverseMatrix now takes the decoupled parameters perfectly
         const InverseMatrix<OperatorType, VectorType, PrecondType>
-        inv(op, solver_method, precond, max_iter, tol);
+        inv(matrix, m_method, precond, m_max_iter, m_reltol);
 
         inv.vmult(dst, src);
-        return inv.control().last_step();
+        m_control = inv.control();
     }
 
-    SolverMethod solver_method;
-    unsigned int max_iter;
-    double       tol;
-    Precondition precond_type;
+    const OperatorType &m_matrix;  // TODO: m_oper?
+    SolverMethod m_method;
+    Precondition m_precond_type;
+    unsigned int m_max_iter;
+    double       m_reltol;
 
     dealii::SparseILU<double> ilu_precond;
     dealii::PreconditionJacobi<MatrixType> jacobi_precond;
     dealii::PreconditionSSOR<MatrixType> ssor_precond;
+
+    // Stores the state of the most recent solve_internal call
+    mutable SolverControl m_control;
 };
 
 } // namespace gpe
