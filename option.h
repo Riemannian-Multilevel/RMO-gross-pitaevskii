@@ -20,7 +20,7 @@ BOOST_DESCRIBE_STRUCT(GPE_Options, (),
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
-BOOST_DESCRIBE_ENUM(Precondition, IDENTITY, JACOBI, SSOR, SPARSE_ILU, AMG);
+BOOST_DESCRIBE_ENUM(Precondition, NONE, JACOBI, SSOR, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 
 // ---------- MG_Options ----------
@@ -111,7 +111,7 @@ inline po::options_description gd_cli_options() {
         ("solver", po::value<std::string>()->default_value("gmres"),
          "sparse solver (gmres|minres|cg)")
         ("precond", po::value<std::string>()->default_value("sparse_ilu"),
-         "preconditioner (identity|jacobi|ssor|sparse_ilu|amg)")
+         "preconditioner (none|jacobi|ssor|sparse_ilu|amg)")
         ("max-iter", po::value<int>()->default_value(25),
          "maximum number of iterations")
         ("max-inner", po::value<int>()->default_value(100),

@@ -8,6 +8,7 @@
 
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
+#include <deal.II/lac/sparse_ilu.h>
 
 #include <deal.II/lac/solver_control.h>
 #include <deal.II/lac/solver_gmres.h>  // for general matrices
@@ -27,6 +28,7 @@ using dealii::Point;
 
 using dealii::types::global_dof_index;
 using dealii::SolverControl;
+
 
 /**
  * @brief A lightweight alternative to dealii::LinearOperator.
@@ -147,16 +149,34 @@ private:
 
 
 /**
- * @brief Represents the inverse operation of a matrix using an iterative solver.
- * This class acts as a wrapper that transforms a system solve into a
- * matrix-vector multiplication interface. Calling @ref vmult(dst, rhs) effectively
- * computes \f$ dst = M^{-1} \cdot rhs \f$ by solving the system \f$ M \cdot dst = rhs \f$.
+ * @brief A wrapper class that represents the inverse of a linear operator.
  *
- * @tparam MatrixType The type of the matrix.
- * @tparam VectorType The type of the vector.
- * @tparam PreconditionerType The type of the preconditioner.
+ * This class encapsulates a `deal.II` iterative Krylov solver (such as CG, MINRES,
+ * or GMRES) and a preconditioner. It acts mathematically as the inverse operator
+ * $A^{-1}$, meaning that calling `vmult(dst, src)` executes the iterative solver
+ * to find `dst` such that $A \cdot dst = src$.
+ *
+ * ### Architectural Role
+ * By wrapping the solver in this interface, it can be passed into other algorithms
+ * (like Riemannian Gradient Descent) exactly as if it were a standard matrix.
+ * It strictly separates the action of the operator from the construction of the
+ * preconditioner.
+ *
+ * @tparam OperatorType The forward linear operator $A$. This is typically a
+ * matrix-free abstraction (e.g., @ref LinearCombination) that computes matrix-vector
+ * products on the fly. The only strict requirement is that it provides a
+ * `vmult(VectorType&, const VectorType&)` method.
+ *
+ * @tparam VectorType The vector space for the domain and range
+ * (e.g., `dealii::Vector<double>`).
+ *
+ * @tparam PreconditionerType The preconditioner applied to accelerate the Krylov
+ * solver (e.g., `dealii::SparseILU`, `dealii::PreconditionJacobi`). Note that while
+ * this preconditioner is often constructed from an explicitly assembled `MatrixType`
+ * before being passed to this class, the `InverseMatrix` only requires it to be
+ * invocable by the solver.
  */
-template <typename MatrixType, typename VectorType, typename PreconditionerType>
+template <typename OperatorType, typename VectorType, typename PreconditionerType>
 class InverseMatrix
 {
 public:
@@ -168,7 +188,7 @@ public:
      * @param max_iter Maximum number of iterations allowed.
      * @param reltol Relative tolerance for the solver.
      */
-    InverseMatrix(const MatrixType& matrix,
+    InverseMatrix(const OperatorType& matrix,
                   const SolverMethod method,
                   const PreconditionerType& precond,
                   const unsigned max_iter = 1000,
@@ -197,6 +217,7 @@ public:
         const double tol = std::max(m_reltol * rhs_norm, SOLVER_MIN_TOL);
         m_control = SolverControl(m_max_iter, tol);
 
+        // TODO: continue on a partial solve with diagnostic, instead of throwing an exception
         switch (m_method) {
             case SolverMethod::GMRES:
                 {
@@ -219,24 +240,149 @@ public:
             default:
                 throw std::invalid_argument("Unknown SolverMethod");
         }
+
+        // catch (dealii::SolverControl::NoConvergence &e) {
+        //     // Log the warning but allow the descent algorithm to continue.
+        //     // A partial solve might still provide a valid descent direction!
+        //     std::cerr << "\n[Warning] Krylov solver did not converge!"
+        //               << "\n  Method:    " << static_cast<int>(method)
+        //               << "\n  Steps:     " << e.last_step
+        //               << "\n  Residual:  " << e.last_residual
+        //               << "\n  Tolerance: " << solver_control.tolerance()
+        //               << std::endl;
+        // }
     }
 
     /** @brief Returns the solver control object used in the last solve. */
     const SolverControl& control() const { return m_control; }
 
 private:
-    const MatrixType &m_matrix;
+    const OperatorType &m_matrix;
     const PreconditionerType &m_precond;
 
     const SolverMethod m_method;
     unsigned int m_max_iter;
     double m_reltol;
 
-    /**
-     * @brief Solver control object.
-     * Marked mutable to allow updating convergence state during @ref vmult.
-     */
+    // Must be mutable because the deal.II solve() routine updates its
+    // internal state (iteration count, achieved residual) during a logically const vmult
     mutable SolverControl m_control;
+};
+
+
+/**
+ * @brief A generic, type-erasing manager for linear solvers and preconditioners.
+ *
+ * This class isolates the deal.II Krylov solver template dispatching from the
+ * physical problem definition. It handles both static preconditioners (built once)
+ * and dynamic preconditioners (rebuilt when the non-linear density changes).
+ *
+ * ### Template Parameter Contracts
+ * @tparam OperatorType Represents the linear operator $A$. This does **not** need
+ * to be an explicitly assembled matrix. It can be any matrix-free class (such as
+ * @ref LinearCombination) as long as it provides a `vmult(dst, src)` method for
+ * the Krylov solver to compute matrix-vector products.
+ *
+ * @tparam MatrixType Represents an explicitly assembled sparse matrix
+ * (e.g., `dealii::SparseMatrix<double>`). This strict requirement exists because
+ * preconditioners like ILU, Jacobi, and SSOR must directly access explicit matrix
+ * elements (like the diagonal or triangular components) during setup.
+ *
+ * @tparam VectorType The vector type used for the domain and range of the operator
+ * (e.g., `dealii::Vector<double>`).
+ */
+// TODO pass on additional data to preconditioner, instead of fixing parameters
+template <typename OperatorType, typename MatrixType, typename VectorType>
+class PreconditionInverse
+{
+public:
+    /**
+     * @brief Constructs the generic preconditioned solver.
+     * @param solver_method_ The Krylov method to use (e.g., CG, MINRES, GMRES).
+     * @param max_iter_ Maximum number of inner iterations for the linear solver.
+     * @param tol_ Target tolerance for the linear solver residual.
+     * @param precond_type_ The preconditioning strategy.
+     */
+    PreconditionInverse(SolverMethod solver_method_,
+                         unsigned int max_iter_,
+                         double       tol_,
+                         Precondition precond_type_)
+        : solver_method(solver_method_)
+        , max_iter(max_iter_)
+        , tol(tol_)
+        , precond_type(precond_type_)
+    {}
+
+    /**
+     * @brief Builds preconditioners that only need to be set up once.
+     * e.g., ILU or AMG on the stationary matrix A0.
+     */
+    void setup_static(const MatrixType& static_matrix)
+    {
+        if (precond_type == Precondition::SPARSE_ILU) {
+            ilu_precond.initialize(static_matrix);
+        }
+        if (precond_type == Precondition::AMG) {
+            throw std::invalid_argument("Precondition::AMG not implemented");
+        }
+    }
+
+    /**
+     * @brief Rebuilds dynamic preconditioners using the latest assembled matrix.
+     */
+    void update_dynamic(const MatrixType& dynamic_matrix)
+    {
+        if (precond_type == Precondition::JACOBI) {
+            typename dealii::PreconditionJacobi<MatrixType>::AdditionalData data(0.6);
+            jacobi_precond.initialize(dynamic_matrix, data);
+        }
+        else if (precond_type == Precondition::SSOR) {
+            typename dealii::PreconditionSSOR<MatrixType>::AdditionalData data(1.2);
+            ssor_precond.initialize(dynamic_matrix, data);
+        }
+    }
+
+    /**
+     * @brief Solves op * dst = src.
+     */
+    unsigned solve(const OperatorType& op, const VectorType& src, VectorType& dst) const
+    {
+        switch (precond_type) {
+            case Precondition::SPARSE_ILU:
+                return solve_internal(op, dst, src, ilu_precond);
+            case Precondition::JACOBI:
+                return solve_internal(op, dst, src, jacobi_precond);
+            case Precondition::SSOR:
+                return solve_internal(op, dst, src, ssor_precond);
+            case Precondition::NONE:
+            default:
+                return solve_internal(op, dst, src, dealii::PreconditionIdentity());
+        }
+    }
+
+private:
+    template <typename PrecondType>
+    unsigned solve_internal(const OperatorType& op,
+                            VectorType& dst,
+                            const VectorType& src,
+                            const PrecondType& precond) const
+    {
+        // InverseMatrix now takes the decoupled parameters perfectly
+        const InverseMatrix<OperatorType, VectorType, PrecondType>
+        inv(op, solver_method, precond, max_iter, tol);
+
+        inv.vmult(dst, src);
+        return inv.control().last_step();
+    }
+
+    SolverMethod solver_method;
+    unsigned int max_iter;
+    double       tol;
+    Precondition precond_type;
+
+    dealii::SparseILU<double> ilu_precond;
+    dealii::PreconditionJacobi<MatrixType> jacobi_precond;
+    dealii::PreconditionSSOR<MatrixType> ssor_precond;
 };
 
 } // namespace gpe

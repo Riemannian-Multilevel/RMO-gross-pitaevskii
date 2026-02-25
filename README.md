@@ -44,14 +44,24 @@ The `EnergySimulator` serves as the orchestrator for the entire lifecycle:
 
 ---
 
-## Related Components
+## Operator and Preconditioner Abstractions
 
 * `LinearCombination`: Efficiently handles `A = A0 + beta * Mpp` without full matrix-matrix addition.
 * `InverseMatrix`: A wrapper for iterative solvers (CG, GMRES, MINRES) used in gradient computation.
 
+To maximize performance and minimize memory usage, the linear algebra pipeline strictly separates the concepts 
+of the "Operator" and the "Preconditioner Matrix":
+
+* **`OperatorType` (Matrix-Free):** The Krylov solvers (CG, GMRES) only require the ability to compute matrix-vector products. 
+We pass a `LinearCombination` object as the `OperatorType`. This avoids the expensive allocation and assembly of a full $A = A_0 + \beta M_{pp}$ matrix, 
+evaluating the sum on-the-fly via `vmult()`.
+* **`MatrixType` (Explicitly Assembled):** Preconditioners like `SparseILU`, `PreconditionJacobi`, and `PreconditionSSOR` mathematically
+require explicit access to matrix entries (e.g., extracting the diagonal or performing triangular sweeps). For these, we explicitly assemble 
+and pass a `SparseMatrix<double>`.
+
 ---
 
-## Quick Start: Running a Simulation
+## Quick Start
 
 To run a simulation, initialize the `EnergySimulator` with your discretization options and call `run` with your desired physical parameters.
 

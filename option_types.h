@@ -30,7 +30,7 @@ enum class SolverMethod
 
 enum class Precondition
 {
-    IDENTITY,
+    NONE,
     JACOBI,
     SSOR,
     SPARSE_ILU,
