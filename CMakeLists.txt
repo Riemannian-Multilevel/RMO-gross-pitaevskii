@@ -14,13 +14,15 @@ set(COMMON_HEADERS
         fe_space.h
         grid.h
         assemble.h
-        function.h
+        manifold.h
         lac.h
         util.h
         descent.h
         option.h
         option_types.h
         sparsity.h
+        gpe.h
+        random.h
         main.h
 )
 deal_ii_initialize_cached_variables()
@@ -42,3 +44,9 @@ add_executable(main_bench main_bench.cc)
 target_sources(main_bench PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(main_bench)
 target_link_libraries(main_bench fmt::fmt)
+
+# Verification of gradients
+add_executable(checkgradient checkgradient.cc)
+target_sources(checkgradient PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(checkgradient)
+target_link_libraries(checkgradient fmt::fmt)

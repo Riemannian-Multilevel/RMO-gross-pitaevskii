@@ -42,6 +42,7 @@ struct MG_Options
     unsigned int max_level;     // maximum level for multilevel algorithms
 };
 
+// TODO: separate (inner) solver options
 struct GdOptions
 {
     double tol_inner;       // relative tolerance for inner solver

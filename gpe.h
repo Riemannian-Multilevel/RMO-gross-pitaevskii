@@ -1,7 +1,6 @@
 //
 // Created by Ferdinand Vanmaele on 12.01.26.
 //
-
 #ifndef GPE_GPE_H
 #define GPE_GPE_H
 
@@ -78,7 +77,7 @@ public:
      *
      * @param x The current solution vector (incumbent).
      */
-    void assemble_nonlinear_term(Vector<double>& x)
+    void assemble_nonlinear_term(Vector<double>& x) const
     {
         // Apply constraints to incumbent solution
         constraints.distribute(x);
@@ -114,8 +113,10 @@ public:
 
     /** @brief Returns the linear operator \f$ A_0 \f$. */
     const SparseMatrix<double>& get_A0() const { return A0; }
+
     /** @brief Returns the mass matrix \f$ M \f$. */
     const SparseMatrix<double>& get_M() const { return M; }
+
     /** @brief Returns the non-linear mass matrix \f$ M_{\phi\phi} \f$. */
     const SparseMatrix<double>& get_Mpp() const { return Mpp; }
 
@@ -127,8 +128,15 @@ private:
 
     SparseMatrix<double> A0;  ///< Constant part of the operator (Laplacian + Potential).
     SparseMatrix<double> M;   ///< Standard mass matrix.
+
+    /** @brief The non-linear matrix is mutable to facilitate "lazy assembly."
+     * In the GPE, \f$ M_{pp} \f$ must be recomputed whenever the solution
+     * density \f$ |\phi|^2 \f$ changes. Marking it mutable allows consumers
+     * to trigger this assembly within logically @p const methods (like value
+     * evaluation or gradient computation).
+     */
     mutable SparseMatrix<double> Mpp; ///< Non-linear interaction matrix (changes every iteration).
-    SparsityPattern      sparsity_pattern;
+    SparsityPattern sparsity_pattern;
 };
 
 
@@ -208,12 +216,16 @@ public:
 
     /** @brief Access the underlying Finite Element space. */
     const FeSpace<dim>& get_space() const { return space; }
+
     /** @brief Access the DoF handler. */
     const dealii::DoFHandler<dim>& get_dofs() const { return space.get_dofs(); }
+
     /** @brief Access the number of degrees of freedom. */
-    const unsigned int n_dofs() const { return space.get_dofs().n_dofs(); }
+    [[nodiscard]] unsigned int n_dofs() const { return space.get_dofs().n_dofs(); }
+
     /** @brief Access the constraints. */
-    const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
+    [[nodiscard]] const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
+
     /** @brief Access the geometry/grid object. */
     const HyperCube<dim>& get_grid() const { return grid; }
 

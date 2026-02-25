@@ -34,6 +34,57 @@ public:
     }
 };
 
+namespace iteration
+{
+// Termination criteria for energy function minimization
+// TODO: make this generic?
+struct State
+{
+    double mass{0};
+    double lambda{0};
+    double residual{0};
+};
+
+// TODO: x*Mx is only for debugging/diagnostic purposes
+template <typename MatrixType>
+State residual(const Vector<double>& x,
+               const MatrixType& A0,
+               const MatrixType& Mpp,
+               const MatrixType& M, double beta)
+{
+    State prop;
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+    prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
+
+    Vector<double> Ax1(x.size()); // A0 x
+    A0.vmult(Ax1, x);
+
+    Vector<double> Ax2(x.size()); // Mpp x
+    Mpp.vmult(Ax2, x);
+
+    Ax1.add(beta, Ax2);             // (A0 + beta Mpp) x
+    prop.lambda = x * Ax1;          // Rayleigh quotient (x'Ax / x'Mx)
+
+    Vector<double> r(Ax1);
+    r.add(-prop.lambda, Mx);        // r = A x - lambda M x
+
+    // TODO: use enum for setting norm at runtime
+    prop.residual = 0.0;
+    if constexpr (M_NORM_RESIDUAL) {
+        Vector<double> Mr(r.size());
+        M.vmult(Mr, r);
+        prop.residual = std::sqrt(r * Mr);
+    }
+    else {
+        prop.residual = r.l2_norm();
+    }
+    return prop;
+}
+
+} // namespace iteration
+
+
 // Functions for GPE minimization
 namespace energy
 {
@@ -43,7 +94,7 @@ namespace energy
  *
  * Computes the energy value:
  * \f[
- * E(x) = \frac{1}{2} x^T A_0 x + \frac{1}{4} x^T M_{\phi\phi}(x) x
+ * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
  * \f]
  *
  * @tparam MatrixType A matrix class type providing a `vmult` method.
@@ -53,7 +104,7 @@ namespace energy
  * @return The computed energy value.
  */
 template <typename MatrixType>
-double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp)
+double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp, double beta)
 {
     Vector<double> Bx(x.size());
     A0.vmult(Bx, x);
@@ -62,7 +113,7 @@ double function_value(const Vector<double>& x, const MatrixType& A0, const Matri
     Vector<double> Mpp_x(x.size());
     Mpp.vmult(Mpp_x, x);
 
-    Bx.add(0.25, Mpp_x);
+    Bx.add(0.25*beta, Mpp_x);
     return x * Bx;
 }
 
@@ -447,6 +498,47 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
     v *= (nom/denom);
 }
 
+} // namespace energy
+
+
+namespace mass
+{
+
+/**
+ * @brief Projects a vector @p v onto the tangent space at @p x with respect to the
+ * mass-weighted inner product.
+ *
+ * This function computes the projection
+ * \f[
+ * \Pi_x(v) = v - \frac{\langle x, v \rangle_M}{\|x\|_M^2} x,
+ * \f]
+ * assuming the manifold is the sphere defined by the mass matrix @p M. If @p x is
+ * already normalized with respect to @p M (i.e., \f$\|x\|_M = 1\f$), this simplifies
+ * to \f$ \Pi_x(v) = v - (x^T M v) x \f$.
+ *
+ * @tparam MatrixType A matrix class type providing a `vmult` method (e.g., SparseMatrix).
+ * @param[in] x The base point on the manifold (assumed to be normalized in the M-metric).
+ * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
+ * @param[in] v The vector to be projected.
+ * @param[out] output The resulting projected vector in the tangent space \f$ T_x \mathcal{M} \f$.
+ */
+template <typename MatrixType>
+void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
+                                Vector<double>& output)
+{
+    Vector<double> Mv(x.size());
+    M.vmult(Mv, v);
+    const double xMv = x*Mv;
+
+    output = v;
+    output.add(-xMv, x);
+}
+
+} // namespace mass
+
+
+namespace coarse
+{
 /**
  * @brief Computes the coarse model function value using the Energy-weighted metric.
  *
@@ -463,16 +555,17 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
  * @return The scalar value.
  */
 template <typename MatrixType, typename OperatorType>
-double coarse_function_value(const Vector<double>& zeta,
-                             const Vector<double>& phi,
-                             const Vector<double>& w,
-                             const MatrixType& M,
-                             const MatrixType& A0,
-                             const MatrixType& Mpp,
-                             const OperatorType& A_zeta)
+double function_value(const Vector<double>& zeta,
+                      const Vector<double>& phi,
+                      const Vector<double>& w,
+                      const MatrixType& M,
+                      const MatrixType& A0,
+                      const MatrixType& Mpp,
+                      const OperatorType& A_zeta,
+                      double beta)
 {
     // 1. Compute Energy E(zeta)
-    const double energy = function_value(zeta, A0, Mpp);
+    const double energy = function_value(zeta, A0, Mpp, beta);
 
     // 2. Compute Inverse Retraction: v = invRet_phi(zeta)
     // Note: Retraction is geometric, so it still uses Mass matrix M usually
@@ -486,6 +579,46 @@ double coarse_function_value(const Vector<double>& zeta,
     const double correction_term = w * Av;
 
     // 4. Result
+    return energy - correction_term;
+}
+
+/**
+ * @brief Computes the coarse model function value using the mass-weighted metric.
+ *
+ * Psi(zeta) = E(zeta) - <w, invRet_phi(zeta)>_M
+ * = E(zeta) - w^T * M * invRet_phi(zeta)
+ *
+ * @param[in] zeta The coarse variable (argument of the function).
+ * @param[in] phi The base point (fine grid restriction).
+ * @param[in] w The restricted gradient/residual.
+ * @param[in] M The mass matrix (coarse level).
+ * @param[in] A0 The linear part of the stiffness matrix (coarse level).
+ * @param[in] Mpp The nonlinear part of the matrix evaluated at zeta.
+ * @return The scalar value of the coarse model.
+ */
+template <typename MatrixType>
+double function_value(const Vector<double>& zeta,
+                      const Vector<double>& phi,
+                      const Vector<double>& w,
+                      const MatrixType& M,
+                      const MatrixType& A0,
+                      const MatrixType& Mpp,
+                      double beta)
+{
+    // 1. Compute Energy E(zeta)
+    // using the existing function_value helper
+    const double energy = function_value(zeta, A0, Mpp, beta);
+
+    // 2. Compute Inverse Retraction: v = invRet_phi(zeta)
+    // We use a temporary vector since invRet modifies the argument in-place
+    Vector<double> v(zeta);
+    retract_inv_by_norm(M, v, phi);
+
+    // 3. Compute Inner Product <w, v>_M = w^T * M * v
+    Vector<double> Mv(zeta.size());
+    M.vmult(Mv, v);
+
+    const double correction_term = w * Mv;
     return energy - correction_term;
 }
 
@@ -505,12 +638,12 @@ double coarse_function_value(const Vector<double>& zeta,
  * @param dst Output vector
  */
 template <typename MatrixType, typename InverseOperatorType>
-void coarse_gradient(const MatrixType& M,
-                     const InverseOperatorType& A_inv,
-                     const Vector<double>& zeta,
-                     const Vector<double>& phi,
-                     const Vector<double>& w,
-                     Vector<double>& dst)
+void gradient(const MatrixType& M,
+              const InverseOperatorType& A_inv,
+              const Vector<double>& zeta,
+              const Vector<double>& phi,
+              const Vector<double>& w,
+              Vector<double>& dst)
 {
     const unsigned int n = zeta.size();
 
@@ -547,127 +680,7 @@ void coarse_gradient(const MatrixType& M,
     v += u;
 
     // 6. Project onto tangent space
-    project_onto_tangent_space(A_inv, zeta, M, v, dst);
-}
-
-// Termination criteria for energy function minimization
-// TODO: make this generic?
-struct State
-{
-    double mass{0};
-    double lambda{0};
-    double residual{0};
-};
-
-// TODO: x*Mx is only for debugging/diagnostic purposes
-template <typename MatrixType>
-State residual(const Vector<double>& x,
-                  const MatrixType& A0,
-                  const MatrixType& Mpp,
-                  const MatrixType& M, double beta)
-{
-    State prop;
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-    prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
-
-    Vector<double> Ax1(x.size()); // A0 x
-    A0.vmult(Ax1, x);
-
-    Vector<double> Ax2(x.size()); // Mpp x
-    Mpp.vmult(Ax2, x);
-
-    Ax1.add(beta, Ax2);             // (A0 + beta Mpp) x
-    prop.lambda = x * Ax1;          // Rayleigh quotient (x'Ax / x'Mx)
-
-    Vector<double> r(Ax1);
-    r.add(-prop.lambda, Mx);        // r = A x - lambda M x
-
-    // TODO: use enum for setting norm at runtime
-    prop.residual = 0.0;
-    if constexpr (M_NORM_RESIDUAL) {
-        Vector<double> Mr(r.size());
-        M.vmult(Mr, r);
-        prop.residual = std::sqrt(r * Mr);
-    }
-    else {
-        prop.residual = r.l2_norm();
-    }
-    return prop;
-}
-
-} // namespace energy
-
-namespace mass
-{
-
-/**
- * @brief Projects a vector @p v onto the tangent space at @p x with respect to the
- * mass-weighted inner product.
- *
- * This function computes the projection
- * \f[
- * \Pi_x(v) = v - \frac{\langle x, v \rangle_M}{\|x\|_M^2} x,
- * \f]
- * assuming the manifold is the sphere defined by the mass matrix @p M. If @p x is
- * already normalized with respect to @p M (i.e., \f$\|x\|_M = 1\f$), this simplifies
- * to \f$ \Pi_x(v) = v - (x^T M v) x \f$.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method (e.g., SparseMatrix).
- * @param[in] x The base point on the manifold (assumed to be normalized in the M-metric).
- * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
- * @param[in] v The vector to be projected.
- * @param[out] output The resulting projected vector in the tangent space \f$ T_x \mathcal{M} \f$.
- */
-template <typename MatrixType>
-void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
-                                Vector<double>& output)
-{
-    Vector<double> Mv(x.size());
-    M.vmult(Mv, v);
-    const double xMv = x*Mv;
-
-    output = v;
-    output.add(-xMv, x);
-}
-
-/**
- * @brief Computes the coarse model function value using the mass-weighted metric.
- *
- * Psi(zeta) = E(zeta) - <w, invRet_phi(zeta)>_M
- * = E(zeta) - w^T * M * invRet_phi(zeta)
- *
- * @param[in] zeta The coarse variable (argument of the function).
- * @param[in] phi The base point (fine grid restriction).
- * @param[in] w The restricted gradient/residual.
- * @param[in] M The mass matrix (coarse level).
- * @param[in] A0 The linear part of the stiffness matrix (coarse level).
- * @param[in] Mpp The nonlinear part of the matrix evaluated at zeta.
- * @return The scalar value of the coarse model.
- */
-template <typename MatrixType>
-double coarse_function_value(const Vector<double>& zeta,
-                             const Vector<double>& phi,
-                             const Vector<double>& w,
-                             const MatrixType& M,
-                             const MatrixType& A0,
-                             const MatrixType& Mpp)
-{
-    // 1. Compute Energy E(zeta)
-    // using the existing function_value helper
-    const double energy = function_value(zeta, A0, Mpp);
-
-    // 2. Compute Inverse Retraction: v = invRet_phi(zeta)
-    // We use a temporary vector since invRet modifies the argument in-place
-    Vector<double> v(zeta);
-    retract_inv_by_norm(M, v, phi);
-
-    // 3. Compute Inner Product <w, v>_M = w^T * M * v
-    Vector<double> Mv(zeta.size());
-    M.vmult(Mv, v);
-
-    const double correction_term = w * Mv;
-    return energy - correction_term;
+    energy::project_onto_tangent_space(A_inv, zeta, M, v, dst);
 }
 
 /**
@@ -688,13 +701,13 @@ double coarse_function_value(const Vector<double>& zeta,
  * @param dst Output vector
  */
 template <typename MatrixType, typename InverseMatrixType>
-void coarse_gradient(const MatrixType& M,
-                     const InverseMatrixType& M_inv,
-                     const MatrixType& A,
-                     const Vector<double>& zeta,
-                     const Vector<double>& phi,
-                     const Vector<double>& w,
-                     Vector<double>& dst)
+void gradient(const MatrixType& M,
+              const InverseMatrixType& M_inv,
+              const MatrixType& A,
+              const Vector<double>& zeta,
+              const Vector<double>& phi,
+              const Vector<double>& w,
+              Vector<double>& dst)
 {
     const unsigned int n = zeta.size();
 
@@ -733,10 +746,10 @@ void coarse_gradient(const MatrixType& M,
     v.add(1.0 / s, w);
 
     // 8. Project onto tangent space using the provided mass-based projection
-    project_onto_tangent_space(zeta, M, v, dst);
+    mass::project_onto_tangent_space(zeta, M, v, dst);
 }
 
-} // namespace mass
+} // namespace coarse
 
 } // namespace gpe
 

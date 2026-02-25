@@ -1,5 +1,5 @@
-#ifndef GPE_ENERGY_H
-#define GPE_ENERGY_H
+#ifndef GPE_DESCENT_H
+#define GPE_DESCENT_H
 
 #include "lac.h"
 #include "option_types.h"
@@ -34,13 +34,6 @@ using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 //     UNKNOWN
 // };
 
-template <typename MatrixType, typename VectorType>
-struct EmptyUpdateStrategy {
-    void operator()(MatrixType& M, const VectorType& v) const
-    {}
-};
-
-
 // TODO: Armijo line search (cf. fcvx/descent.h)
 
 //! Riemannian gradient descent for the GPE energy minimization
@@ -49,7 +42,7 @@ struct EmptyUpdateStrategy {
 //! @param options Termination criteria
 //! @param os Output stream for diagnostics
 //! @return
-template <typename Oracle, typename PostSmoothing = EmptyUpdateStrategy<SparseMatrix<double>, Vector<double>>>
+template <typename Oracle>
 Vector<double>
 gradient_descent(Oracle&& O, const Vector<double>& x0,
                  const GdOptions& options, std::ostream& os)
@@ -61,7 +54,6 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
     dealii::ConvergenceTable convergence_table;
 
     bool break_on_next = false;
-    unsigned int iter;
     unsigned int lac_iter = 0;  // number of iterations in inner solver taken
     // TODO: turn debug printing into logger/verbosity flag in options
     std::cerr << "Iteration: ";
@@ -69,28 +61,30 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
     // Begin RGD iteration
     Vector<double> g(x.size());
 
-    for (iter = 0; iter < options.max_iter; iter++) {
+    // Keep track of states locally
+    iteration::State current_state;
+    iteration::State previous_state;
+
+    for (unsigned int iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints and assemble iteration matrices
         O.initialize(x);
+        current_state = O.residual(x);
 
-        // Compute termination criteria
-        auto ctrl = O.residual();
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
         // TODO: move to function.h
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", ctrl.mass);
-        convergence_table.add_value("lambda", ctrl.lambda);
-        convergence_table.add_value("residual", ctrl.residual);
+        convergence_table.add_value("mass", current_state.mass);
+        convergence_table.add_value("lambda", current_state.lambda);
+        convergence_table.add_value("residual", current_state.residual);
         convergence_table.add_value("energy", O.value(x));
 
-        // --- riemannian gradient descent
         if (break_on_next) {
             break;
         }
-        if (O.check_convergence(options)) {
+        if (O.check_convergence(current_state, previous_state, options)) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break_on_next = true;
@@ -103,7 +97,10 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         // Retraction: x <- (x - h g) / ||x - h g||_M
         O.retract(g, x, -options.step_size);
 
+        // Store current state for the next iteration's delta check
+        previous_state = current_state;
     }
+
     std::cerr << std::endl << std::endl;
     convergence_table.set_precision("mass", 4);
     convergence_table.set_precision("lambda", 4);
@@ -123,4 +120,5 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
 }
 
 } // namespace gpe
-#endif //GPE_ENERGY_H
+
+#endif //GPE_DESCENT_H

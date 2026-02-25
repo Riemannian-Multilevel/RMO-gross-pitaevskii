@@ -48,3 +48,27 @@ The `EnergySimulator` serves as the orchestrator for the entire lifecycle:
 
 * `LinearCombination`: Efficiently handles `A = A0 + beta * Mpp` without full matrix-matrix addition.
 * `InverseMatrix`: A wrapper for iterative solvers (CG, GMRES, MINRES) used in gradient computation.
+
+---
+
+## Quick Start: Running a Simulation
+
+To run a simulation, initialize the `EnergySimulator` with your discretization options and call `run` with your desired physical parameters.
+
+```cpp
+// Configure discretization (Mesh, FE Degree, etc.)
+GPE_Options options;
+options.beta = 100.0;
+options.degree = 1;
+
+// Configure Solver (Tolerances, Max Iterations)
+GdOptions gd_options;
+gd_options.tol_residual = 1e-4;
+gd_options.step_size = 1.0;
+
+// Initialize Simulator
+unsigned int n_refinements = 8;
+EnergySimulator<2> simulator(options, n_refinements);
+
+// Execute solve with a Square potential
+auto solution = simulator.run(Square<2>(), gd_options, options.beta);
