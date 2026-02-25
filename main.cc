@@ -1,8 +1,8 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include "main.h"
-#include "function.h"
+#include "gpe.h"
+#include "manifold.h"
 #include "option.h"
 #include "util.h"
 
@@ -12,16 +12,6 @@
 using namespace gpe;
 using namespace dealii;
 
-template <int dim, typename Solver>
-void package(Solver& GS, const double beta, const GdOptions& options_rgd, unsigned int level)
-{
-    // Run gradient descent
-    auto x = GS.run(Square<dim>(), 1.0, beta, options_rgd, std::cout);
-
-    // Plot solution
-    output_results(x, GS.fe_space().get_dofs(), DataOutBase::OutputFormat::vtk,
-        fmt::format("solution_{}d_lvl{}.vtk", dim, level));
-}
 
 int main(int argc, char* argv[])
 {
@@ -55,9 +45,15 @@ int main(int argc, char* argv[])
             unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
             unsigned int max_level = options_mg.max_level;
 
-            for (unsigned int i = min_level; i < max_level; ++i) {
-                GPE<dim> GS(options, i+1);
-                package<dim>(GS, options.beta, options_rgd, i);
+            for (unsigned int level = min_level; level < max_level; ++level) {
+                GrossPitaevskiiPackage<dim> GS(options, level+1);
+
+                // Run gradient descent
+                auto x = GS.run(Square<dim>(), 1.0, options.beta, options_rgd, std::cout);
+
+                // Plot solution
+                std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
+                output_results(x, GS.fe_space().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
             }
         });
     }
