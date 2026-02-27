@@ -534,6 +534,21 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-xMv, x);
 }
 
+// Riemannian gradient for the sphere S^{n-1} with mass metric
+template <typename MatrixType, typename InverseMatrixType>
+void gradient(const InverseMatrixType& Minv, const MatrixType& A, const MatrixType& M,
+              const Vector<double>& x, Vector<double>& output)
+{
+    Vector<double> Ax(x.size());
+    A.vmult(Ax, x);
+
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+
+    Ax.add(-(x*Ax), Mx);
+    Minv.vmult(output, Ax);
+}
+
 } // namespace mass
 
 
