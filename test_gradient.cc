@@ -36,21 +36,21 @@ double tangent_condition(const Vector<double>& x, const MatrixType& M, const Vec
 
 }
 template <typename MatrixType>
-void random_point(const MatrixType& M, Vector<double>& output,
+void random_point(const MatrixType& M, Vector<double>& x,
                   double mean = 0.0, double stddev = 1.0)
 {
-    normrnd(mean, stddev, output);
+    normrnd(mean, stddev, x);
 
-    Vector<double> Mx(output.size());
-    M.vmult(Mx, output);
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
 
-    const double factor = output*Mx;
-    output *= std::sqrt(factor);
+    const double factor = x*Mx;
+    x /= std::sqrt(factor);
 }
 
 template <typename FuncType>
-double finite_difference(const FuncType& F, const Vector<double>& x,
-    const Vector<double>& v, double h, double Fx)
+long double finite_difference(const FuncType& F, const Vector<double>& x,
+    const Vector<double>& v, long double h, long double Fx)
 {
     AssertThrow(h > 0, dealii::ExcMessage("h must be positive"));
 
@@ -58,7 +58,7 @@ double finite_difference(const FuncType& F, const Vector<double>& x,
     Vector<double> tmp(x);
     tmp.add(h, v);
 
-    return (F(tmp) - Fx) / h;
+    return static_cast<long double>(F(tmp) - Fx) / h;
 }
 
 std::vector<double>
@@ -88,6 +88,9 @@ void check_gradient(const FuncF& f,
 }
 
 // TODO: check first order-coherence
+using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
+template <typename PrecondType>
+using InverseOpType = InverseMatrix<OperatorType, PrecondType>;
 
 int main()
 {
@@ -106,19 +109,7 @@ int main()
     GrossPitaevskiiProblem<2> problem = GS.problem(Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
-    // 1. Check that Riemannian gradient is in the tangential space
-
-    // The Riemannian gradient of E at x is defined as,
-    // the unique element in the tangent space at x, T_x S,
-    // such that for all v in T_x S,
-    // g_x(\grad(x), v) = DE(x)[v]
-    // 2. verify this condition for finite difference (directional derivative)
-
-    // -> error with Taylor expansion
-
     dealii::ConvergenceTable convergence_table;
-    using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
-    using InverseOpType = InverseMatrix<OperatorType>;
 
     // TODO: functor with f(.), grad(.), metric(.) arguments
     //       input: GrossPitaevskiiProblem<dim>
@@ -134,37 +125,54 @@ int main()
 
         // --- Assemble operators
         // Update metric for x
+        dealii::PreconditionJacobi<SparseMatrix<double>> jacobi_M;
+        jacobi_M.initialize(problem.get_M());
+
         problem.assemble_nonlinear_term(x);
         const auto& M = problem.get_operator_M();
-        auto Minv = InverseOpType(M, SolverMethod::MINRES);
+        auto Minv = InverseMatrix(M, SolverMethod::CG, jacobi_M, 2000, 1e-12);
 
         const auto& A = problem.get_operator_A(options.beta);
-        auto Ainv = InverseOpType(A, SolverMethod::MINRES);
-        const auto& Ac = problem.get_operator_A(options.beta/2);  // for function value
+        auto Ainv = InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12);
+
+        // Check x fulfills |x|_M = 1
+        Vector<double> Mx(x.size());
+        M.vmult(Mx, x);
+        convergence_table.add_value("x_constr", x*Mx);
 
         // TODO: check for A-metric
-        auto f = [&Ac](const Vector<double>& x)
+        auto f = [&A](const Vector<double>& y)
         {
-            return ellipsoid::function_value(x, Ac);  // needs to evaluated at multiple points
+            //const auto& Ac = problem.get_operator_A(options.beta/2);  // for function value
+            //return ellipsoid::function_value(x, Ac);  // needs to evaluated at multiple points
+            Vector<double> Ay(y.size());
+            A.vmult(Ay, y);
+            return 0.5 * (y * Ay);
         };
-        auto g = [&Minv, &A, &M](const Vector<double>& x)
+        auto g = [&Ainv, &M](const Vector<double>& y)
         {
-            Vector<double> x_grad(x.size());
-            ellipsoid::gradient(Minv, A, M, x, x_grad);
+            // Vector<double> x_grad(x.size());
+            // ellipsoid::gradient(Minv, A, M, x, x_grad);
+            // return x_grad;
+            Vector<double> x_grad(y.size());
+            ellipsoid::gradient(Ainv, M, y, x_grad);
             return x_grad;
         };
-        auto metric = [&M](const Vector<double>& y, const Vector<double>& z)
+        auto metric = [&A](const Vector<double>& y, const Vector<double>& z)
         {
-            Vector<double> Mz(z.size());
-            M.vmult(Mz, z);
-            return y*Mz;
+            // Vector<double> Mz(z.size());
+            // M.vmult(Mz, z);
+            // return y*Mz;
+            Vector<double> Az(z.size());
+            A.vmult(Az, z);
+            return y*Az;
         };
 
         // --- Perform verification
         // 2. Generate a random tangent vector v at x with |v|_x = 1
         Vector<double> v(n_dofs);
         random_tangent_vector(x, M, v, 0.0, 1.0);
-        v /= std::sqrt(metric(v, v));  // tangent vector of norm 1
+        v /= std::sqrt(metric(v, v));  // tangent vector with |v|_x = 1
 
         Vector<double> x_grad = g(x);
         double fx = f(x);
@@ -174,10 +182,10 @@ int main()
         // such that for all v in T_x S,
         // g_x(\grad(x), v) = DE(x)[v]
         // 2b. Verify this condition for finite difference (directional derivative)
-        double dir_xv = finite_difference(f, x, x_grad, 1e-8, fx);
         double g_xv = metric(x_grad, v);
-        convergence_table.add_value("direct_xv",dir_xv);
         convergence_table.add_value("grad_xv",g_xv);
+        double dir_xv8 = finite_difference(f, x, v, 1e-8, fx);
+        convergence_table.add_value("dir_xv_1e-8",dir_xv8);
 
         // 3. Compute f(x) and grad_x f(x)
         //    Check that grad is in T_x S
@@ -186,9 +194,10 @@ int main()
         convergence_table.add_value("tan_cond",tan_cond);
 
         // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
-        auto ts = logspace(-8,0,100);
-        auto Ets = std::vector<double>();
-        Ets.reserve(ts.size());
+        auto ts = logspace(-8,1,100);
+        // auto Ets = std::vector<double>();
+        // Ets.reserve(ts.size());
+        std::vector<double> log_ts, log_Ets;
 
         for (auto t : ts) {
             auto tv = Vector(v);
@@ -197,7 +206,8 @@ int main()
             auto Rx_tv = Vector(x);
             ellipsoid::retract_by_norm(M, tv, Rx_tv);  // input-output vector
 
-            double Et = std::abs(f(Rx_tv) - fx - t*g_xv);
+            long double Et = std::abs(f(Rx_tv) - fx - t*g_xv);
+            //Ets.push_back(Et);
             outfile << std::scientific << std::setprecision(10) << t << "\t" << Et << std::endl;
         }
 
@@ -212,11 +222,13 @@ int main()
         //
     }
 
-    convergence_table.set_precision("direct_xv", 6);
+    convergence_table.set_precision("x_constr", 6);
+    convergence_table.set_precision("dir_xv_1e-8", 6);
     convergence_table.set_precision("grad_xv", 6);
     convergence_table.set_precision("tan_cond", 6);
 
-    convergence_table.set_scientific("direct_xv", true);
+    convergence_table.set_scientific("x_constr", true);
+    convergence_table.set_scientific("dir_xv_1e-8", true);
     convergence_table.set_scientific("grad_xv", true);
     convergence_table.set_scientific("tan_cond", true);
 
