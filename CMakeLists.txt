@@ -46,7 +46,8 @@ deal_ii_setup_target(main_bench)
 target_link_libraries(main_bench fmt::fmt)
 
 # Verification of gradients
-add_executable(checkgradient checkgradient.cc)
-target_sources(checkgradient PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(checkgradient)
-target_link_libraries(checkgradient fmt::fmt)
+# TODO: register cmake test
+add_executable(test_gradient test_gradient.cc)
+target_sources(test_gradient PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(test_gradient)
+target_link_libraries(test_gradient fmt::fmt)

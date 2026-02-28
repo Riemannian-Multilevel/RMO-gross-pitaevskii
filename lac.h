@@ -167,16 +167,13 @@ private:
  * products on the fly. The only strict requirement is that it provides a
  * `vmult(VectorType&, const VectorType&)` method.
  *
- * @tparam VectorType The vector space for the domain and range
- * (e.g., `dealii::Vector<double>`).
- *
- * @tparam PreconditionerType The preconditioner applied to accelerate the Krylov
+ * @tparam PrecondType The preconditioner applied to accelerate the Krylov
  * solver (e.g., `dealii::SparseILU`, `dealii::PreconditionJacobi`). Note that while
  * this preconditioner is often constructed from an explicitly assembled `MatrixType`
  * before being passed to this class, the `InverseMatrix` only requires it to be
  * invocable by the solver.
  */
-template <typename OperatorType, typename VectorType, typename PreconditionerType>
+template <typename OperatorType, typename PrecondType = dealii::PreconditionIdentity>
 class InverseMatrix
 {
 public:
@@ -190,7 +187,7 @@ public:
      */
     InverseMatrix(const OperatorType& matrix,
                   const SolverMethod method,
-                  const PreconditionerType& precond,
+                  const PrecondType& precond = {},
                   const unsigned max_iter = 1000,
                   const double reltol = 1e-6)
         : m_matrix(matrix)
@@ -210,6 +207,7 @@ public:
      * @param rhs The right-hand side vector.
      * @throws std::invalid_argument If an unsupported SolverMethod is provided.
      */
+    template <typename VectorType>
     void vmult(VectorType &dst, const VectorType &rhs) const
     {
         dst = 0.0;
@@ -258,7 +256,7 @@ public:
 
 private:
     const OperatorType &m_matrix;  // TODO: m_oper?
-    const PreconditionerType &m_precond;
+    const PrecondType &m_precond;
 
     const SolverMethod m_method;
     unsigned int m_max_iter;
@@ -287,12 +285,9 @@ private:
  * (e.g., `dealii::SparseMatrix<double>`). This strict requirement exists because
  * preconditioners like ILU, Jacobi, and SSOR must directly access explicit matrix
  * elements (like the diagonal or triangular components) during setup.
- *
- * @tparam VectorType The vector type used for the domain and range of the operator
- * (e.g., `dealii::Vector<double>`).
  */
 // TODO pass on additional data to preconditioner, instead of fixing parameters
-template <typename OperatorType, typename MatrixType, typename VectorType>
+template <typename OperatorType, typename MatrixType>
 class PreconditionInverse
 {
 public:
@@ -301,14 +296,14 @@ public:
      * @param method The Krylov method to use (e.g., CG, MINRES, GMRES).
      * @param max_iter Maximum number of inner iterations for the linear solver.
      * @param reltol Target tolerance for the linear solver residual.
-     * @param precond_type_ The preconditioning strategy.
+     * @param precond_type The preconditioning strategy.
      */
     PreconditionInverse(const OperatorType& matrix,
                         SolverMethod method,
                         Precondition precond_type,
                         unsigned int max_iter = 1000,
                         double       reltol   = 1e-6)
-        : m_matrix(matrix)
+        : m_op(matrix)
         , m_method(method)
         , m_precond_type(precond_type)
         , m_max_iter(max_iter)
@@ -348,18 +343,19 @@ public:
     }
 
     /** @brief Solves op * dst = src. */
+    template <typename VectorType>
     void vmult(VectorType& dst, const VectorType& src) const
     {
         switch (m_precond_type) {
             case Precondition::SPARSE_ILU:
-                solve_with(m_matrix, dst, src, ilu_precond);
+                solve_with(m_op, dst, src, ilu_precond);
             case Precondition::JACOBI:
-                solve_with(m_matrix, dst, src, jacobi_precond);
+                solve_with(m_op, dst, src, jacobi_precond);
             case Precondition::SSOR:
-                solve_with(m_matrix, dst, src, ssor_precond);
+                solve_with(m_op, dst, src, ssor_precond);
             case Precondition::NONE:
             default:
-                solve_with(m_matrix, dst, src, dealii::PreconditionIdentity());
+                solve_with(m_op, dst, src, dealii::PreconditionIdentity());
         }
     }
 
@@ -367,19 +363,19 @@ public:
     const SolverControl& control() const { return m_control; }
 
 private:
-    template <typename PrecondType>
+    template <typename VectorType, typename PrecondType>
     void solve_with(const OperatorType& matrix, VectorType& dst, const VectorType& src,
                     const PrecondType& precond) const
     {
         // InverseMatrix now takes the decoupled parameters perfectly
-        const InverseMatrix<OperatorType, VectorType, PrecondType>
-        inv(matrix, m_method, precond, m_max_iter, m_reltol);
+        const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_method,
+            precond, m_max_iter, m_reltol);
 
         inv.vmult(dst, src);
         m_control = inv.control();
     }
 
-    const OperatorType &m_matrix;  // TODO: m_oper?
+    const OperatorType &m_op;
     SolverMethod m_method;
     Precondition m_precond_type;
     unsigned int m_max_iter;

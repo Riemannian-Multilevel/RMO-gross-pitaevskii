@@ -86,6 +86,9 @@ public:
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
 
+    // TODO: call assemble_nonlinear_term() here?
+    // Since LinearCombination stores pointers to matrices, these functions are lazy;
+    // the (non-linear) terms can be assembled after calling this funciton.
     auto get_operator_A(const double beta) const
     {
         using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
@@ -119,6 +122,8 @@ public:
 
     /** @brief Returns the non-linear mass matrix \f$ M_{\phi\phi} \f$. */
     const SparseMatrix<double>& get_Mpp() const { return Mpp; }
+
+    unsigned int n_dofs() const { return dof_handler.n_dofs(); }  // A0.m()
 
 private:
     const dealii::DoFHandler<dim>& dof_handler;

@@ -1,5 +1,5 @@
 #include "manifold.h"
-#include "gpe.h"
+#include "main.h"
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -15,17 +15,15 @@ using namespace gpe;
 //       multiple runs with average time/stddev
 template <int dim>
 static void
-prolongate_between_meshes(const GrossPitaevskiiPackage<dim> &coarse,
-                          const Vector<double> &x_coarse,
-                          const GrossPitaevskiiPackage<dim> &fine,
-                          Vector<double> &y0_fine)
+prolongate_between_meshes(const EnergySimulator<dim> &coarse, const Vector<double> &x_coarse,
+                          const EnergySimulator<dim> &fine, Vector<double> &y0_fine)
 {
     y0_fine.reinit(fine.n_dofs());
     y0_fine = 0.0;
 
-    VectorTools::interpolate_to_finer_mesh(coarse.get_dofs(), x_coarse,
-                                           fine.get_dofs(), fine.get_constraints(),
-                                           y0_fine);
+    VectorTools::interpolate_to_finer_mesh(coarse.get_dofs(),
+        x_coarse, fine.get_dofs(),
+        fine.get_constraints(), y0_fine);
 }
 
 int main()
@@ -75,7 +73,7 @@ int main()
     }
 
     // 1) One solver per refinement count
-    MGLevelObject<std::unique_ptr<GrossPitaevskiiPackage<dim>>> solver(ref_min, ref_max);
+    MGLevelObject<std::unique_ptr<EnergySimulator<dim>>> solver(ref_min, ref_max);
 
     // for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     //     solver[ref - ref_min] = std::make_unique<GPE<dim>>(options, ref);
@@ -86,8 +84,7 @@ int main()
         std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
         TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
 
-        solver[ref] = std::make_unique<GrossPitaevskiiPackage<dim>>(options, ref);
-        solver[ref]->assemble(V);
+        solver[ref] = std::make_unique<EnergySimulator<dim>>(V, options, ref);
     }
 
     // 3) Hierarchy of starting vectors (indexed by refinement count!)
@@ -97,7 +94,7 @@ int main()
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     {
         y0[ref].reinit(solver[ref]->n_dofs());
-        x[ref].reinit(solver[ref]->n_dofs());
+        x [ref].reinit(solver[ref]->n_dofs());
     }
 
     {   // Multiresolution

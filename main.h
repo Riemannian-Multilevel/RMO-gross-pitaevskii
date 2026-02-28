@@ -3,6 +3,7 @@
 //
 #ifndef GPE_MAIN_H
 #define GPE_MAIN_H
+
 #include "manifold.h"
 #include "lac.h"
 #include "gpe.h"
@@ -26,7 +27,7 @@ public:
     /** @brief Alias for the combined linear operator type. */
     using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
     /** @brief Alias for the preconditioned inverse operator type. */
-    using InverseOpType = InverseMatrix<OperatorType, Vector<double>, dealii::SparseILU<double>>;
+    using InverseOpType = InverseMatrix<OperatorType, dealii::SparseILU<double>>;
 
     /**
      * @brief Constructs the Oracle by referencing an existing GPE problem.
@@ -51,7 +52,7 @@ public:
      * current solution \f$ \phi \in x \f$.
      * @param x The current solution vector.
      */
-    void initialize(Vector<double>& x)
+    void update(Vector<double>& x)
     {
         problem.assemble_nonlinear_term(x);
     }
@@ -64,7 +65,7 @@ public:
      */
     double value(const Vector<double>& x) const
     {
-        return energy::function_value(x, problem.get_A0(), problem.get_Mpp(), beta);
+        return ellipsoid::function_value(x, problem.get_A0(), problem.get_Mpp(), beta);
     }
 
     /**
@@ -80,7 +81,7 @@ public:
     {
         const InverseOpType Aop_inv(Aop, options.solver, precond, options.max_inner, options.tol_inner);
 
-        energy::gradient(Aop_inv, Mop, x, output);
+        ellipsoid::gradient(Aop_inv, Mop, x, output);
 
         return Aop_inv.control().last_step();
     }
@@ -94,7 +95,7 @@ public:
      */
     void retract(const Vector<double>& z, Vector<double>& x, double factor) const
     {
-        energy::retract_by_norm(problem.get_M(), z, x, factor);
+        ellipsoid::retract_by_norm(problem.get_M(), z, x, factor);
     }
 
     /**
@@ -151,46 +152,58 @@ class EnergySimulator
 public:
     /**
      * @brief Constructor.
+     * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
+     * @param V The potential object.
      * @param options General options for GPE discretization.
      * @param n_levels Number of global mesh refinements.
      */
-    EnergySimulator(const GPE_Options& options, unsigned int n_levels)
+    template <typename Potential>
+    EnergySimulator(Potential&& V, const GPE_Options& options, unsigned int n_levels)
         : package(options, n_levels)
+        , problem(package.problem(std::forward<Potential>(V)))
         , options(options)
     {}
 
+    // Allow to change the potential without re-discretizing the domain.
+    template <typename Potential>
+    void reinit(Potential&& V)
+    {
+        problem = package.problem(std::forward<Potential>(V));
+    }
+
     /**
      * @brief Runs the energy minimization for a given potential.
-     * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
-     * @param V The potential object.
-     * @param gd_options Options for the gradient descent algorithm.
      * @param beta The interaction strength constant.
+     * @param gd_options Options for the gradient descent algorithm.
      */
-    template <typename Potential>
     Vector<double>
-    run(Potential&& V, const GdOptions& gd_options, double beta)
+    run(const Vector<double>& x0, double beta, const GdOptions& gd_options, std::ostream& os)
     {
-        // Generate the problem object (owns matrices A0 and M)
-        auto problem = package.problem(std::forward<Potential>(V));
+        Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
 
-        // Create the oracle (references problem matrices)
+        // Create the oracle (light-weight object, references problem matrices)
         EnergyOracle<dim> oracle(problem, beta);
 
-        // Prepare initial guess (unit constant vector)
-        Vector<double> x0(package.get_dofs().n_dofs());
-        x0 = 1.0;
-        package.get_constraints().distribute(x0);
-
         // Riemannian gradient descent
-        return gradient_descent(oracle, x0, gd_options, std::cout);
+        // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
+        return gradient_descent(oracle, x0, [this](Vector<double>& x){
+            problem.assemble_nonlinear_term(x);  // or oracle.update(x)
+        }, gd_options, os);
     }
 
     /** @brief Access the discretization package. */
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
+    const GrossPitaevskiiProblem<dim>& get_problem() const { return problem; }
+
+    unsigned int n_dofs() const { return package.n_dofs(); }
+    const dealii::DoFHandler<dim>& get_dofs() const { return package.get_dofs(); }
+    const dealii::AffineConstraints<double>& get_constraints() const { return package.get_constraints(); }
 
 private:
     /** @brief Persistent discretization infrastructure. */
     GrossPitaevskiiPackage<dim> package;
+    /** @brief Assembly and storage of matrices. */
+    GrossPitaevskiiProblem<dim> problem;
     /** @brief Problem configuration options. */
     GPE_Options options;
 };

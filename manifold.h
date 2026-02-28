@@ -86,7 +86,9 @@ State residual(const Vector<double>& x,
 
 
 // Functions for GPE minimization
-namespace energy
+// Note: due to compartmentalizing as functions, some values are necessarily computed anew.
+// TODO: restructure by gpe { metric { }, manifold { } } ... to clarify metric dependence?
+namespace ellipsoid
 {
 
 /**
@@ -115,6 +117,15 @@ double function_value(const Vector<double>& x, const MatrixType& A0, const Matri
 
     Bx.add(0.25*beta, Mpp_x);
     return x * Bx;
+}
+
+// As above but for an operator A_x~ = A0 + beta/2 Mpp
+template <typename OperatorType>
+double function_value(const Vector<double>& x, const OperatorType& A)
+{
+    Vector<double> Ax(x.size());
+    A.vmult(Ax, x);
+    return x * Ax;
 }
 
 /**
@@ -185,9 +196,7 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv,
  * @param[out] output The resulting projected vector.
  */
 template <typename MatrixType, typename InverseMatrixType>
-void project_onto_tangent_space(const InverseMatrixType& A_inv,
-                                const Vector<double>& x,
-                                const MatrixType& M,
+void project_onto_tangent_space(const InverseMatrixType& A_inv, const Vector<double>& x, const MatrixType& M,
                                 Vector<double>& output)
 {
     Vector<double> Mx(x.size());
@@ -206,12 +215,90 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv,
     output.add(-1.0/denom, Ainv_Mx);
 }
 
-// Riemannian gradient in S^{n-1} with energy metric
+
+/**
+ * @brief Projects a vector @p v onto the tangent space at @p x with respect to the
+ * mass-weighted inner product.
+ *
+ * This function computes the projection
+ * \f[
+ * \Pi_x(v) = v - \frac{\langle x, v \rangle_M}{\|x\|_M^2} x,
+ * \f]
+ * assuming the manifold is the sphere defined by the mass matrix @p M. If @p x is
+ * already normalized with respect to @p M (i.e., \f$\|x\|_M = 1\f$), this simplifies
+ * to \f$ \Pi_x(v) = v - (x^T M v) x \f$.
+ *
+ * @tparam MatrixType A matrix class type providing a `vmult` method (e.g., SparseMatrix).
+ * @param[in] x The base point on the manifold (assumed to be normalized in the M-metric).
+ * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
+ * @param[in] v The vector to be projected.
+ * @param[out] output The resulting projected vector in the tangent space \f$ T_x \mathcal{M} \f$.
+ */
+template <typename MatrixType>
+void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
+                                Vector<double>& output)
+{
+    Vector<double> Mv(x.size());
+    M.vmult(Mv, v);
+    const double xMv = x*Mv;
+
+    output = v;
+    output.add(-xMv, x);
+}
+
+/**
+ * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
+ *
+ * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
+ * restricted to the sphere $S^{n-1}$ with an energy-adaptive metric $A_\phi$. The mathematical
+ * formulation for the Riemannian gradient is:
+ * $$ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi $$
+ *
+ * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
+ * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
+ *
+ * @param A_inv The inverse linear operator ($A_\phi^{-1}$).
+ * @param M The mass matrix ($M$).
+ * @param x The current state vector ($\phi$).
+ * @param output The vector where the computed Riemannian gradient will be stored.
+ */
 template <typename MatrixType, typename InverseMatrixType>
-void gradient(const InverseMatrixType& A_inv, const MatrixType& M, const Vector<double>& x, Vector<double>& output)
+void gradient(const InverseMatrixType& A_inv, const MatrixType& M,
+              const Vector<double>& x, Vector<double>& output)
 {
     // \Pi_x(x): R^n -> T_x S^{n-1}
     project_onto_tangent_space(A_inv, x, M, output);
+}
+
+/**
+ * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
+ *
+ * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
+ * restricted to the sphere $S^{n-1}$ with a mass metric $M$. The mathematical
+ * formulation for the Riemannian gradient is:
+ * $$ \nabla_M E^{GP}(\phi) = M^{-1}\big(A_\phi\,\phi - (\phi^\top A_\phi\,\phi)M\phi\big) $$
+ *
+ * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
+ * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
+ *
+ * @param Minv The inverse mass operator ($M^{-1}$).
+ * @param A The state-dependent total linear operator ($A_\phi$).
+ * @param M The mass matrix ($M$).
+ * @param x The current state vector ($\phi$).
+ * @param output The vector where the computed Riemannian gradient will be stored.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+void gradient(const InverseMatrixType& Minv, const MatrixType& A, const MatrixType& M,
+              const Vector<double>& x, Vector<double>& output)
+{
+    Vector<double> Ax(x.size());
+    A.vmult(Ax, x);
+
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+
+    Ax.add(-(x*Ax), Mx);
+    Minv.vmult(output, Ax);
 }
 
 /**
@@ -274,26 +361,30 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
     v.add(-1.0, x);
 }
 
-// TODO: verify implementation, write tests (cf. manopt)
-/** Differentiated retraction
+// TODO: use x as output vector as with other functions
+/**
+ * @brief Computes the differentiated retraction by normalization.
+ * Formula:
+ * \f[
  * D_Ret_phi(v)[w] = (1 / ||phi+v||_M) * (I - ( (phi+v) v^T M ) / ||phi+v||_M^2 ) * w
+ * \f]
  *
  * @tparam MatrixType
  * @param M Mass matrix
- * @param phi Base point
+ * @param x Base point
  * @param v Tangent vector (argument of the retraction)
  * @param w Direction of differentiation (argument of the differential)
  * @param dst Resulting vector (resized if necessary)
 */
 template <typename MatrixType>
 void retract_diff_by_norm(const MatrixType& M,
-                          const Vector<double>& phi,
+                          const Vector<double>& x,
                           const Vector<double>& v,
                           const Vector<double>& w,
                           Vector<double>& dst)
 {
     // 1. Compute y = phi + v
-    Vector<double> y(phi);
+    Vector<double> y(x);
     y += v;
 
     // 2. Compute My = M * y
@@ -501,57 +592,6 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace energy
 
 
-namespace mass
-{
-
-/**
- * @brief Projects a vector @p v onto the tangent space at @p x with respect to the
- * mass-weighted inner product.
- *
- * This function computes the projection
- * \f[
- * \Pi_x(v) = v - \frac{\langle x, v \rangle_M}{\|x\|_M^2} x,
- * \f]
- * assuming the manifold is the sphere defined by the mass matrix @p M. If @p x is
- * already normalized with respect to @p M (i.e., \f$\|x\|_M = 1\f$), this simplifies
- * to \f$ \Pi_x(v) = v - (x^T M v) x \f$.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method (e.g., SparseMatrix).
- * @param[in] x The base point on the manifold (assumed to be normalized in the M-metric).
- * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
- * @param[in] v The vector to be projected.
- * @param[out] output The resulting projected vector in the tangent space \f$ T_x \mathcal{M} \f$.
- */
-template <typename MatrixType>
-void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
-                                Vector<double>& output)
-{
-    Vector<double> Mv(x.size());
-    M.vmult(Mv, v);
-    const double xMv = x*Mv;
-
-    output = v;
-    output.add(-xMv, x);
-}
-
-// Riemannian gradient for the sphere S^{n-1} with mass metric
-template <typename MatrixType, typename InverseMatrixType>
-void gradient(const InverseMatrixType& Minv, const MatrixType& A, const MatrixType& M,
-              const Vector<double>& x, Vector<double>& output)
-{
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-
-    Ax.add(-(x*Ax), Mx);
-    Minv.vmult(output, Ax);
-}
-
-} // namespace mass
-
-
 namespace coarse
 {
 /**
@@ -695,7 +735,7 @@ void gradient(const MatrixType& M,
     v += u;
 
     // 6. Project onto tangent space
-    energy::project_onto_tangent_space(A_inv, zeta, M, v, dst);
+    ellipsoid::project_onto_tangent_space(A_inv, zeta, M, v, dst);
 }
 
 /**
@@ -761,7 +801,7 @@ void gradient(const MatrixType& M,
     v.add(1.0 / s, w);
 
     // 8. Project onto tangent space using the provided mass-based projection
-    mass::project_onto_tangent_space(zeta, M, v, dst);
+    project_onto_tangent_space(zeta, M, v, dst);
 }
 
 } // namespace coarse

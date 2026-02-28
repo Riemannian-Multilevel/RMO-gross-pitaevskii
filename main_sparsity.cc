@@ -4,6 +4,8 @@
 #include "option.h"
 #include "util.h"
 
+#include <deal.II/fe/fe_simplex_p.h>
+#include <deal.II/fe/fe_q.h>
 #include <fmt/format.h>
 #include <iostream>
 

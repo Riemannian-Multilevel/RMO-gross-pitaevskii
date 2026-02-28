@@ -1,12 +1,11 @@
 #ifndef GPE_DESCENT_H
 #define GPE_DESCENT_H
 
+#include "manifold.h"
 #include "lac.h"
 #include "option_types.h"
 
-#include <cmath>
 #include <deal.II/base/convergence_table.h>
-#include <deal.II/lac/sparse_ilu.h>
 
 namespace gpe
 {
@@ -42,9 +41,9 @@ using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 //! @param options Termination criteria
 //! @param os Output stream for diagnostics
 //! @return
-template <typename Oracle>
+template <typename Oracle, typename UpdateStrategy>
 Vector<double>
-gradient_descent(Oracle&& O, const Vector<double>& x0,
+gradient_descent(Oracle&& O, const Vector<double>& x0, UpdateStrategy&& update_iterate,
                  const GdOptions& options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
@@ -67,7 +66,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
 
     for (unsigned int iter = 0; iter < options.max_iter; iter++) {
         // Apply constraints and assemble iteration matrices
-        O.initialize(x);
+        update_iterate(x);
         current_state = O.residual(x);
 
         // TODO: check_every, ConvergenceTable == true -> check_every = 1

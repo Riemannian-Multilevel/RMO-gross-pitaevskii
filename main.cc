@@ -46,13 +46,17 @@ int main(int argc, char* argv[])
             for (unsigned int level = min_level; level < max_level; ++level) {
                 // Initialize the orchestrator (Simulator)
                 // This sets up the mesh (Package) and Finite Element space
-                EnergySimulator<dim> simulator(options, level + 1);
+                EnergySimulator<dim> simulator(Square<dim>(), options, level + 1);
+
+                // Set starting value, sufficiently far from an optimal solution
+                Vector<double> x0(simulator.n_dofs());
+                x0 = 1.0;
 
                 // Run the Riemannian Gradient Descent pipeline
                 // Square<dim>() is passed as the Potential V
                 // options_rgd contains the solver tolerances and step size
                 // options.beta is the non-linear coupling constant
-                auto x = simulator.run(Square<dim>(), options_rgd, options.beta);
+                auto x = simulator.run(x0, options.beta, options_rgd, std::cout);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
