@@ -75,14 +75,10 @@ public:
      * In the GPE, the non-linearity usually takes the form \f$ \beta |\psi|^2 \f$.
      * This method updates the internal @ref Mpp matrix using the values in @p x.
      *
-     * @param x The current solution vector (incumbent).
+     * @param x The current solution vector.
      */
-    void assemble_nonlinear_term(Vector<double>& x) const
+    void assemble_nonlinear_term(const Vector<double>& x) const
     {
-        // Apply constraints to incumbent solution
-        constraints.distribute(x);
-
-        // Update entries of nonlinear term based on solution
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
 
@@ -101,6 +97,12 @@ public:
         Aop.reinit(Vector<double>(A0.m()));
 
         return Aop;
+    }
+
+    auto get_operator_A(const Vector<double>& x, const double beta) const
+    {
+        assemble_nonlinear_term(x);
+        return get_operator_A(beta);
     }
 
     auto get_operator_M() const
@@ -217,6 +219,13 @@ public:
         const auto& constraints = space.get_constraints();
 
         return GrossPitaevskiiProblem<dim>(dof_handler, *quadrature, *mapping, constraints, V);
+    }
+
+    void distribute(Vector<double>& x) const
+    {
+        const auto& constraints = space.get_constraints();
+
+        constraints.distribute(x);
     }
 
     /** @brief Access the underlying Finite Element space. */

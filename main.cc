@@ -56,6 +56,7 @@ int main(int argc, char* argv[])
                 // Square<dim>() is passed as the Potential V
                 // options_rgd contains the solver tolerances and step size
                 // options.beta is the non-linear coupling constant
+                simulator.distribute(x0);
                 auto x = simulator.run(x0, options.beta, options_rgd, std::cout);
 
                 // Plot solution

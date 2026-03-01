@@ -105,6 +105,7 @@ namespace ellipsoid
  * @param[in] Mpp The nonlinear part of the matrix (\f$ M_{\phi\phi} \f$) evaluated at @p x.
  * @return The computed energy value.
  */
+// TODO: should it be 1/2 x' (A0 + Mpp) x ?
 template <typename MatrixType>
 double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp, double beta)
 {
@@ -413,8 +414,8 @@ void retract_diff_by_norm(const MatrixType& M,
     dst /= norm;
 }
 
-// TODO: verify implementation, write tests (cf. manopt)
-/** Differentiated inverse retraction
+/**
+ * @brief Computes the differentiated inverse retraction by normalization.
  * D_invRet_phi(zeta)[u] = (1 / (phi^T M zeta)) * ( I - ( zeta phi^T M ) / (phi^T M zeta) ) * u
  *
  * @tparam MatrixType
@@ -450,6 +451,25 @@ void retract_inv_diff_by_norm(const MatrixType& M,
     dst = u;
     dst.add(-gamma / beta, zeta); // dst <- dst - (gamma/beta) * zeta
     dst /= beta;
+}
+
+// TODO: verify adjoint property
+// Adjoint for M-metric
+template <typename MatrixType>
+void retract_inv_diff_by_norm_adjoint(const MatrixType& M,
+                                      const Vector<double>& phi,
+                                      const Vector<double>& zeta,
+                                      const Vector<double>& u,
+                                      Vector<double>& dst)
+{
+    retract_inv_diff_by_norm(M, zeta, phi, u, dst);
+}
+
+// TODO: Adjoint for A-metric
+template <typename MatrixType>
+void retract_inv_diff_by_norm_adjoint()
+{
+
 }
 
 /**
@@ -595,49 +615,6 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 namespace coarse
 {
 /**
- * @brief Computes the coarse model function value using the Energy-weighted metric.
- *
- * Psi(zeta) = E(zeta) - <w, invRet_phi(zeta)>_{A_zeta}
- * = E(zeta) - w^T * A_zeta * invRet_phi(zeta)
- *
- * @param[in] zeta The coarse variable.
- * @param[in] phi The base point.
- * @param[in] w The restricted gradient.
- * @param[in] M The mass matrix (required for retraction).
- * @param[in] A0 The linear part of stiffness.
- * @param[in] Mpp The nonlinear part of stiffness.
- * @param[in] A_zeta The full operator A at zeta (used for the metric).
- * @return The scalar value.
- */
-template <typename MatrixType, typename OperatorType>
-double function_value(const Vector<double>& zeta,
-                      const Vector<double>& phi,
-                      const Vector<double>& w,
-                      const MatrixType& M,
-                      const MatrixType& A0,
-                      const MatrixType& Mpp,
-                      const OperatorType& A_zeta,
-                      double beta)
-{
-    // 1. Compute Energy E(zeta)
-    const double energy = function_value(zeta, A0, Mpp, beta);
-
-    // 2. Compute Inverse Retraction: v = invRet_phi(zeta)
-    // Note: Retraction is geometric, so it still uses Mass matrix M usually
-    Vector<double> v(zeta);
-    retract_inv_by_norm(M, v, phi);
-
-    // 3. Compute Inner Product <w, v>_A = w^T * A_zeta * v
-    Vector<double> Av(zeta.size());
-    A_zeta.vmult(Av, v);
-
-    const double correction_term = w * Av;
-
-    // 4. Result
-    return energy - correction_term;
-}
-
-/**
  * @brief Computes the coarse model function value using the mass-weighted metric.
  *
  * Psi(zeta) = E(zeta) - <w, invRet_phi(zeta)>_M
@@ -677,66 +654,6 @@ double function_value(const Vector<double>& zeta,
     return energy - correction_term;
 }
 
-// TODO: verify implementation, write tests (cf. manopt)
-/**
- * Computes the coarse gradient update step:
- * v_unproj = zeta + A_zeta^-1 * ( (1/s)*w - (<Mw, Mphi>/s^2)*zeta )
- * dst = Proj_zeta( v_unproj )
- *
- * where s = <phi, M*zeta>
- *
- * @param M Mass matrix (M_coarse)
- * @param A_inv Linear operator or InverseMatrix wrapper representing A_zeta^-1
- * @param zeta The coarse approximation (y)
- * @param phi The restricted fine grid approximation (base point)
- * @param w The restricted residual/gradient
- * @param dst Output vector
- */
-template <typename MatrixType, typename InverseOperatorType>
-void gradient(const MatrixType& M,
-              const InverseOperatorType& A_inv,
-              const Vector<double>& zeta,
-              const Vector<double>& phi,
-              const Vector<double>& w,
-              Vector<double>& dst)
-{
-    const unsigned int n = zeta.size();
-
-    // 1. Compute auxiliary vectors
-    Vector<double> Mzeta(n);
-    M.vmult(Mzeta, zeta);
-
-    Vector<double> Mphi(n);
-    M.vmult(Mphi, phi);
-
-    Vector<double> Mw(n);
-    M.vmult(Mw, w);
-
-    // 2. Compute scalars
-    // s = <phi, M*zeta> = phi * Mzeta
-    const double s = phi * Mzeta;
-    Assert(std::abs(s) > 0, dealii::ExcMessage("scalar s (phi^T M zeta) must be positive"));
-
-    // K = <Mw, Mphi>
-    const double K = Mw * Mphi;
-
-    // 3. Construct RHS for the linear solve
-    // rhs = (1/s)*w - (K/s^2)*zeta
-    Vector<double> rhs(w);
-    rhs *= (1.0 / s);
-    rhs.add(-K / (s * s), zeta);
-
-    // 4. Apply inverse operator: u = A^-1 * rhs
-    Vector<double> u(n);
-    A_inv.vmult(u, rhs);
-
-    // 5. Construct unprojected update: v = zeta + u
-    Vector<double> v(zeta);
-    v += u;
-
-    // 6. Project onto tangent space
-    ellipsoid::project_onto_tangent_space(A_inv, zeta, M, v, dst);
-}
 
 /**
  * Computes the coarse gradient update step in the mass-weighted metric:
@@ -764,44 +681,34 @@ void gradient(const MatrixType& M,
               const Vector<double>& w,
               Vector<double>& dst)
 {
-    const unsigned int n = zeta.size();
 
-    // 1. Compute M*zeta (needed for scalar 's')
-    Vector<double> Mzeta(n);
-    M.vmult(Mzeta, zeta);
+}
 
-    // 2. Compute scalar s = <phi, M*zeta>
-    const double s = phi * Mzeta;
-    Assert(std::abs(s) > 0, dealii::ExcMessage("scalar s must be positive"));
 
-    // 3. Compute M*w and M*phi (needed for scalar 'K')
-    Vector<double> Mw(n);
-    M.vmult(Mw, w);
+// TODO: verify implementation, write tests (cf. manopt)
+/**
+ * Computes the coarse gradient update step:
+ * v_unproj = zeta + A_zeta^-1 * ( (1/s)*w - (<Mw, Mphi>/s^2)*zeta )
+ * dst = Proj_zeta( v_unproj )
+ *
+ * where s = <phi, M*zeta>
+ *
+ * @param M Mass matrix (M_coarse)
+ * @param A_inv Linear operator or InverseMatrix wrapper representing A_zeta^-1
+ * @param zeta The coarse approximation (y)
+ * @param phi The restricted fine grid approximation (base point)
+ * @param w The restricted residual/gradient
+ * @param dst Output vector
+ */
+template <typename MatrixType, typename InverseOperatorType>
+void gradient(const MatrixType& M,
+              const InverseOperatorType& A_inv,
+              const Vector<double>& zeta,
+              const Vector<double>& phi,
+              const Vector<double>& w,
+              Vector<double>& dst)
+{
 
-    Vector<double> Mphi(n);
-    M.vmult(Mphi, phi);
-
-    // 4. Compute scalar K = <Mw, M*phi>
-    const double K = Mw * Mphi;
-
-    // 5. Construct the RHS for the mass inverse application
-    // Inside M^-1(...), we have: A*zeta - (K/s^2)*zeta
-    Vector<double> Azeta(n);
-    A.vmult(Azeta, zeta);
-
-    Vector<double> rhs_M(Azeta);
-    rhs_M.add(-K / (s * s), zeta);
-
-    // 6. Apply inverse mass matrix: u = M^-1 * rhs_M
-    Vector<double> term1(n);
-    M_inv.vmult(term1, rhs_M);
-
-    // 7. Add the w term: v_unproj = term1 + (1/s)*w
-    Vector<double> v(term1);
-    v.add(1.0 / s, w);
-
-    // 8. Project onto tangent space using the provided mass-based projection
-    project_onto_tangent_space(zeta, M, v, dst);
 }
 
 } // namespace coarse

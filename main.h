@@ -47,17 +47,6 @@ public:
     }
 
     /**
-     * @brief Prepares the Oracle for a new iteration.
-     * Triggers the re-assembly of the non-linear term \f$ M_{pp} \f$ based on the
-     * current solution \f$ \phi \in x \f$.
-     * @param x The current solution vector.
-     */
-    void update(Vector<double>& x)
-    {
-        problem.assemble_nonlinear_term(x);
-    }
-
-    /**
      * @brief Computes the Gross-Pitaevskii energy functional value.
      * \f[ E(\phi) = \langle \phi, A_0 \phi \rangle + \frac{\beta}{2} \langle \phi, M_{pp}(\phi) \phi \rangle \f]
      * @param x The current state vector.
@@ -171,13 +160,18 @@ public:
         problem = package.problem(std::forward<Potential>(V));
     }
 
+    void distribute(Vector<double>& x) const
+    {
+        package.distribute(x);
+    }
+
     /**
      * @brief Runs the energy minimization for a given potential.
      * @param beta The interaction strength constant.
      * @param gd_options Options for the gradient descent algorithm.
      */
     Vector<double>
-    run(const Vector<double>& x0, double beta, const GdOptions& gd_options, std::ostream& os)
+    run(const Vector<double>& x0, double beta, const GdOptions& gd_options, std::ostream& os) const
     {
         Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
 
@@ -187,6 +181,7 @@ public:
         // Riemannian gradient descent
         // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
         return gradient_descent(oracle, x0, [this](Vector<double>& x){
+            //package.distribute(x);   // We only need to ensure Dirichlet conditions for the starting point x0
             problem.assemble_nonlinear_term(x);  // or oracle.update(x)
         }, gd_options, os);
     }

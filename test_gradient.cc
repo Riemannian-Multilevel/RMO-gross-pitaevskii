@@ -28,14 +28,6 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
 }
 
 template <typename MatrixType>
-double tangent_condition(const Vector<double>& x, const MatrixType& M, const Vector<double>& v)
-{
-    Vector<double> Mv(v.size());
-    M.vmult(Mv, v);
-    return x*Mv;
-
-}
-template <typename MatrixType>
 void random_point(const MatrixType& M, Vector<double>& x,
                   double mean = 0.0, double stddev = 1.0)
 {
@@ -77,18 +69,8 @@ logspace(double start_exp, double end_exp, int num) {
     return values;
 }
 
-template <typename FuncF, typename FuncG, typename FuncM>
-void check_gradient(const FuncF& f,
-                    const FuncG& g,
-                    const FuncM& metric,
-                    const Vector<double>& x,
-                    dealii::ConvergenceTable& table)
-{
-
-}
-
 // TODO: check first order-coherence
-using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
+using OperatorType = LinearCombination<SparseMatrix<double>, Vector<double>>;
 template <typename PrecondType>
 using InverseOpType = InverseMatrix<OperatorType, PrecondType>;
 
@@ -128,12 +110,11 @@ int main()
         dealii::PreconditionJacobi<SparseMatrix<double>> jacobi_M;
         jacobi_M.initialize(problem.get_M());
 
-        problem.assemble_nonlinear_term(x);
         const auto& M = problem.get_operator_M();
-        auto Minv = InverseMatrix(M, SolverMethod::CG, jacobi_M, 2000, 1e-12);
+        auto MInv = InverseMatrix(M, SolverMethod::CG, jacobi_M, 2000, 1e-12);
 
-        const auto& A = problem.get_operator_A(options.beta);
-        auto Ainv = InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12);
+        const auto& Ax = problem.get_operator_A(x, options.beta);
+        auto AxInv = InverseMatrix(Ax, SolverMethod::CG, {}, 2000, 1e-12);
 
         // Check x fulfills |x|_M = 1
         Vector<double> Mx(x.size());
@@ -141,30 +122,30 @@ int main()
         convergence_table.add_value("x_constr", x*Mx);
 
         // TODO: check for A-metric
-        auto f = [&A](const Vector<double>& y)
+        auto f = [&Ax](const Vector<double>& y)
         {
             //const auto& Ac = problem.get_operator_A(options.beta/2);  // for function value
             //return ellipsoid::function_value(x, Ac);  // needs to evaluated at multiple points
             Vector<double> Ay(y.size());
-            A.vmult(Ay, y);
+            Ax.vmult(Ay, y);
             return 0.5 * (y * Ay);
         };
-        auto g = [&Ainv, &M](const Vector<double>& y)
+        auto g = [&AxInv, &M](const Vector<double>& y)
         {
             // Vector<double> x_grad(x.size());
             // ellipsoid::gradient(Minv, A, M, x, x_grad);
             // return x_grad;
             Vector<double> x_grad(y.size());
-            ellipsoid::gradient(Ainv, M, y, x_grad);
+            ellipsoid::gradient(AxInv, M, y, x_grad);
             return x_grad;
         };
-        auto metric = [&A](const Vector<double>& y, const Vector<double>& z)
+        auto metric = [&Ax](const Vector<double>& y, const Vector<double>& z)
         {
             // Vector<double> Mz(z.size());
             // M.vmult(Mz, z);
             // return y*Mz;
             Vector<double> Az(z.size());
-            A.vmult(Az, z);
+            Ax.vmult(Az, z);
             return y*Az;
         };
 
@@ -190,14 +171,20 @@ int main()
         // 3. Compute f(x) and grad_x f(x)
         //    Check that grad is in T_x S
         //    Compute <grad f(x), v>_x
-        double tan_cond = tangent_condition(x, M, x_grad);   // only dependent on manifold
-        convergence_table.add_value("tan_cond",tan_cond);
+        Vector<double> x_grad_proj(x_grad.size());
+        // TODO: Do we care about which metric for the projected gradient?
+        //ellipsoid::project_onto_tangent_space(Ainv, x, M, x_grad, x_grad_proj);
+        ellipsoid::project_onto_tangent_space(x, M, x_grad, x_grad_proj);
+
+        // Residual of difference between gradient, and projected gradient
+        Vector<double> x_grad_res(x_grad);
+        x_grad_res.add(-1.0, x_grad_proj);
+        convergence_table.add_value("grad_proj_res",std::sqrt(metric(x_grad_res,x_grad_res)));
 
         // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
-        auto ts = logspace(-8,1,100);
+        auto ts = logspace(-8,0,100);
         // auto Ets = std::vector<double>();
         // Ets.reserve(ts.size());
-        std::vector<double> log_ts, log_Ets;
 
         for (auto t : ts) {
             auto tv = Vector(v);
@@ -206,9 +193,9 @@ int main()
             auto Rx_tv = Vector(x);
             ellipsoid::retract_by_norm(M, tv, Rx_tv);  // input-output vector
 
-            long double Et = std::abs(f(Rx_tv) - fx - t*g_xv);
+            long double Et = std::abs(-f(Rx_tv) + fx + t*g_xv);
             //Ets.push_back(Et);
-            outfile << std::scientific << std::setprecision(10) << t << "\t" << Et << std::endl;
+            outfile << t << "\t" << Et << std::endl;
         }
 
         // 5. Plot E(t) as a function of t, in a log–log plot;
@@ -225,12 +212,12 @@ int main()
     convergence_table.set_precision("x_constr", 6);
     convergence_table.set_precision("dir_xv_1e-8", 6);
     convergence_table.set_precision("grad_xv", 6);
-    convergence_table.set_precision("tan_cond", 6);
+    convergence_table.set_precision("grad_proj_res", 6);
 
     convergence_table.set_scientific("x_constr", true);
     convergence_table.set_scientific("dir_xv_1e-8", true);
     convergence_table.set_scientific("grad_xv", true);
-    convergence_table.set_scientific("tan_cond", true);
+    convergence_table.set_scientific("grad_proj_res", true);
 
     convergence_table.write_text(std::cout, dealii::TableHandler::TextOutputFormat::table_with_headers);
 }

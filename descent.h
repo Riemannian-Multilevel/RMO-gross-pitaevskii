@@ -12,20 +12,22 @@ namespace gpe
 using dealii::ConvergenceTable::RateMode::reduction_rate;
 using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 
-// enum class SolverStatus {
-//     CONVERGED,          // iterative method, diverged for given tolerance
-//     NOT_CONVERGED,      // iterative method, converged for given tolerance
-//     SOLUTION,           // non-iterative method
-//     ERROR               // solver error
-// };
-//
-// struct SolverInfo {
-//     SolverStatus status;
-//     size_t num_iter;
-//     Vector solution;
-//     size_t elapsed_time;
-// };
-//
+// TODO: use in gradient_descent()
+enum class SolverStatus {
+    CONVERGED,          // iterative method, diverged for given tolerance
+    NOT_CONVERGED,      // iterative method, converged for given tolerance
+    SOLUTION,           // non-iterative method
+    ERROR               // solver error
+};
+
+// TODO: use in gradient_descent()
+struct SolverInfo {
+    SolverStatus status;
+    size_t num_iter;
+    Vector<double> solution;
+    size_t elapsed_time;
+};
+
 // enum class SolverNorm {
 //     L1,
 //     L2,
