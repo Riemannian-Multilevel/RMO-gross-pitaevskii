@@ -12,34 +12,6 @@
 
 using namespace gpe;
 
-// This function can be used for tangent vectors in the (mass-weighed) sphere,
-// for both mass and energy-based metrics
-template <typename MatrixType>
-void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
-                           Vector<double>& output,
-                           double mean = 0.0, double stddev = 1.0)
-{
-    // 1. generate random vector in ambient space
-    Vector<double> tmp(output.size());
-    normrnd(mean, stddev, tmp);
-
-    // 2. project orthogonally onto tangent space at x, wrt. the mass metric
-    ellipsoid::project_onto_tangent_space(x, M, tmp, output);
-}
-
-template <typename MatrixType>
-void random_point(const MatrixType& M, Vector<double>& x,
-                  double mean = 0.0, double stddev = 1.0)
-{
-    normrnd(mean, stddev, x);
-
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-
-    const double factor = x*Mx;
-    x /= std::sqrt(factor);
-}
-
 template <typename FuncType>
 long double finite_difference(const FuncType& F, const Vector<double>& x,
     const Vector<double>& v, long double h, long double Fx)
@@ -74,6 +46,66 @@ using OperatorType = LinearCombination<SparseMatrix<double>, Vector<double>>;
 template <typename PrecondType>
 using InverseOpType = InverseMatrix<OperatorType, PrecondType>;
 
+// Contains all metric-independent components for testing gradients on the ellipsoid
+template <int dim>
+class GradientTestBase
+{
+public:
+    const double mean = 0.0;
+    const double stddev = 1.0;
+
+    GradientTestBase(const GrossPitaevskiiProblem<dim>& problem, double beta)
+        : m_problem(problem)
+        , A(problem.get_operator_A(beta))   // all arguments are lazily evaluated
+        , M(problem.get_operator_M())
+        , A_inv(InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12))
+        , M_inv(InverseMatrix(M, SolverMethod::CG, {}, 2000, 1e-12))
+    {}
+
+    void random_point(Vector<double>& x) const
+    {
+        normrnd(mean, stddev, x);
+        Vector<double> Mx(x.size());
+        M.vmult(Mx, x);
+
+        const double factor = x*Mx;
+        x /= std::sqrt(factor);
+
+        m_problem.assemble_nonlinear_term(x);  // updates Mpp -> A for underlying operators
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const
+    {
+        // 1. generate random vector in ambient space
+        Vector<double> tmp(v.size());
+        normrnd(mean, stddev, tmp);
+
+        // 2. project orthogonally onto tangent space at x, wrt. the mass metric
+        ellipsoid::project_onto_tangent_space(x, M, tmp, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const
+    {
+        ellipsoid::project_onto_tangent_space(x, M, v, v_proj);
+    }
+
+    void retract(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_retr) const
+    {
+        v_retr = x;
+        ellipsoid::retract_by_norm(M, v, v_retr);  // input-output vector
+    }
+
+    auto get_A() const { return A; }
+    auto get_M() const { return M; }
+    auto get_A_inv() const { return A_inv; }
+    auto get_M_inv() const { return M_inv; }
+
+private:
+    const GrossPitaevskiiProblem<dim>& m_problem;
+    OperatorType A, M;
+    InverseOpType<dealii::PreconditionIdentity> A_inv, M_inv;
+};
+
 int main()
 {
     GPE_Options options{};
@@ -85,14 +117,49 @@ int main()
     options.mesh_kind = MeshKind::QUADRILATERAL;
     options.order     = Ordering::CUTHILL_MCKEE;
 
-    // GPE minimization
     constexpr unsigned int n_levels = 8;
     GrossPitaevskiiPackage<2> GS(options, n_levels);
     GrossPitaevskiiProblem<2> problem = GS.problem(Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
+    GradientTestBase test_base(problem, options.beta);
+    const auto& M = test_base.get_M();
+    const auto& A = test_base.get_A();
+    const auto& M_inv = test_base.get_M_inv();
+    const auto& A_inv = test_base.get_A_inv();
+
+    // Problem definition
+    // TODO: inherit from GradientTestBase?
+    auto f = [&A](const Vector<double>& y)
+    {
+        //const auto& Ac = problem.get_operator_A(options.beta/2);  // for function value
+        //return ellipsoid::function_value(x, Ac);  // needs to evaluated at multiple points
+        Vector<double> Ay(y.size());
+        A.vmult(Ay, y);
+        return 0.5 * (y * Ay);
+    };
+    auto g = [&A_inv, &M](const Vector<double>& y)
+    {
+        // Vector<double> x_grad(x.size());
+        // ellipsoid::gradient(Minv, A, M, x, x_grad);
+        // return x_grad;
+        Vector<double> x_grad(y.size());
+        ellipsoid::gradient(A_inv, M, y, x_grad);
+        return x_grad;
+    };
+    auto metric = [&A](const Vector<double>& y, const Vector<double>& z)
+    {
+        // Vector<double> Mz(z.size());
+        // M.vmult(Mz, z);
+        // return y*Mz;
+        Vector<double> Az(z.size());
+        A.vmult(Az, z);
+        return y*Az;
+    };
+
     dealii::ConvergenceTable convergence_table;
 
+    // Test correctness of gradients for random samples
     // TODO: functor with f(.), grad(.), metric(.) arguments
     //       input: GrossPitaevskiiProblem<dim>
     for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
@@ -101,70 +168,30 @@ int main()
         std::ofstream outfile(filename);  // rename according to function/metric used
 
         // 1. Generate a random point x in the manifold S
-        // TODO: this is necessarily done beforehand, since f/grad f require A_x
         Vector<double> x(n_dofs);
-        random_point(problem.get_operator_M(), x, 0.0, 1.0);
-
-        // --- Assemble operators
-        // Update metric for x
-        dealii::PreconditionJacobi<SparseMatrix<double>> jacobi_M;
-        jacobi_M.initialize(problem.get_M());
-
-        const auto& M = problem.get_operator_M();
-        auto MInv = InverseMatrix(M, SolverMethod::CG, jacobi_M, 2000, 1e-12);
-
-        const auto& Ax = problem.get_operator_A(x, options.beta);
-        auto AxInv = InverseMatrix(Ax, SolverMethod::CG, {}, 2000, 1e-12);
+        test_base.random_point(x);
 
         // Check x fulfills |x|_M = 1
+        // TODO: merge to GradientTestBase
         Vector<double> Mx(x.size());
         M.vmult(Mx, x);
         convergence_table.add_value("x_constr", x*Mx);
 
-        // TODO: check for A-metric
-        auto f = [&Ax](const Vector<double>& y)
-        {
-            //const auto& Ac = problem.get_operator_A(options.beta/2);  // for function value
-            //return ellipsoid::function_value(x, Ac);  // needs to evaluated at multiple points
-            Vector<double> Ay(y.size());
-            Ax.vmult(Ay, y);
-            return 0.5 * (y * Ay);
-        };
-        auto g = [&AxInv, &M](const Vector<double>& y)
-        {
-            // Vector<double> x_grad(x.size());
-            // ellipsoid::gradient(Minv, A, M, x, x_grad);
-            // return x_grad;
-            Vector<double> x_grad(y.size());
-            ellipsoid::gradient(AxInv, M, y, x_grad);
-            return x_grad;
-        };
-        auto metric = [&Ax](const Vector<double>& y, const Vector<double>& z)
-        {
-            // Vector<double> Mz(z.size());
-            // M.vmult(Mz, z);
-            // return y*Mz;
-            Vector<double> Az(z.size());
-            Ax.vmult(Az, z);
-            return y*Az;
-        };
-
-        // --- Perform verification
         // 2. Generate a random tangent vector v at x with |v|_x = 1
         Vector<double> v(n_dofs);
-        random_tangent_vector(x, M, v, 0.0, 1.0);
+        test_base.random_tangent_vector(x, v);
         v /= std::sqrt(metric(v, v));  // tangent vector with |v|_x = 1
-
-        Vector<double> x_grad = g(x);
-        double fx = f(x);
 
         // The Riemannian gradient of E at x is defined as,
         // the unique element in the tangent space at x, T_x S,
         // such that for all v in T_x S,
         // g_x(\grad(x), v) = DE(x)[v]
         // 2b. Verify this condition for finite difference (directional derivative)
+        double fx = f(x);
+        Vector<double> x_grad = g(x);
         double g_xv = metric(x_grad, v);
         convergence_table.add_value("grad_xv",g_xv);
+
         double dir_xv8 = finite_difference(f, x, v, 1e-8, fx);
         convergence_table.add_value("dir_xv_1e-8",dir_xv8);
 
@@ -173,8 +200,7 @@ int main()
         //    Compute <grad f(x), v>_x
         Vector<double> x_grad_proj(x_grad.size());
         // TODO: Do we care about which metric for the projected gradient?
-        //ellipsoid::project_onto_tangent_space(Ainv, x, M, x_grad, x_grad_proj);
-        ellipsoid::project_onto_tangent_space(x, M, x_grad, x_grad_proj);
+        test_base.to_tangent_space(x, x_grad, x_grad_proj);
 
         // Residual of difference between gradient, and projected gradient
         Vector<double> x_grad_res(x_grad);
@@ -190,8 +216,8 @@ int main()
             auto tv = Vector(v);
             tv *= t;
 
-            auto Rx_tv = Vector(x);
-            ellipsoid::retract_by_norm(M, tv, Rx_tv);  // input-output vector
+            Vector<double> Rx_tv(x.size());
+            test_base.retract(x, tv, Rx_tv);
 
             long double Et = std::abs(-f(Rx_tv) + fx + t*g_xv);
             //Ets.push_back(Et);
@@ -200,13 +226,6 @@ int main()
 
         // 5. Plot E(t) as a function of t, in a log–log plot;
         outfile.close();
-
-        // A-metric
-        // Vector<double> Ax(n_dofs);
-        // A.vmult(Ax, x_rand);
-        // double Ax_norm = x_rand*Ax;
-        // v_rand /= Ax_norm;
-        //
     }
 
     convergence_table.set_precision("x_constr", 6);

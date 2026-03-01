@@ -315,16 +315,16 @@ void gradient(const InverseMatrixType& Minv, const MatrixType& A, const MatrixTy
  *
  * @tparam MatrixType A matrix class type providing a `vmult` method.
  * @param[in] M The mass matrix defining the metric.
- * @param[in] z The tangent vector (update direction).
+ * @param[in] v The tangent vector (update direction).
  * @param[in,out] x On input, the base point. On output, the retracted point.
  * @param[in] factor Scaling factor \f$ h \f$.
  */
 template <typename MatrixType>
-void retract_by_norm(const MatrixType& M, const Vector<double>& z, Vector<double>& x,
+void retract_by_norm(const MatrixType& M, const Vector<double>& v, Vector<double>& x,
                      const double factor = 1.0)
 {
     AssertThrow(factor != 0.0, dealii::ExcMessage("factor must be nonzero"));
-    x.add(factor, z);           // x' <- x + h z
+    x.add(factor, v);           // x' <- x + h z
 
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
@@ -420,14 +420,14 @@ void retract_diff_by_norm(const MatrixType& M,
  *
  * @tparam MatrixType
  * @param M Mass matrix
- * @param phi Base point
+ * @param x Base point
  * @param zeta Argument of inverse retraction
  * @param u Direction of differentiation
  * @param dst Resulting vector
 */
 template <typename MatrixType>
 void retract_inv_diff_by_norm(const MatrixType& M,
-                              const Vector<double>& phi,
+                              const Vector<double>& x,
                               const Vector<double>& zeta,
                               const Vector<double>& u,
                               Vector<double>& dst)
@@ -437,7 +437,7 @@ void retract_inv_diff_by_norm(const MatrixType& M,
     M.vmult(Mzeta, zeta);
 
     // 2. Compute beta = phi^T M zeta
-    const double beta = phi * Mzeta;
+    const double beta = x * Mzeta;
     AssertThrow(std::abs(beta) > 0, dealii::ExcMessage("phi^T M zeta must be non-zero"));
 
     // 3. Compute Mu = M * u
@@ -445,7 +445,7 @@ void retract_inv_diff_by_norm(const MatrixType& M,
     M.vmult(Mu, u);
 
     // 4. Compute gamma = phi^T M u
-    const double gamma = phi * Mu;
+    const double gamma = x * Mu;
 
     // 5. Compute dst = (1/beta) * (u - (gamma/beta) * zeta)
     dst = u;
@@ -457,12 +457,12 @@ void retract_inv_diff_by_norm(const MatrixType& M,
 // Adjoint for M-metric
 template <typename MatrixType>
 void retract_inv_diff_by_norm_adjoint(const MatrixType& M,
-                                      const Vector<double>& phi,
+                                      const Vector<double>& x,
                                       const Vector<double>& zeta,
                                       const Vector<double>& u,
                                       Vector<double>& dst)
 {
-    retract_inv_diff_by_norm(M, zeta, phi, u, dst);
+    retract_inv_diff_by_norm(M, zeta, x, u, dst);
 }
 
 // TODO: Adjoint for A-metric
@@ -485,25 +485,25 @@ void retract_inv_diff_by_norm_adjoint()
  *
  * @tparam MatrixType A matrix class type providing a `vmult` method.
  * @param[in] M The mass matrix defining the metric.
- * @param[in] z The tangent vector.
+ * @param[in] v The tangent vector.
  * @param[in,out] x On input, the base point. On output, the retracted point.
  * @param[in] factor Scaling factor \f$ h \f$.
  */
 template <typename MatrixType>
-void retract_by_ortho(const MatrixType& M, const Vector<double>& z,
+void retract_by_ortho(const MatrixType& M, const Vector<double>& v,
                       Vector<double>& x, const double factor = 1.0)
 {
     AssertThrow(std::abs(factor) > 0, dealii::ExcMessage("factor must be non-zero"));
-    Vector<double> Mz(x.size());
-    M.vmult(Mz, z);
+    Vector<double> Mv(x.size());
+    M.vmult(Mv, v);
 
-    double zMz = z*Mz;
-    zMz *= factor;
-    zMz *= factor;  // (hz) * M(hZ) = h^2 zMz
-    AssertThrow(zMz < 1.0, dealii::ExcInternalError("z'Mz required < 1"));
+    double vMv = v*Mv;
+    vMv *= factor;
+    vMv *= factor;  // (hz) * M(hZ) = h^2 zMz
+    AssertThrow(vMv < 1.0, dealii::ExcInternalError("z'Mz required < 1"));
 
-    x *= std::sqrt(1-zMz);
-    x.add(factor, z);
+    x *= std::sqrt(1-vMv);
+    x.add(factor, v);
 }
 
 /**
@@ -530,7 +530,7 @@ void retract_inv_by_ortho(const MatrixType& M, Vector<double>& v, const Vector<d
     Vector<double> Mv(v.size());
     M.vmult(Mv, v);
 
-    double xMv = x*Mv;
+    const double xMv = x*Mv;
     v.add(-xMv, x);
 }
 
@@ -549,28 +549,28 @@ void retract_inv_by_ortho(const MatrixType& M, Vector<double>& v, const Vector<d
  *
  * @tparam MatrixType A matrix class type providing a `vmult` method.
  * @param[in] M The mass matrix defining the metric.
- * @param[in] z The tangent vector (direction).
+ * @param[in] v The tangent vector (direction).
  * @param[in,out] x On input, the base point. On output, the retracted point on the manifold.
  * @param[in] factor A scaling factor \f$ h \f$ applied to the tangent vector @p z. Defaults to 1.0.
  */
 template <typename MatrixType>
-void retract_by_exp(const MatrixType& M, const Vector<double>& z, Vector<double>& x,
+void retract_by_exp(const MatrixType& M, const Vector<double>& v, Vector<double>& x,
                     const double factor = 1.0)
 {
     AssertThrow(std::abs(factor) > 0, dealii::ExcMessage("factor must be non-zero"));
-    Vector<double> Mz(x.size());
-    M.vmult(Mz, z);
+    Vector<double> Mv(x.size());
+    M.vmult(Mv, v);
 
-    double zMz = z*Mz;
-    double z_Mnorm = std::sqrt(zMz);
-    AssertThrow(z_Mnorm > 0.0, dealii::ExcInternalError("|z|_M must be positive"));
+    double vMv = v*Mv;
+    double v_Mnorm = std::sqrt(vMv);
+    AssertThrow(v_Mnorm > 0.0, dealii::ExcInternalError("|z|_M must be positive"));
 
     // Derivation:
     //                  |hz|_M  =  h |z|_M
     //             hz / |hz|_M  =  z / |z|_M
     // sin(|hz|_M) hz / |hz|_M  =  sin(h|z|_M) z / |z|_M
-    x *= std::cos(factor*z_Mnorm);
-    x.add(std::sin(factor*z_Mnorm) / z_Mnorm, z);
+    x *= std::cos(factor*v_Mnorm);
+    x.add(std::sin(factor*v_Mnorm) / v_Mnorm, v);
 }
 
 /**
@@ -599,11 +599,11 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
     Vector<double> Mv(v.size());
     M.vmult(Mv, v);
 
-    double xMv = x*Mv;
+    const double xMv = x*Mv;
     v.add(-xMv, x);
 
-    double nom   = std::acos(xMv);
-    double denom = std::sin(nom);
+    const double nom   = std::acos(xMv);
+    const double denom = std::sin(nom);
 
     AssertThrow(std::abs(denom) > 0, dealii::ExcInternalError("sin(arccos(x' M v)) must be non-zero"));
     v *= (nom/denom);
