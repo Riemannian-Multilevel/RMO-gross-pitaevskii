@@ -138,24 +138,30 @@ int main()
         A.vmult(Ay, y);
         return 0.5 * (y * Ay);
     };
-    auto g = [&A_inv, &M](const Vector<double>& y)
+    auto g = [&A_inv, &M](const Vector<double>& x)
     {
-        // Vector<double> x_grad(x.size());
-        // ellipsoid::gradient(Minv, A, M, x, x_grad);
-        // return x_grad;
-        Vector<double> x_grad(y.size());
-        ellipsoid::gradient(A_inv, M, y, x_grad);
+        Vector<double> x_grad(x.size());
+        ellipsoid::gradient(A_inv, M, x, x_grad);
         return x_grad;
     };
+    // auto g = [&M_inv, &A, &M](const Vector<double>& x)
+    // {
+    //     Vector<double> x_grad(x.size());
+    //     ellipsoid::gradient(M_inv, A, M, x, x_grad);
+    //     return x_grad;
+    // };
     auto metric = [&A](const Vector<double>& y, const Vector<double>& z)
     {
-        // Vector<double> Mz(z.size());
-        // M.vmult(Mz, z);
-        // return y*Mz;
         Vector<double> Az(z.size());
         A.vmult(Az, z);
         return y*Az;
     };
+    // auto metric = [&M](const Vector<double>& y, const Vector<double>& z)
+    // {
+    //     Vector<double> Mz(z.size());
+    //     M.vmult(Mz, z);
+    //     return y*Mz;
+    // };
 
     dealii::ConvergenceTable convergence_table;
 
