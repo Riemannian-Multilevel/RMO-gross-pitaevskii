@@ -61,6 +61,7 @@ public:
         , A_inv(InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12))
         , M_inv(InverseMatrix(M, SolverMethod::CG, {}, 2000, 1e-12))
     {}
+    virtual ~GradientTestBase() {};
 
     void random_point(Vector<double>& x) const
     {
@@ -86,6 +87,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const
     {
+        // project orthogonally onto tangent space at x, wrt. the mass metric
         ellipsoid::project_onto_tangent_space(x, M, v, v_proj);
     }
 
@@ -100,11 +102,129 @@ public:
     auto get_A_inv() const { return A_inv; }
     auto get_M_inv() const { return M_inv; }
 
-private:
+    virtual double value(const Vector<double>&) {}
+    virtual Vector<double> gradient(const Vector<double>&) {}
+    virtual double metric(const Vector<double>&, const Vector<double>&) {}
+
+protected:
     const GrossPitaevskiiProblem<dim>& m_problem;
     OperatorType A, M;
     InverseOpType<dealii::PreconditionIdentity> A_inv, M_inv;
 };
+
+template <int dim>
+class GradientTestEnergy : public GradientTestBase<dim>
+{
+public:
+    GradientTestEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta)
+        : GradientTestBase<dim>(problem, beta)
+    {}
+
+    double value(const Vector<double>& x) override
+    {
+        Vector<double> Ax(x.size());
+        this->A.vmult(Ax, x);
+        return 0.5 * (x * Ax);
+    }
+
+    Vector<double> gradient(const Vector<double>& x) override
+    {
+        Vector<double> x_grad(x.size());
+        ellipsoid::gradient(this->A_inv, this->M, x, x_grad);
+        return x_grad;
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) override
+    {
+        Vector<double> Az(z.size());
+        this->A.vmult(Az, z);
+        return y*Az;
+    }
+};
+
+template <int dim>
+class GradientTestMass : public GradientTestBase<dim>
+{
+public:
+    GradientTestMass(const GrossPitaevskiiProblem<dim>& problem, double beta)
+        : GradientTestBase<dim>(problem, beta)
+    {}
+
+    double value(const Vector<double>& x) override
+    {
+        Vector<double> Ax(x.size());
+        this->A.vmult(Ax, x);
+        return 0.5 * (x * Ax);
+    }
+
+    Vector<double> gradient(const Vector<double>& x) override
+    {
+        Vector<double> x_grad(x.size());
+        ellipsoid::gradient(this->M_inv, this->A, this->M, x, x_grad);
+        return x_grad;
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) override
+    {
+        Vector<double> Mz(z.size());
+        this->M.vmult(Mz, z);
+        return y*Mz;
+    }
+};
+
+template <int dim>
+class GradientTestEnergyCoarse : public GradientTestBase<dim>
+{
+public:
+    GradientTestEnergyCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta)
+        : GradientTestBase<dim>(problem, beta)
+    {}
+
+    double value(const Vector<double>& x) override
+    {
+        return 0;
+    }
+
+    Vector<double> gradient(const Vector<double>& x) override
+    {
+        return {};
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) override
+    {
+        return {};
+    }
+};
+
+template <int dim>
+class GradientTestMassCoarse : public GradientTestBase<dim>
+{
+public:
+    GradientTestMassCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta)
+        : GradientTestBase<dim>(problem, beta)
+    {}
+
+    double value(const Vector<double>& x) override
+    {
+        return 0;
+    }
+
+    Vector<double> gradient(const Vector<double>& x) override
+    {
+        return {};
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) override
+    {
+        return {};
+    }
+};
+
+template <int dim>
+void check_gradient(const GradientTestBase<dim>& test_grad, std::string filename)
+{
+
+}
 
 int main()
 {
@@ -122,52 +242,17 @@ int main()
     GrossPitaevskiiProblem<2> problem = GS.problem(Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
-    GradientTestBase test_base(problem, options.beta);
-    const auto& M = test_base.get_M();
-    const auto& A = test_base.get_A();
-    const auto& M_inv = test_base.get_M_inv();
-    const auto& A_inv = test_base.get_A_inv();
-
     // Problem definition
-    // TODO: inherit from GradientTestBase?
-    auto f = [&A](const Vector<double>& y)
-    {
-        //const auto& Ac = problem.get_operator_A(options.beta/2);  // for function value
-        //return ellipsoid::function_value(x, Ac);  // needs to evaluated at multiple points
-        Vector<double> Ay(y.size());
-        A.vmult(Ay, y);
-        return 0.5 * (y * Ay);
-    };
-    auto g = [&A_inv, &M](const Vector<double>& x)
-    {
-        Vector<double> x_grad(x.size());
-        ellipsoid::gradient(A_inv, M, x, x_grad);
-        return x_grad;
-    };
-    // auto g = [&M_inv, &A, &M](const Vector<double>& x)
-    // {
-    //     Vector<double> x_grad(x.size());
-    //     ellipsoid::gradient(M_inv, A, M, x, x_grad);
-    //     return x_grad;
-    // };
-    auto metric = [&A](const Vector<double>& y, const Vector<double>& z)
-    {
-        Vector<double> Az(z.size());
-        A.vmult(Az, z);
-        return y*Az;
-    };
-    // auto metric = [&M](const Vector<double>& y, const Vector<double>& z)
-    // {
-    //     Vector<double> Mz(z.size());
-    //     M.vmult(Mz, z);
-    //     return y*Mz;
-    // };
+    // TODO: std::unique_ptr
+    GradientTestMass<2>         test_mass(problem, options.beta);
+    GradientTestEnergy<2>       test_energy(problem, options.beta);
+    GradientTestEnergyCoarse<2> test_energy_coarse(problem, options.beta);
+    GradientTestMassCoarse<2>   test_mass_coarse(problem, options.beta);
 
     dealii::ConvergenceTable convergence_table;
 
     // Test correctness of gradients for random samples
-    // TODO: functor with f(.), grad(.), metric(.) arguments
-    //       input: GrossPitaevskiiProblem<dim>
+    // TODO: input: GradientTestBase
     for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
         auto filename = fmt::format("checkgradient_trial_{:03}.dat", trial);
         std::cerr << "Writing " << filename << std::endl;
@@ -175,30 +260,32 @@ int main()
 
         // 1. Generate a random point x in the manifold S
         Vector<double> x(n_dofs);
-        test_base.random_point(x);
+        test_energy.random_point(x);  // initializes M_pp
 
         // Check x fulfills |x|_M = 1
         // TODO: merge to GradientTestBase
         Vector<double> Mx(x.size());
-        M.vmult(Mx, x);
+        test_energy.get_M().vmult(Mx, x);
         convergence_table.add_value("x_constr", x*Mx);
 
         // 2. Generate a random tangent vector v at x with |v|_x = 1
         Vector<double> v(n_dofs);
-        test_base.random_tangent_vector(x, v);
-        v /= std::sqrt(metric(v, v));  // tangent vector with |v|_x = 1
+        test_energy.random_tangent_vector(x, v);
+        v /= std::sqrt(test_energy.metric(v, v));  // tangent vector with |v|_x = 1
 
         // The Riemannian gradient of E at x is defined as,
         // the unique element in the tangent space at x, T_x S,
         // such that for all v in T_x S,
         // g_x(\grad(x), v) = DE(x)[v]
         // 2b. Verify this condition for finite difference (directional derivative)
-        double fx = f(x);
-        Vector<double> x_grad = g(x);
-        double g_xv = metric(x_grad, v);
+        double fx = test_energy.value(x);
+        Vector<double> x_grad = test_energy.gradient(x);
+        double g_xv = test_energy.metric(x_grad, v);
         convergence_table.add_value("grad_xv",g_xv);
 
-        double dir_xv8 = finite_difference(f, x, v, 1e-8, fx);
+        // TODO: merge to GradientTestBase
+        auto value = std::bind(&GradientTestEnergy<2>::value, &test_energy, std::placeholders::_1);
+        double dir_xv8 = finite_difference(value, x, v, 1e-8, fx);
         convergence_table.add_value("dir_xv_1e-8",dir_xv8);
 
         // 3. Compute f(x) and grad_x f(x)
@@ -206,12 +293,12 @@ int main()
         //    Compute <grad f(x), v>_x
         Vector<double> x_grad_proj(x_grad.size());
         // TODO: Do we care about which metric for the projected gradient?
-        test_base.to_tangent_space(x, x_grad, x_grad_proj);
+        test_energy.to_tangent_space(x, x_grad, x_grad_proj);
 
         // Residual of difference between gradient, and projected gradient
         Vector<double> x_grad_res(x_grad);
         x_grad_res.add(-1.0, x_grad_proj);
-        convergence_table.add_value("grad_proj_res",std::sqrt(metric(x_grad_res,x_grad_res)));
+        convergence_table.add_value("grad_proj_res",std::sqrt(test_energy.metric(x_grad_res,x_grad_res)));
 
         // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
         auto ts = logspace(-8,0,100);
@@ -223,9 +310,9 @@ int main()
             tv *= t;
 
             Vector<double> Rx_tv(x.size());
-            test_base.retract(x, tv, Rx_tv);
+            test_energy.retract(x, tv, Rx_tv);
 
-            long double Et = std::abs(-f(Rx_tv) + fx + t*g_xv);
+            long double Et = std::abs(-test_energy.value(Rx_tv) + fx + t*g_xv);
             //Ets.push_back(Et);
             outfile << t << "\t" << Et << std::endl;
         }

@@ -106,6 +106,7 @@ namespace ellipsoid
  * @return The computed energy value.
  */
 // TODO: should it be 1/2 x' (A0 + Mpp) x ?
+//       different functions can be defined on the ellipsoid, move to separate module
 template <typename MatrixType>
 double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp, double beta)
 {
@@ -120,13 +121,12 @@ double function_value(const Vector<double>& x, const MatrixType& A0, const Matri
     return x * Bx;
 }
 
-// As above but for an operator A_x~ = A0 + beta/2 Mpp
 template <typename OperatorType>
 double function_value(const Vector<double>& x, const OperatorType& A)
 {
     Vector<double> Ax(x.size());
     A.vmult(Ax, x);
-    return x * Ax;
+    return 0.5 * (x * Ax);
 }
 
 /**

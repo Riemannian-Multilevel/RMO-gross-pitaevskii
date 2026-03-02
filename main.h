@@ -174,14 +174,13 @@ public:
     run(const Vector<double>& x0, double beta, const GdOptions& gd_options, std::ostream& os) const
     {
         Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
-
         // Create the oracle (light-weight object, references problem matrices)
         EnergyOracle<dim> oracle(problem, beta);
 
         // Riemannian gradient descent
         // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
         return gradient_descent(oracle, x0, [this](Vector<double>& x){
-            //package.distribute(x);   // We only need to ensure Dirichlet conditions for the starting point x0
+            //package.distribute(x);   // we only need to ensure Dirichlet conditions for the starting point x0
             problem.assemble_nonlinear_term(x);  // or oracle.update(x)
         }, gd_options, os);
     }
