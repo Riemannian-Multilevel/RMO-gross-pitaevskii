@@ -331,6 +331,14 @@ void retract_by_norm(const MatrixType& M, const Vector<double>& v, Vector<double
     x /= std::sqrt(x * Mx);     // x' <- x' / ||x'||_M
 }
 
+template <typename MatrixType>
+void retract_by_norm(const MatrixType& M, Vector<double>& x)
+{
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+    x /= std::sqrt(x * Mx);
+}
+
 /**
  * @brief Computes the inverse retraction by normalization.
  *
@@ -633,20 +641,16 @@ double function_value(const Vector<double>& zeta,
                       const Vector<double>& phi,
                       const Vector<double>& w,
                       const MatrixType& M,
-                      const MatrixType& A0,
-                      const MatrixType& Mpp,
-                      double beta)
+                      const MatrixType& A)
 {
-    // 1. Compute Energy E(zeta)
-    // using the existing function_value helper
-    const double energy = function_value(zeta, A0, Mpp, beta);
+    // Using the existing function_value helper
+    //const double energy = function_value(zeta, A0, Mpp, beta);
+    const double energy = ellipsoid::function_value(zeta, A);
 
-    // 2. Compute Inverse Retraction: v = invRet_phi(zeta)
     // We use a temporary vector since invRet modifies the argument in-place
     Vector<double> v(zeta);
-    retract_inv_by_norm(M, v, phi);
+    ellipsoid::retract_inv_by_norm(M, v, phi);
 
-    // 3. Compute Inner Product <w, v>_M = w^T * M * v
     Vector<double> Mv(zeta.size());
     M.vmult(Mv, v);
 
@@ -657,12 +661,6 @@ double function_value(const Vector<double>& zeta,
 
 /**
  * Computes the coarse gradient update step in the mass-weighted metric:
- *
- * grad_M = Proj_zeta( M^-1 * ( A*zeta - (K/s^2)*zeta ) + (1/s)*w )
- *
- * where:
- * s = <phi, M*zeta>
- * K = <Mw, M*phi>
  *
  * @param M Mass matrix
  * @param M_inv Operator representing M^-1 (must support vmult)
@@ -681,18 +679,21 @@ void gradient(const MatrixType& M,
               const Vector<double>& w,
               Vector<double>& dst)
 {
+    Vector<double> Mz(zeta.size());
+    M.vmult(Mz, zeta);
 
+    Vector<double> Az(zeta.size());
+    A.vmult(Az, zeta);
+    Az.add(-(zeta*Az), Mz);
+    M_inv.vmult(dst, Az);
+
+    Vector<double> invRet(zeta.size());
+    ellipsoid::retract_inv_diff_by_norm_adjoint(M, phi, zeta, w, invRet);
+    dst.add(-1.0, invRet);
 }
 
-
-// TODO: verify implementation, write tests (cf. manopt)
 /**
- * Computes the coarse gradient update step:
- * v_unproj = zeta + A_zeta^-1 * ( (1/s)*w - (<Mw, Mphi>/s^2)*zeta )
- * dst = Proj_zeta( v_unproj )
- *
- * where s = <phi, M*zeta>
- *
+ * Computes the coarse gradient update step in the energy metric.
  * @param M Mass matrix (M_coarse)
  * @param A_inv Linear operator or InverseMatrix wrapper representing A_zeta^-1
  * @param zeta The coarse approximation (y)
@@ -708,7 +709,16 @@ void gradient(const MatrixType& M,
               const Vector<double>& w,
               Vector<double>& dst)
 {
+    Vector<double> invRet(zeta.size());
+    ellipsoid::retract_inv_diff_by_norm_adjoint(M, phi, zeta, w, invRet);
+    M.vmult(dst, invRet);
 
+    Vector<double> invAz(zeta.size());
+    A_inv.vmult(invAz, dst);
+    invAz *= -1.0;
+    invAz.add(1.0, zeta);
+
+    ellipsoid::project_onto_tangent_space(A_inv, zeta, M, invAz, dst);
 }
 
 } // namespace coarse
