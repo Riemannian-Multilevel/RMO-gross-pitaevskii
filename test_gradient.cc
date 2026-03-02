@@ -280,7 +280,6 @@ void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trial
         if (phi_coarse_fix.empty()) {
             // 1. Generate a random point x in the manifold S
             test_grad.random_point(x);
-            test_grad.assemble(x);    // initializes M_pp
         }
         else {
             // 1. Generate a random point x safely in the neighborhood of phi
@@ -294,6 +293,7 @@ void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trial
             //v_init *= 0.1;
             test_grad.retract(phi_coarse_fix, v_init, x);
         }
+        test_grad.assemble(x);    // initializes M_pp
 
         // 2. Generate a random tangent vector v at x with |v|_x = 1
         Vector<double> v(n_dofs);
@@ -404,7 +404,7 @@ int main()
         Vector<double> w_proj(n_dofs);
         ellipsoid::project_onto_tangent_space(test_mass.get_A_inv(), phi, test_mass.get_M(), w, w_proj);
 
-        GradientTestEnergyCoarse<2> test_coarse_energy(problem, options.beta, phi, w);
+        GradientTestEnergyCoarse<2> test_coarse_energy(problem, options.beta, phi, w_proj);
         check_gradient(test_coarse_energy, 1,
             fmt::format("checkgradient_coarse_energy_2d_{:03}",trial), phi);
     }
@@ -418,7 +418,7 @@ int main()
         Vector<double> w_proj(n_dofs);
         ellipsoid::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
 
-        GradientTestMassCoarse<2> test_coarse_mass(problem, options.beta, phi, w);
+        GradientTestMassCoarse<2> test_coarse_mass(problem, options.beta, phi, w_proj);
         check_gradient(test_coarse_mass, 1,
             fmt::format("checkgradient_coarse_mass_2d_{:03}",trial), phi);
     }
