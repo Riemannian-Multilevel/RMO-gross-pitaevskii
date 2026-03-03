@@ -7,7 +7,7 @@ library(purrr)
 library(scales)
 
 # 1. Read all trial files matching the pattern
-file_pattern <- "^checkgradient_coarse_energy_2d_[0-9]{3}\\.dat$"
+file_pattern <- "^checkgradient_energy_2d_[0-9]{3}\\.dat$"
 file_list <- list.files(pattern = file_pattern)
 
 if(length(file_list) == 0) {

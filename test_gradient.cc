@@ -248,10 +248,10 @@ public:
 // For testing gradients, it suffices to consider some level of discretization,
 // and consider random base points `phi` and `w`.
 template <int dim>
-class GradientTestEnergyCoarse : public GradientTestBase<dim>
+class GradientTestCoarseEnergy : public GradientTestBase<dim>
 {
 public:
-    GradientTestEnergyCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta,
+    GradientTestCoarseEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta,
                              const Vector<double>& phi,   // base point (restricted point)
                              const Vector<double>& w)     // correction term (restricted gradient difference))
         : GradientTestBase<dim>(problem, beta)
@@ -307,10 +307,10 @@ private:
 
 
 template <int dim>
-class GradientTestMassCoarse : public GradientTestBase<dim>
+class GradientTestCoarseMass : public GradientTestBase<dim>
 {
 public:
-    GradientTestMassCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta,
+    GradientTestCoarseMass(const GrossPitaevskiiProblem<dim>& problem, double beta,
                            const Vector<double>& phi,   // base point (restricted point)
                            const Vector<double>& w)     // correction term (restricted gradient difference)
         : GradientTestBase<dim>(problem, beta)
@@ -363,99 +363,116 @@ private:
     const Vector<double>& m_phi, m_w;  // copy stored for flipping sign
 };
 
-struct CheckGrad
+struct CheckGradInfo
 {
     double x_constr;            // constraint
-    Vector<double> grad_xv;     // <grad x, v>_x
+    double grad_xv;             // <grad x, v>_x
     double dir_xv;              // DE(x)[v]
-    Vector<double> grad_proj;   // Proj(v)
+    double grad_res;            // |v-Proj(v)|_x
+
+    std::vector<double> ts;
+    std::vector<double> Ets;
 };
 
 // Test correctness of gradients for random samples
-// TODO: proper test for testing coarse gradient in a neighborhood of \phi
+// TODO: additional data (h=1-8, n_trial_points=100, start_exp=-8)
 template <int dim>
-void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trials, std::string prefix)
+CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
+{
+    CheckGradInfo check;
+    const unsigned int n_dofs = test_grad.n_dofs();
+
+    // 1. Generate a random point at x
+    Vector<double> x(n_dofs);
+    test_grad.random_point(x);
+    test_grad.assemble(x);    // initializes M_pp
+
+    // Check x fulfills |x|_M = 1
+    double x_constr = test_grad.constraint_value(x);
+    check.x_constr = x_constr;
+    
+    // 2. Generate a random tangent vector v at x with |v|_x = 1
+    Vector<double> v(n_dofs);
+    test_grad.random_tangent_vector(x, v);
+    v /= std::sqrt(test_grad.metric(v, v));  // tangent vector with |v|_x = 1
+
+    // Verify g_x(\grad(x), v) = DE(x)[v] for finite difference (directional derivative)
+    double fx = test_grad.value(x);
+    Vector<double> x_grad = test_grad.gradient(x);
+    double g_xv = test_grad.metric(x_grad, v);
+    check.grad_xv = g_xv;
+
+    // TODO: merge finite_difference() to GradientTestBase (avoid std::bind)
+    auto value = std::bind(&GradientTestBase<dim>::value, &test_grad, std::placeholders::_1);
+    double dir_xv8 = finite_difference(value, x, v, 1e-8, fx);
+    check.dir_xv = dir_xv8;
+
+    // 3. Check that grad is in T_x S
+    Vector<double> x_grad_proj(x_grad.size());
+    test_grad.to_tangent_space(x, x_grad, x_grad_proj);
+
+    // Residual of difference between gradient, and projected gradient in T_x S
+    Vector<double> x_grad_res(x_grad);
+    x_grad_res.add(-1.0, x_grad_proj);
+    double grad_res = std::sqrt(test_grad.metric(x_grad_res,x_grad_res));
+    check.grad_res  = grad_res;
+
+    // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
+    check.ts  = logspace(-8,0,100);
+    check.Ets = std::vector<double>{};
+
+    for (auto t : check.ts) {
+        auto tv = Vector(v);
+        tv *= t;
+
+        Vector<double> Rx_tv(x.size());
+        test_grad.retract(x, tv, Rx_tv);
+
+        long double Et = std::abs(-test_grad.value(Rx_tv) + fx + t*g_xv);
+        check.Ets.push_back(Et);
+    }
+    AssertDimension(check.ts.size(), check.Ets.size());
+    return check;
+}
+
+template <int dim>
+void check_gradient(const GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix)
 {
     dealii::ConvergenceTable convergence_table;
 
     for (unsigned int trial = 0; trial < n_trials; trial++) {
-        // TODO: filename for both regular and coarse tests
-        //auto filename = prefix + fmt::format("_{:03}.dat",trial);
-        auto filename = prefix + ".dat";
-        std::cerr << "Writing " << filename << std::endl;
-        std::ofstream outfile(filename);  // rename according to function/metric used
-        const unsigned int n_dofs = test_grad.n_dofs();
-
-        Vector<double> x(n_dofs);
-        test_grad.random_point(x);
-        test_grad.assemble(x);    // initializes M_pp
-
-        // 2. Generate a random tangent vector v at x with |v|_x = 1
-        Vector<double> v(n_dofs);
-        test_grad.random_tangent_vector(x, v);
-        v /= std::sqrt(test_grad.metric(v, v));  // tangent vector with |v|_x = 1
-
-        // Check x fulfills |x|_M = 1
-        double x_constr = test_grad.constraint_value(x);
-        convergence_table.add_value("x_constr", x_constr);
-
-        // The Riemannian gradient of E at x is defined as,
-        // the unique element in the tangent space at x, T_x S,
-        // such that for all v in T_x S,
-        // g_x(\grad(x), v) = DE(x)[v]
-        // 2b. Verify this condition for finite difference (directional derivative)
-        double fx = test_grad.value(x);
-        Vector<double> x_grad = test_grad.gradient(x);
-        double g_xv = test_grad.metric(x_grad, v);
-        convergence_table.add_value("grad_xv",g_xv);
-
-        // TODO: merge to GradientTestBase
-        auto value = std::bind(&GradientTestBase<dim>::value, &test_grad, std::placeholders::_1);
-        double dir_xv8 = finite_difference(value, x, v, 1e-8, fx);
-        convergence_table.add_value("dir_xv_1e-8",dir_xv8);
-
-        // 3. Compute f(x) and grad_x f(x)
-        //    Check that grad is in T_x S
-        //    Compute <grad f(x), v>_x
-        Vector<double> x_grad_proj(x_grad.size());
-        // TODO: Do we care about which metric for the projected gradient?
-        test_grad.to_tangent_space(x, x_grad, x_grad_proj);
-
-        // Residual of difference between gradient, and projected gradient
-        Vector<double> x_grad_res(x_grad);
-        x_grad_res.add(-1.0, x_grad_proj);
-        convergence_table.add_value("grad_proj_res",std::sqrt(test_grad.metric(x_grad_res,x_grad_res)));
-
-        // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
-        auto ts = logspace(-8,0,100);
-        // auto Ets = std::vector<double>();
-        // Ets.reserve(ts.size());
-
-        for (auto t : ts) {
-            auto tv = Vector(v);
-            tv *= t;
-
-            Vector<double> Rx_tv(x.size());
-            test_grad.retract(x, tv, Rx_tv);
-
-            long double Et = std::abs(-test_grad.value(Rx_tv) + fx + t*g_xv);
-            //Ets.push_back(Et);
-            outfile << t << "\t" << Et << std::endl;
-        }
+        auto info = check_gradient_trial(test_grad);
+        
+        convergence_table.add_value("x_constr", info.x_constr);
+        convergence_table.add_value("grad_xv",info.grad_xv);
+        convergence_table.add_value("dir_xv",info.dir_xv);
+        convergence_table.add_value("grad_res",info.grad_res);
 
         // 5. Plot E(t) as a function of t, in a log–log plot;
+        std::string filename;
+        if (n_trials > 1) {
+            filename = prefix + fmt::format("_{:03}.dat",trial);
+        } else {
+            filename = prefix + ".dat";
+        }
+        std::cerr << "Writing " << filename << std::endl;
+        std::ofstream outfile(filename);
+        
+        for (unsigned i = 0; i < info.ts.size(); i++) {
+            outfile << info.ts[i] << "\t" << info.Ets[i] << std::endl;
+        }
         outfile.close();
     }
-
+    
     convergence_table.set_precision("x_constr", 6);
-    convergence_table.set_precision("dir_xv_1e-8", 6);
+    convergence_table.set_precision("dir_xv", 6);
     convergence_table.set_precision("grad_xv", 6);
-    convergence_table.set_precision("grad_proj_res", 6);
+    convergence_table.set_precision("grad_res", 6);
 
     convergence_table.set_scientific("x_constr", true);
-    convergence_table.set_scientific("dir_xv_1e-8", true);
+    convergence_table.set_scientific("dir_xv", true);
     convergence_table.set_scientific("grad_xv", true);
-    convergence_table.set_scientific("grad_proj_res", true);
+    convergence_table.set_scientific("grad_res", true);
 
     convergence_table.write_text(std::cout, dealii::TableHandler::TextOutputFormat::table_with_headers);
 }
@@ -476,33 +493,35 @@ int main()
     GrossPitaevskiiProblem<2> problem = GS.problem(Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
-    // std::cerr << "--- GRADIENT CHECK - ENERGY\n";
-    // GradientTestEnergy<2> test_energy(problem, options.beta);
-    // check_gradient(test_energy, NUM_TRIALS, "checkgradient_energy_2d");
-    // std::cerr << "\n";
-    //
-    // std::cerr << "--- GRADIENT CHECK - MASS\n";
+    std::cerr << "--- GRADIENT CHECK - ENERGY\n";
+    GradientTestEnergy<2> test_energy(problem, options.beta);
+    check_gradient(test_energy, NUM_TRIALS, "checkgradient_energy_2d");
+    std::cerr << "\n";
+    
+    std::cerr << "--- GRADIENT CHECK - MASS\n";
     GradientTestMass<2> test_mass(problem, options.beta);
-    // check_gradient(test_mass, NUM_TRIALS, "checkgradient_mass_2d");
-    // std::cerr << "\n";
+    check_gradient(test_mass, NUM_TRIALS, "checkgradient_mass_2d");
+    std::cerr << "\n";
 
     std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
     Vector<double> w(n_dofs);
     w = 1.0;
 
+    // TODO: separate loop (n_trials == 1) since w, phi change for every trial
     for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
         Vector<double> phi(n_dofs);
-        test_mass.random_point(phi);
+        test_energy.random_point(phi);
 
         Vector<double> w_proj(n_dofs);
         ellipsoid::project_onto_tangent_space(test_mass.get_A_inv(), phi, test_mass.get_M(), w, w_proj);
 
-        GradientTestEnergyCoarse<2> test_coarse_energy(problem, options.beta, phi, w_proj);
+        GradientTestCoarseEnergy<2> test_coarse_energy(problem, options.beta, phi, w_proj);
         check_gradient(test_coarse_energy, 1,
             fmt::format("checkgradient_coarse_energy_2d_{:03}",trial));
     }
     std::cerr << "\n";
 
+    // TODO: separate loop (n_trials == 1) since w, phi change for every trial
     std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
     for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
         Vector<double> phi(n_dofs);
@@ -511,11 +530,8 @@ int main()
         Vector<double> w_proj(n_dofs);
         ellipsoid::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
 
-        GradientTestMassCoarse<2> test_coarse_mass(problem, options.beta, phi, w_proj);
+        GradientTestCoarseMass<2> test_coarse_mass(problem, options.beta, phi, w_proj);
         check_gradient(test_coarse_mass, 1,
             fmt::format("checkgradient_coarse_mass_2d_{:03}",trial));
     }
-
-
-    std::cerr << "\n";
 }
