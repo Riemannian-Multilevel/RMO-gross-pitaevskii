@@ -41,6 +41,49 @@ logspace(double start_exp, double end_exp, int num) {
     return values;
 }
 
+namespace gpe::ellipsoid
+{
+template <typename MatrixType>
+void random_point(Vector<double>& x, const MatrixType& M,
+                  double mean = 0.0, double stddev = 1.0)
+{
+    normrnd(mean, stddev, x);
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+
+    const double factor = x*Mx;
+    x /= std::sqrt(factor);
+}
+
+template <typename MatrixType>
+void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
+                           Vector<double>& v,
+                           double mean = 0.0, double stddev = 1.0)
+{
+    // 1. generate random vector in ambient space
+    Vector<double> tmp(v.size());
+    normrnd(mean, stddev, tmp);
+
+    // 2. project orthogonally onto tangent space at x, wrt. the mass metric
+    ellipsoid::project_onto_tangent_space(x, M, tmp, v);
+}
+
+template <typename MatrixType, typename InverseMatrixType>
+void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>& x,
+                           const MatrixType& M, Vector<double>& v,
+                           double mean = 0.0, double stddev = 1.0)
+{
+    // 1. generate random vector in ambient space
+    Vector<double> tmp(v.size());
+    normrnd(mean, stddev, tmp);
+
+    // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
+    ellipsoid::project_onto_tangent_space(A_inv, x, M, tmp, v);
+}
+
+}
+
+
 // TODO: check first order-coherence
 using OperatorType = LinearCombination<SparseMatrix<double>, Vector<double>>;
 template <typename PrecondType>
@@ -62,49 +105,32 @@ public:
         , A_inv(InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12))
         , M_inv(InverseMatrix(M, SolverMethod::CG, {}, 2000, 1e-12))
     {}
-    virtual ~GradientTestBase() {};
-
-    void random_point(Vector<double>& x) const
-    {
-        normrnd(mean, stddev, x);
-        Vector<double> Mx(x.size());
-        M.vmult(Mx, x);
-
-        const double factor = x*Mx;
-        x /= std::sqrt(factor);
-    }
-
-    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const
-    {
-        // 1. generate random vector in ambient space
-        Vector<double> tmp(v.size());
-        normrnd(mean, stddev, tmp);
-
-        // 2. project orthogonally onto tangent space at x, wrt. the mass metric
-        ellipsoid::project_onto_tangent_space(x, M, tmp, v);
-    }
+    virtual ~GradientTestBase() = default;
 
     void assemble(const Vector<double>& x) const
     {
         m_problem.assemble_nonlinear_term(x);  // updates Mpp -> A (mutable) for underlying operators
     }
 
-    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const
-    {
-        // project orthogonally onto tangent space at x, wrt. the mass metric
-        ellipsoid::project_onto_tangent_space(x, M, v, v_proj);
-    }
-
+    // Defined for all functions and metrics on S^n
     void retract(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_retr) const
     {
         v_retr = x;
         ellipsoid::retract_by_norm(M, v, v_retr);  // input-output vector
     }
 
+    // Special case for x == v
     void retract(const Vector<double>& x, Vector<double>& x_retr) const
     {
         x_retr = x;
         ellipsoid::retract_by_norm(M, x_retr);
+    }
+
+    double constraint_value(const Vector<double>& x) const
+    {
+        Vector<double> Mx(x.size());
+        this->M.vmult(Mx, x);
+        return x*Mx;
     }
 
     auto get_A() const { return A; }
@@ -112,6 +138,10 @@ public:
     auto get_A_inv() const { return A_inv; }
     auto get_M_inv() const { return M_inv; }
     auto n_dofs() const { return A.m(); }
+
+    virtual void random_point(Vector<double>& x) const = 0;
+    virtual void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const = 0;
+    virtual void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const = 0;
 
     virtual double value(const Vector<double>&) const = 0;
     virtual Vector<double> gradient(const Vector<double>&) const = 0;
@@ -151,6 +181,21 @@ public:
         this->A.vmult(Az, z);
         return y*Az;
     }
+
+    void random_point(Vector<double>& x) const override
+    {
+        ellipsoid::random_point(x, this->M);
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
+    {
+        ellipsoid::random_tangent_vector(this->A_inv, x, this->M, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
+    {
+        ellipsoid::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
+    }
 };
 
 template <int dim>
@@ -180,6 +225,21 @@ public:
         Vector<double> Mz(z.size());
         this->M.vmult(Mz, z);
         return y*Mz;
+    }
+
+    void random_point(Vector<double>& x) const override
+    {
+        ellipsoid::random_point(x, this->M);
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
+    {
+        ellipsoid::random_tangent_vector(x, this->M, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
+    {
+        ellipsoid::project_onto_tangent_space(x, this->M, v, v_proj);
     }
 };
 
@@ -219,6 +279,28 @@ public:
         return y*Az;
     }
 
+    // Generate a random point x safely in the neighborhood of phi
+    void random_point(Vector<double>& x) const override
+    {
+        // Generate a random tangent vector at phi
+        Vector<double> v(x.size());
+        ellipsoid::random_tangent_vector(this->A_inv, m_phi, this->M, v);
+        v /= std::sqrt(this->metric(v, v));
+
+        // Retract to find an x that is safely near phi
+        this->retract(m_phi, v, x);
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
+    {
+        ellipsoid::random_tangent_vector(this->A_inv, x, this->M, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
+    {
+        ellipsoid::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
+    }
+
 private:
     const Vector<double>& m_phi, m_w;   // copy for flipping sign
 };
@@ -255,16 +337,44 @@ public:
         return y*Mz;
     }
 
+    // Generate a random point x safely in the neighborhood of phi
+    void random_point(Vector<double>& x) const override
+    {
+        // Generate a random tangent vector at phi
+        Vector<double> v(x.size());
+        ellipsoid::random_tangent_vector(m_phi, this->M, v);
+        v /= std::sqrt(this->metric(v, v));
+
+        // Retract to find an x that is safely near phi
+        this->retract(m_phi, v, x);
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
+    {
+        ellipsoid::random_tangent_vector(x, this->M, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
+    {
+        ellipsoid::project_onto_tangent_space(x, this->M, v, v_proj);
+    }
+
 private:
     const Vector<double>& m_phi, m_w;  // copy stored for flipping sign
 };
 
+struct CheckGrad
+{
+    double x_constr;            // constraint
+    Vector<double> grad_xv;     // <grad x, v>_x
+    double dir_xv;              // DE(x)[v]
+    Vector<double> grad_proj;   // Proj(v)
+};
 
 // Test correctness of gradients for random samples
 // TODO: proper test for testing coarse gradient in a neighborhood of \phi
 template <int dim>
-void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trials, std::string prefix,
-                    const Vector<double>& phi_coarse_fix = {})
+void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trials, std::string prefix)
 {
     dealii::ConvergenceTable convergence_table;
 
@@ -277,22 +387,7 @@ void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trial
         const unsigned int n_dofs = test_grad.n_dofs();
 
         Vector<double> x(n_dofs);
-        if (phi_coarse_fix.empty()) {
-            // 1. Generate a random point x in the manifold S
-            test_grad.random_point(x);
-        }
-        else {
-            // 1. Generate a random point x safely in the neighborhood of phi
-            // Generate a random tangent vector at phi
-            Vector<double> v_init(n_dofs);
-            test_grad.random_tangent_vector(phi_coarse_fix, v_init);
-            v_init /= std::sqrt(test_grad.metric(v_init, v_init));
-
-            // Retract to find an x that is safely near phi
-            // (e.g., a step size of 0.1 ensures phi^T M x > 0)
-            //v_init *= 0.1;
-            test_grad.retract(phi_coarse_fix, v_init, x);
-        }
+        test_grad.random_point(x);
         test_grad.assemble(x);    // initializes M_pp
 
         // 2. Generate a random tangent vector v at x with |v|_x = 1
@@ -301,10 +396,8 @@ void check_gradient(const GradientTestBase<dim>& test_grad, unsigned int n_trial
         v /= std::sqrt(test_grad.metric(v, v));  // tangent vector with |v|_x = 1
 
         // Check x fulfills |x|_M = 1
-        // TODO: merge to GradientTestBase
-        Vector<double> Mx(x.size());
-        test_grad.get_M().vmult(Mx, x);
-        convergence_table.add_value("x_constr", x*Mx);
+        double x_constr = test_grad.constraint_value(x);
+        convergence_table.add_value("x_constr", x_constr);
 
         // The Riemannian gradient of E at x is defined as,
         // the unique element in the tangent space at x, T_x S,
@@ -406,7 +499,7 @@ int main()
 
         GradientTestEnergyCoarse<2> test_coarse_energy(problem, options.beta, phi, w_proj);
         check_gradient(test_coarse_energy, 1,
-            fmt::format("checkgradient_coarse_energy_2d_{:03}",trial), phi);
+            fmt::format("checkgradient_coarse_energy_2d_{:03}",trial));
     }
     std::cerr << "\n";
 
@@ -420,7 +513,7 @@ int main()
 
         GradientTestMassCoarse<2> test_coarse_mass(problem, options.beta, phi, w_proj);
         check_gradient(test_coarse_mass, 1,
-            fmt::format("checkgradient_coarse_mass_2d_{:03}",trial), phi);
+            fmt::format("checkgradient_coarse_mass_2d_{:03}",trial));
     }
 
 

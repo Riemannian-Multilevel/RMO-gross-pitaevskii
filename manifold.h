@@ -149,10 +149,9 @@ double function_value(const Vector<double>& x, const OperatorType& A)
  */
 template <typename MatrixType, typename InverseMatrixType>
 void project_onto_tangent_space(const InverseMatrixType& A_inv,
-                                const Vector<double>& x,
-                                const MatrixType& M,
-                                const Vector<double>& v,
-                                Vector<double>& output)
+                                const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
+                                Vector<double>& output,
+                                bool ignore_positivity_constraint = false)
 {
     AssertDimension(x.size(), v.size());
     Vector<double> Mx(x.size());
@@ -165,7 +164,10 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv,
     M.vmult(My, Ainv_Mx);  // M A_x^{-1} M x
 
     double denom = x * My;
-    AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
+    // Requirement for M, A positive definite on the tangent space of x
+    if (!ignore_positivity_constraint) {
+        AssertThrow(denom > 0, dealii::ExcInternalError("x' M A^{-1} M x <= 0"));
+    }
 
     Vector<double> Mv(v.size());
     M.vmult(Mv, v);
