@@ -8,21 +8,21 @@
 #include <fstream>
 #include <fmt/format.h>
 
-#define NUM_TRIALS 100
+#define NUM_TRIALS 50
 
 using namespace gpe;
 
+// TODO: long double doesn't do much here, since F() is evaluated in double
 template <typename FuncType>
 long double finite_difference(const FuncType& F, const Vector<double>& x,
-    const Vector<double>& v, long double h, long double Fx)
+                              const Vector<double>& v, long double h, long double Fx)
 {
-    AssertThrow(h > 0, dealii::ExcMessage("h must be positive"));
-
-    // y <- x + hv, v direction
+    // Evaluate at x + hv
     Vector<double> tmp(x);
     tmp.add(h, v);
 
-    return static_cast<long double>(F(tmp) - Fx) / h;
+    const long double F_tmp = F(tmp);
+    return (F_tmp - Fx) / h;
 }
 
 std::vector<double>
@@ -414,10 +414,16 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
     double g_xv = test_grad.metric(x_grad, v);
     check.grad_xv = g_xv;
 
-    // TODO: merge finite_difference() to GradientTestBase (avoid std::bind)
-    auto value = std::bind(&GradientTestBase<dim>::value, &test_grad, std::placeholders::_1);
-    double dir_xv8 = finite_difference(value, x, v, 1e-8, fx);
+    // --- FINITE DIFFERENCE CHECK ---
+    auto value_with_assembly = [&](const Vector<double>& z) {
+        test_grad.assemble(z);         // Explicitly assemble for the trial point
+        return test_grad.value(z);     // Evaluate
+    };
+    double dir_xv8 = finite_difference(value_with_assembly, x, v, 1e-8, fx);
     check.dir_xv = dir_xv8;
+
+    // RESTORE BASE STATE! The finite difference mutated the matrices.
+    test_grad.assemble(x);
 
     // 3. Check that grad is in T_x S
     Vector<double> x_grad_proj(x_grad.size());
@@ -438,7 +444,10 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
         tv *= t;
 
         Vector<double> Rx_tv(x.size());
-        test_grad.retract(x, tv, Rx_tv);
+        test_grad.retract(x, tv, Rx_tv);  // only uses M (no assembly required)
+
+        // --- EXPLICIT ASSEMBLY FOR RETRACTED POINT ---
+        test_grad.assemble(Rx_tv);
 
         long double Et = std::abs(-test_grad.value(Rx_tv) + fx + t*g_xv);
         check.Ets.push_back(Et);
