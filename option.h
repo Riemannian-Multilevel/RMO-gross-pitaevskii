@@ -10,7 +10,7 @@ namespace gpe
 {
 namespace po = boost::program_options;
 
-BOOST_DESCRIBE_STRUCT(GdOptions, (),
+BOOST_DESCRIBE_STRUCT(DescentOptions, (),
     (tol_inner, tol_lambda, tol_residual, step_size, max_iter, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (multilevel, n_levels, min_level, max_level));
@@ -104,7 +104,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
 }
 
 // TODO: separate linear solver options
-// ---------- GdOptions ----------
+// ---------- DescentOptions ----------
 inline po::options_description gd_cli_options() {
     po::options_description d("RGD options");
     d.add_options()
@@ -116,6 +116,8 @@ inline po::options_description gd_cli_options() {
          "maximum number of iterations")
         ("max-inner", po::value<int>()->default_value(100),
          "maximum number of iterations for sparse solver")
+        ("max-search", po::value<int>()->default_value(20),
+            "maximum number of iterations for line search")
         ("tol-residual", po::value<double>()->default_value(1e-4),
          "tolerance for M-residual")
         ("tol-inner", po::value<double>()->default_value(1e-6),
@@ -123,22 +125,35 @@ inline po::options_description gd_cli_options() {
         ("tol-lambda", po::value<double>()->default_value(1e-8),
          "tolerance for rayleigh quotient")
         ("step-size", po::value<double>()->default_value(1.0),
-         "step size for RGD");
+         "step size for RGD")
+        ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
+            "use armijo line search")
+        ("ls-alpha", po::value<double>()->default_value(1.0),
+            "alpha for armijo line search")
+        ("ls-beta", po::value<double>()->default_value(0.5),
+            "beta for armijo line search")
+        ("ls-sigma", po::value<double>()->default_value(0.4),
+            "sigma for armijo line search");
     return d;
 }
 
-inline void apply_gd_options(const po::variables_map& vm, GdOptions& options_rgd) {
+inline void apply_descent_options(const po::variables_map& vm, DescentOptions& options_rgd) {
     const auto solver_str = upper(vm["solver"].as<std::string>());
     const auto precond_str= upper(vm["precond"].as<std::string>());
 
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
     options_rgd.max_inner    = vm["max-inner"].as<int>();
+    options_rgd.max_search   = vm["max-search"].as<int>();
     options_rgd.tol_inner    = vm["tol-inner"].as<double>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.solver       = string_to_enum<SolverMethod>(solver_str);
     options_rgd.precond      = string_to_enum<Precondition>(precond_str);
+    options_rgd.line_search  = vm["line-search"].as<bool>();
+    options_rgd.ls_alpha     = vm["ls-alpha"].as<double>();
+    options_rgd.ls_beta      = vm["ls-beta"].as<double>();
+    options_rgd.ls_sigma     = vm["ls-sigma"].as<double>();
 }
 
 }

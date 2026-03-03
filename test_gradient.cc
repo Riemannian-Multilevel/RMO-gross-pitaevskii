@@ -104,6 +104,7 @@ public:
         , M(problem.get_operator_M())
         , A_inv(InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12))
         , M_inv(InverseMatrix(M, SolverMethod::CG, {}, 2000, 1e-12))
+        , m_beta(beta)
     {}
     virtual ~GradientTestBase() = default;
 
@@ -151,6 +152,7 @@ protected:
     const GrossPitaevskiiProblem<dim>& m_problem;
     OperatorType A, M;
     InverseOpType<dealii::PreconditionIdentity> A_inv, M_inv;
+    double m_beta;
 };
 
 template <int dim>
@@ -163,9 +165,10 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        Vector<double> Ax(x.size());
-        this->A.vmult(Ax, x);
-        return 0.5 * (x * Ax);
+        const auto& A0  = this->m_problem.get_A0();
+        const auto& Mpp = this->m_problem.get_Mpp();
+
+        return ellipsoid::function_value(x, A0, Mpp, this->m_beta);
     }
 
     Vector<double> gradient(const Vector<double>& x) const override
@@ -208,9 +211,10 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        Vector<double> Ax(x.size());
-        this->A.vmult(Ax, x);
-        return 0.5 * (x * Ax);
+        const auto& A0  = this->m_problem.get_A0();
+        const auto& Mpp = this->m_problem.get_Mpp();
+
+        return ellipsoid::function_value(x, A0, Mpp, this->m_beta);
     }
 
     Vector<double> gradient(const Vector<double>& x) const override
@@ -261,8 +265,12 @@ public:
 
     double value(const Vector<double>& x) const override
     {
+        const auto& A0  = this->m_problem.get_A0();
+        const auto& Mpp = this->m_problem.get_Mpp();
+        const auto& M   = this->m_problem.get_M();
+
         // Both energy-based and mass-weighed gradients use the mass-weighed coarse model
-        return coarse::function_value(x, m_phi, m_w, this->M, this->A);
+        return coarse::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
     }
 
     Vector<double> gradient(const Vector<double>& x) const override
@@ -320,7 +328,11 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::function_value(x, m_phi, m_w, this->M, this->A);
+        const auto& A0  = this->m_problem.get_A0();
+        const auto& Mpp = this->m_problem.get_Mpp();
+        const auto& M   = this->m_problem.get_M();
+
+        return coarse::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
     }
 
     Vector<double> gradient(const Vector<double>& x) const override

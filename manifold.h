@@ -47,26 +47,18 @@ struct State
 
 // TODO: x*Mx is only for debugging/diagnostic purposes
 template <typename MatrixType>
-State residual(const Vector<double>& x,
-               const MatrixType& A0,
-               const MatrixType& Mpp,
-               const MatrixType& M, double beta)
+State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M)
 {
     State prop;
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
     prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
 
-    Vector<double> Ax1(x.size()); // A0 x
-    A0.vmult(Ax1, x);
+    Vector<double> Ax(x.size()); // A x
+    A.vmult(Ax, x);
+    prop.lambda = x * Ax;          // Rayleigh quotient (x'Ax / x'Mx)
 
-    Vector<double> Ax2(x.size()); // Mpp x
-    Mpp.vmult(Ax2, x);
-
-    Ax1.add(beta, Ax2);             // (A0 + beta Mpp) x
-    prop.lambda = x * Ax1;          // Rayleigh quotient (x'Ax / x'Mx)
-
-    Vector<double> r(Ax1);
+    Vector<double> r(Ax);
     r.add(-prop.lambda, Mx);        // r = A x - lambda M x
 
     // TODO: use enum for setting norm at runtime
@@ -105,8 +97,7 @@ namespace ellipsoid
  * @param[in] Mpp The nonlinear part of the matrix (\f$ M_{\phi\phi} \f$) evaluated at @p x.
  * @return The computed energy value.
  */
-// TODO: should it be 1/2 x' (A0 + Mpp) x ?
-//       different functions can be defined on the ellipsoid, move to separate module
+// TODO: different functions can be defined on the ellipsoid, move to separate module
 template <typename MatrixType>
 double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp, double beta)
 {
@@ -119,14 +110,6 @@ double function_value(const Vector<double>& x, const MatrixType& A0, const Matri
 
     Bx.add(0.25*beta, Mpp_x);
     return x * Bx;
-}
-
-template <typename OperatorType>
-double function_value(const Vector<double>& x, const OperatorType& A)
-{
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-    return 0.5 * (x * Ax);
 }
 
 /**
@@ -636,18 +619,17 @@ namespace coarse
  * @param[in] M The mass matrix (coarse level).
  * @param[in] A0 The linear part of the stiffness matrix (coarse level).
  * @param[in] Mpp The nonlinear part of the matrix evaluated at zeta.
+ * @param beta
  * @return The scalar value of the coarse model.
  */
 template <typename MatrixType>
 double function_value(const Vector<double>& zeta,
                       const Vector<double>& phi,
                       const Vector<double>& w,
-                      const MatrixType& M,
-                      const MatrixType& A)
+                      const MatrixType& M, const MatrixType& A0, const MatrixType& Mpp, double beta)
 {
     // Using the existing function_value helper
-    //const double energy = function_value(zeta, A0, Mpp, beta);
-    const double energy = ellipsoid::function_value(zeta, A);
+    const double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
 
     // We use a temporary vector since invRet modifies the argument in-place
     Vector<double> v(zeta);

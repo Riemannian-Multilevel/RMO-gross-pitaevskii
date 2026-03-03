@@ -14,7 +14,7 @@ using namespace dealii;
 int main(int argc, char* argv[])
 {
     GPE_Options options{};
-    GdOptions   options_rgd{};
+    DescentOptions   options_rgd{};
     MG_Options  options_mg{};
 
     // TODO: add configuration file (cf. boost tutorial)
@@ -34,7 +34,7 @@ int main(int argc, char* argv[])
             return 0;
         }
         apply_gpe_options(vm, options);
-        apply_gd_options(vm, options_rgd);
+        apply_descent_options(vm, options_rgd);
         apply_mg_options(vm, options_mg);
 
         with_dimension(options.dimension, [&](auto D)

@@ -39,11 +39,17 @@ public:
     EnergyOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_)
         : problem(problem_)
         , beta(beta_)
-        , Aop(problem.get_operator_A(beta))
-        , Mop(problem.get_operator_M())
+        , A(problem.get_operator_A(beta))
+        , M(problem.get_operator_M())
     {
         // ILU preconditioning is usually based on the stationary linear part (A0)
         precond.initialize(problem.get_A0());
+    }
+
+    // TODO: store `x` argument, set markers `needs_assembly=true`, `need_gradient=true`
+    void update(const Vector<double>& x) const
+    {
+        problem.assemble_nonlinear_term(x);
     }
 
     /**
@@ -52,6 +58,8 @@ public:
      * @param x The current state vector.
      * @return The energy value.
      */
+    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
+    //       check marker `needs_assembly`
     double value(const Vector<double>& x) const
     {
         return ellipsoid::function_value(x, problem.get_A0(), problem.get_Mpp(), beta);
@@ -66,13 +74,15 @@ public:
      * @param options Solver and tolerance options for the inner iteration.
      * @return The number of inner iterations performed by the linear solver.
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output, const GdOptions& options) const
+    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
+    //       check marker `needs_gradient`
+    unsigned gradient(const Vector<double>& x, Vector<double>& output, const DescentOptions& options) const
     {
-        const InverseOpType Aop_inv(Aop, options.solver, precond, options.max_inner, options.tol_inner);
+        const InverseOpType A_inv(A, options.solver, precond, options.max_inner, options.tol_inner);
 
-        ellipsoid::gradient(Aop_inv, Mop, x, output);
+        ellipsoid::gradient(A_inv, M, x, output);
 
-        return Aop_inv.control().last_step();
+        return A_inv.control().last_step();
     }
 
     /**
@@ -82,16 +92,33 @@ public:
      * @param x The base vector (modified in place).
      * @param factor Step size scaling factor.
      */
-    void retract(const Vector<double>& z, Vector<double>& x, double factor) const
+    void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const
     {
         ellipsoid::retract_by_norm(problem.get_M(), z, x, factor);
     }
 
+    void retract(const Vector<double>& z, const Vector<double>& x,
+                 Vector<double>& output, double factor = 1.0) const
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
     /**
      * @brief Computes the iteration state (eigenvalue, residual, etc.) at point x.
-     */    iteration::State residual(Vector<double>& x) const
+     */
+    iteration::State residual(Vector<double>& x) const
     {
-        return iteration::residual(x, problem.get_A0(), problem.get_Mpp(), problem.get_M(), beta);
+        return iteration::residual(x, A, M);
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) const
+    {
+        AssertDimension(y.size(), z.size());
+
+        Vector<double> Az(z.size());
+        A.vmult(Az, y);
+        return y*Az;
     }
 
     /**
@@ -104,7 +131,7 @@ public:
      */
     static bool check_convergence(const iteration::State& current,
                                   const iteration::State& previous,
-                                  const GdOptions& options)
+                                  const DescentOptions& options)
     {
         const double lmb_diff   = std::abs(current.lambda - previous.lambda);
         const double lmb_factor = 1.0 + std::abs(current.lambda);
@@ -121,9 +148,12 @@ private:
     dealii::SparseILU<double> precond;
 
     /** @brief Total operator \f$ A_0 + \beta M_{pp} \f$. */
-    OperatorType Aop;
+    OperatorType A;
     /** @brief Mass operator \f$ M \f$. */
-    OperatorType Mop;
+    OperatorType M;
+
+    bool needs_assembly = true;
+    bool needs_gradient = true;
 };
 
 
@@ -171,7 +201,7 @@ public:
      * @param gd_options Options for the gradient descent algorithm.
      */
     Vector<double>
-    run(const Vector<double>& x0, double beta, const GdOptions& gd_options, std::ostream& os) const
+    run(const Vector<double>& x0, double beta, const DescentOptions& gd_options, std::ostream& os) const
     {
         Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
         // Create the oracle (light-weight object, references problem matrices)
@@ -179,10 +209,7 @@ public:
 
         // Riemannian gradient descent
         // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
-        return gradient_descent(oracle, x0, [this](Vector<double>& x){
-            //package.distribute(x);   // we only need to ensure Dirichlet conditions for the starting point x0
-            problem.assemble_nonlinear_term(x);  // or oracle.update(x)
-        }, gd_options, os);
+        return gradient_descent(oracle, x0, gd_options, os);
     }
 
     /** @brief Access the discretization package. */

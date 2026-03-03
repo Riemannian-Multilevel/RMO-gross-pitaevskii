@@ -32,7 +32,7 @@ int main()
     TimerOutput timer(std::cout, TimerOutput::summary, TimerOutput::wall_times);
 
     // --- options as before ---
-    GdOptions options_gd{};
+    DescentOptions options_gd{};
     options_gd.step_size    = 1.0;
     options_gd.max_inner    = 500;
     options_gd.solver       = SolverMethod::MINRES;
@@ -58,7 +58,7 @@ int main()
     const unsigned int ref_max = 11;  // fine
 
     // Adjust tolerances per level
-    MGLevelObject<GdOptions> options_gd_level(ref_min, ref_max);
+    MGLevelObject<DescentOptions> options_gd_level(ref_min, ref_max);
 
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref) {
         options_gd_level[ref] = options_gd;

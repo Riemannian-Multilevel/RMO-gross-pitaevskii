@@ -43,25 +43,30 @@ enum class MeshKind
     SIMPLEX
 };
 
+// TODO: separate (inner) solver options from gradient-descent options
+struct DescentOptions
+{
+    double tol_inner;           // relative tolerance for inner solver
+    double tol_lambda;          // tolerance for rayleigh quotients
+    double tol_residual;        // tolerance for M-residual
+    double step_size;           // fixed step-size used in iteration steps
+    unsigned int max_iter;      // maximum GD iterations
+    unsigned int max_inner;     // maximum sparse solver iterations
+    unsigned int max_search;    // maximum line search iterations
+    SolverMethod solver;        // method for solving sparse linear equations
+    Precondition precond;       // preconditioner for solving sparse linear equations
+    bool line_search;           // determine step-size by line search
+    double ls_alpha;
+    double ls_beta;
+    double ls_sigma;
+};
+
 struct MG_Options
 {
     bool multilevel;            // build a multilevel hierarchy
     unsigned int n_levels;      // number of levels for global refinement
     unsigned int min_level;     // minimum level for multilevel algorithms
     unsigned int max_level;     // maximum level for multilevel algorithms
-};
-
-// TODO: separate (inner) solver options
-struct GdOptions
-{
-    double tol_inner;       // relative tolerance for inner solver
-    double tol_lambda;      // tolerance for rayleigh quotients
-    double tol_residual;    // tolerance for M-residual
-    double step_size;       // fixed step-size used in iteration steps
-    unsigned int max_iter;  // maximum GD iterations
-    unsigned int max_inner; // maximum sparse solver iterations
-    SolverMethod solver;    // method for solving sparse linear equations
-    Precondition precond;   // preconditioner for solving sparse linear equations
 };
 
 struct GPE_Options
