@@ -7,7 +7,7 @@ between geometry, algebra, and optimization.
 
 ## Design Philosophy
 
-### 1. Tiered Responsibility
+### 1. Tiered responsibility
 The system is divided into three primary layers:
 
 | Layer | Component | Responsibility                                                                                                        |
@@ -16,17 +16,29 @@ The system is divided into three primary layers:
 | **Algebraic** | `GrossPitaevskiiProblem` | A container for matrices (A0, M, Mpp). Manages the iterative assembly of physical operators.                          |
 | **Optimization** | `EnergyOracle` | Bridges the physics to the Riemannian Gradient Descent algorithm.                                         |
 
-### 2. Efficiency in Multi-Physics
+These layers are combined in the `EnergySimulator` class, which serves as an orchestrator.
+
+### 2. Reuse of computation
 The triangulation and FE space often remain constant while physical parameters (like the potential V or the coupling constant beta) change.
 Keeping this in mind, you can instantiate one `GrossPitaevskiiPackage` and generate multiple `GrossPitaevskiiProblem` instances from it.
 
 This avoids redundant mesh generation, refinement, and sparsity pattern computation.
 
+### 3. Simple user interface
+
+Problem parameters are exposed to the user through a command-line interface (`option.h`, `option_types.h`).
+This allows easy experimentation with different parameters without recompilation. Possible options can be shown
+with the `--help` flag, for example `./main --help`. 
+
+Problem output is represented in tabular (`deal.ii::ConvergenceTable`) and visual (`gnuplot`, `svg`) form.
+R scripts are provided for advanced plotting of the provided results.
+
+
 ---
 
 ## Implementation Details
 
-### Lazy Assembly with mutable
+### Lazy Assembly with `mutable`
 
 All classes are const-correct, with the exception of `GrossPitaevskiiProblem`, which
 includes `Mpp` as a `mutable` variable. This is because `Mpp` needs to be recomputed whenever
@@ -38,14 +50,11 @@ This keeps the API clean while ensuring the physics are updated before every gra
 
 ---
 
-## Simulation Workflow
+### Gradient checks
 
-The `EnergySimulator` serves as the orchestrator for the entire lifecycle:
+---
 
-* _Initialize package_: Set up the mesh and finite element space.
-* _Generate problem_: Assemble the stationary matrices (`A0` and `M`).
-* _Setup oracle_: Link the matrices and the coupling constant `beta` (`A = A0 + beta*Mpp`)
-* _Descent method_: Execute `gradient_descent()` until the residual and eigenvalue (`lambda`) converge.
+### Grid operators
 
 ---
 
@@ -99,6 +108,17 @@ When using multiple meshes, arising through global refinement with independent `
 only black-box interpolation and restriction is available. While this may still be sufficient
 for matrix-vector products (i.e. $M_H v := I_h^H M_h I_H^h v$), without explicit matrix form
 the behavior of the interpolators should be verified on test examples.
+
+Implement additional methods such as Newton's method (comparable complexity to the energy-adaptive
+gradient descent, robust to mesh size) and mass-lumping (proven uniqueness and positivity of the solution.) 
+
+Apart from providing command-line options, a Python or Julia interface can also be provided.
+This allows interplay with some useful libraries that are not available in C++, such as `Optane`
+for hyperparameter selection, or `manopt` for Riemannian optimization. While `deal.ii` provides
+Python wrappers for select classes, we want to expose our code to Python users directly, e.g. with
+`pybind11`. A question is how to transfer data structures between C++ and other languages, such as
+`scipy.sparse` and `deal.ii::SparseMatrix`, or avoiding this topic entirely by only exposing `vmult()`
+methods.
 
 ---
 

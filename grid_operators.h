@@ -1,0 +1,191 @@
+//
+// Created by Ferdinand Vanmaele on 04.03.26.
+//
+
+#ifndef GPE_GRID_OPERATORS_H
+#define GPE_GRID_OPERATORS_H
+#include "option_types.h"
+#include "manifold.h"
+
+#include <deal.II/numerics/vector_tools.h>
+
+namespace gpe
+{
+
+template <int dim, typename MatrixType>
+class PointTransfer
+{
+public:
+    PointTransfer(const MatrixType& M_c, const MatrixType& M_f,
+                  const dealii::DoFHandler<dim>& dof_c,
+                  const dealii::DoFHandler<dim>& dof_f,
+                  const dealii::AffineConstraints<double>& aff_c,
+                  const dealii::AffineConstraints<double>& aff_f)
+        : dof_coarse(dof_c), dof_fine(dof_f), M_coarse(M_c), M_fine(M_f)
+        , aff_coarse(aff_c), aff_fine(aff_f)
+    {}
+
+    /**
+     * @brief Restricts a point from the fine manifold to the coarse manifold.
+     *
+     * The point restriction map $r(y)$ transfers a state vector $y \in \mathcal{S}_{M_h}$
+     * on the fine grid to a state vector on the coarse grid $x \in \mathcal{S}_{M_H}$.
+     * It does this by first applying the standard linear restriction operator $I_h^H$,
+     * and then projecting (retracting) the result back onto the mass-weighted unit sphere
+     * of the coarse space.
+     * * Mathematically:
+     * \f[ r(y) = \frac{I_h^H y}{\|I_h^H y\|_{M_H}} \f]
+     *
+     * @param y_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
+     * @param x_coarse [out] The restricted point $r(y) \in \mathcal{S}_{M_H}$ on the coarse grid.
+     */
+    void restriction(const Vector<double>& y_fine, Vector<double>& x_coarse) const
+    {
+        x_coarse.reinit(dof_coarse.n_dofs());
+        x_coarse = 0.0;
+
+        dealii::VectorTools::interpolate_to_coarser_mesh(dof_fine,
+            y_fine, dof_coarse, aff_coarse, x_coarse);
+        ellipsoid::retract_by_norm(M_coarse, x_coarse);
+    }
+
+    /**
+     * @brief Prolongs a point from the coarse manifold to the fine manifold.
+     *
+     * The point prolongation map $p(x)$ transfers a state vector $x \in \mathcal{S}_{M_H}$
+     * on the coarse grid to a state vector on the fine grid $y \in \mathcal{S}_{M_h}$.
+     * It does this by first applying the standard linear prolongation operator $I_H^h$,
+     * and then projecting (retracting) the result back onto the mass-weighted unit sphere
+     * of the fine space.
+     * * Mathematically:
+     * \f[ p(x) = \frac{I_H^h x}{\|I_H^h x\|_{M_h}} \f]
+     *
+     * @param x_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
+     * @param y_fine [out] The prolonged point $p(x) \in \mathcal{S}_{M_h}$ on the fine grid.
+     */
+    void prolongation(const Vector<double>& x_coarse, Vector<double>& y_fine) const
+    {
+        y_fine.reinit(dof_fine.n_dofs());
+        y_fine = 0.0;
+
+        dealii::VectorTools::interpolate_to_finer_mesh(dof_coarse,
+            x_coarse, dof_fine, aff_fine, y_fine);
+        ellipsoid::retract_by_norm(M_fine, y_fine);
+    }
+
+    /**
+     * @brief Computes the differential of the restriction map.
+     *
+     * The differential of the restriction map $r(y)$ evaluates the pushforward
+     * of a tangent vector $v \in T_y \mathcal{S}_{M_h}$ onto the coarse tangent space.
+     * It is computed mathematically in five steps:
+     * 1. **Linear restriction of the base point:** $\hat{x} = I_h^H y$
+     * 2. **Norm of the linear point:** $n_H = \|\hat{x}\|_{M_H}$
+     * 3. **Linear restriction of the tangent vector:** $v_H = I_h^H v$
+     * 4. **Mass-weighted inner product:** $\langle \hat{x}, v_H \rangle_{M_H} = \hat{x}^\top M_H v_H$
+     * 5. **Assembly:** $\Drm r(y)[v] = \frac{1}{n_H} \left( v_H - \frac{\langle \hat{x}, v_H \rangle_{M_H}}{n_H^2} \hat{x} \right)$
+     *
+     * @param y_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
+     * @param v The tangent vector $v \in T_y \mathcal{S}_{M_h}$.
+     * @param dst The mapped tangent vector $\Drm r(y)[v] \in T_{r(y)} \mathcal{S}_{M_H}$.
+     */
+    void diff_restriction(const Vector<double>& y_fine, const Vector<double>& v,
+                          Vector<double>& dst) const
+    {
+        dst.reinit(dof_coarse.n_dofs());
+
+        // 1. Linear restriction of the base point: I_h^H(y)
+        Vector<double> x_lin(dof_coarse.n_dofs());
+        dealii::VectorTools::interpolate_to_coarser_mesh(dof_fine, y_fine,
+                                                         dof_coarse, aff_coarse, x_lin);
+
+        // 2. Norm of the linear point: ||x_lin||_{M_H}^2
+        Vector<double> M_x_lin(dof_coarse.n_dofs());
+        M_coarse.vmult(M_x_lin, x_lin);
+        const double n_H_sq = x_lin * M_x_lin;
+        const double n_H = std::sqrt(n_H_sq);
+
+        // 3. Linear restriction of the tangent vector: I_h^H(v)
+        Vector<double> v_H(dof_coarse.n_dofs());
+        dealii::VectorTools::interpolate_to_coarser_mesh(dof_fine, v,
+                                                         dof_coarse, aff_coarse, v_H);
+
+        // 4. Inner product: (I_h^H y)^T M_H (I_h^H v)
+        Vector<double> M_v_H(dof_coarse.n_dofs());
+        M_coarse.vmult(M_v_H, v_H);
+        const double inner_prod = x_lin * M_v_H;
+
+        // 5. Final assembly
+        dst = v_H;
+        dst.add(-inner_prod / n_H_sq, x_lin);
+        dst /= n_H;
+    }
+
+    /**
+     * @brief Computes the differential of the prolongation map.
+     *
+     * The differential of the prolongation map $p(x)$ evaluates the pushforward
+     * of a tangent vector $v \in T_x \mathcal{S}_{M_H}$ onto the fine tangent space.
+     * It is computed mathematically in five steps:
+     * 1. **Linear prolongation of the base point:** $\hat{y} = I_H^h x$
+     * 2. **Norm of the linear point:** $n_h = \|\hat{y}\|_{M_h}$
+     * 3. **Linear prolongation of the tangent vector:** $v_h = I_H^h v$
+     * 4. **Mass-weighted inner product:** $\langle \hat{y}, v_h \rangle_{M_h} = \hat{y}^\top M_h v_h$
+     * 5. **Assembly:** $\Drm p(x)[v] = \frac{1}{n_h} \left( v_h - \frac{\langle \hat{y}, v_h \rangle_{M_h}}{n_h^2} \hat{y} \right)$
+     *
+     * @param x_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
+     * @param v The tangent vector $v \in T_x \mathcal{S}_{M_H}$.
+     * @param dst The mapped tangent vector $\Drm p(x)[v] \in T_{p(x)} \mathcal{S}_{M_h}$.
+     */
+    void diff_prolongation(const Vector<double>& x_coarse, const Vector<double>& v,
+                           Vector<double>& dst) const
+    {
+        dst.reinit(dof_fine.n_dofs());
+
+        // 1. Linear prolongation of the base point: I_H^h(x)
+        Vector<double> y_lin(dof_fine.n_dofs());
+        dealii::VectorTools::interpolate_to_finer_mesh(dof_coarse, x_coarse,
+                                                       dof_fine, aff_fine, y_lin);
+
+        // 2. Norm of the linear point: ||y_lin||_{M_h}^2
+        Vector<double> M_y_lin(dof_fine.n_dofs());
+        M_fine.vmult(M_y_lin, y_lin);
+        const double n_h_sq = y_lin * M_y_lin;
+        const double n_h = std::sqrt(n_h_sq);
+
+        // 3. Linear prolongation of the tangent vector: I_H^h(v)
+        Vector<double> v_h(dof_fine.n_dofs());
+        dealii::VectorTools::interpolate_to_finer_mesh(dof_coarse, v,
+                                                       dof_fine, aff_fine, v_h);
+
+        // 4. Inner product: (I_H^h x)^T M_h (I_H^h v)
+        Vector<double> M_v_h(dof_fine.n_dofs());
+        M_fine.vmult(M_v_h, v_h);
+        const double inner_prod = y_lin * M_v_h;
+
+        // 5. Final assembly
+        dst = v_h;
+        dst.add(-inner_prod / n_h_sq, y_lin);
+        dst /= n_h;
+    }
+
+private:
+    const dealii::DoFHandler<dim>& dof_coarse;
+    const dealii::DoFHandler<dim>& dof_fine;
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const dealii::AffineConstraints<double>& aff_coarse;
+    const dealii::AffineConstraints<double>& aff_fine;
+};
+
+template <int dim, typename MatrixType>
+class VectorTransport
+{
+public:
+    VectorTransport() {}
+private:
+};
+
+} // namespace gpe
+
+#endif //GPE_GRID_OPERATORS_H

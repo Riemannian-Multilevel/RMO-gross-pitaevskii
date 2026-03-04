@@ -24,6 +24,7 @@ set(COMMON_HEADERS
         gpe.h
         random.h
         main.h
+        grid_operators.h
 )
 deal_ii_initialize_cached_variables()
 
