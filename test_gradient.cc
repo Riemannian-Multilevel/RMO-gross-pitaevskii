@@ -415,6 +415,7 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
     check.grad_xv = g_xv;
 
     // --- FINITE DIFFERENCE CHECK ---
+    // TODO: integrate this with value() (or remove the point argument)
     auto value_with_assembly = [&](const Vector<double>& z) {
         test_grad.assemble(z);         // Explicitly assemble for the trial point
         return test_grad.value(z);     // Evaluate
@@ -447,6 +448,7 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
         test_grad.retract(x, tv, Rx_tv);  // only uses M (no assembly required)
 
         // --- EXPLICIT ASSEMBLY FOR RETRACTED POINT ---
+        // TODO: integrate this with value() (or remove the point argument)
         test_grad.assemble(Rx_tv);
 
         long double Et = std::abs(-test_grad.value(Rx_tv) + fx + t*g_xv);
