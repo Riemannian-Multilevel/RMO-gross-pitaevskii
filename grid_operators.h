@@ -10,11 +10,14 @@ namespace gpe
 
 enum class VectorTransportKind
 {
-    PROJECTION,       // composition of orthogonal projection and linear interpolation
-    DIFF_ADJOINT_R,   // metric adjoint w.r.t. A/M-metric, starting from prolongation map  p -> Dp -> Dp* , Dr
-    PINV_ADJOINT_R,   // as above, but taking the pseudo-inverse Dp+
-    DIFF_ADJOINT_P,   // metric adjoint w.r.t. A/M-metric, starting from restriction map   r -> Dr -> Dr* , Dp
-    PINV_ADJOINT_P,   // as above, but taking the pseudo-inverse Dr+
+    PROJECTION,         // composition of orthogonal projection and linear interpolation
+    DIFF,               // differential of prolongation and restriction maps
+    DIFF_ADJ_COARSE,    // metric adjoint w.r.t. A/M-metric, starting from prolongation map
+                        //    p -> Dp -> Dp* =: R,  Dp =: P
+    PINV_ADJ_COARSE,    // as above, but taking the pseudo-inverse Dp+
+    DIFF_ADJ_FINE,      // metric adjoint w.r.t. A/M-metric, starting from restriction map
+                            //    r -> Dr -> Dr* =: P,  Dr =: R
+    PINV_ADJ_FINE,      // as above, but taking the pseudo-inverse Dr+
 };
 
 // Linear interpolation/restriction for the ambient space R^n
@@ -201,182 +204,112 @@ private:
 };
 
 
-template <int dim, typename MatrixType>
-class VectorTransferMass
+template <int dim>
+class VectorTransportBase
 {
 public:
-    VectorTransferMass(const MatrixType& M_c, const MatrixType& M_f,
-                       const LinearTransfer<dim>& I,
-                       VectorTransportKind vtk)
-        : M_coarse(M_c), M_fine(M_f)
-        , transfer(I), point_transfer(M_c, M_f, I), m_vtk(vtk)
-    {}
+    virtual ~VectorTransportBase() = default;
 
-    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const
-    {
-        switch (m_vtk) {
-            case VectorTransportKind::PROJECTION:
-                {
-                    // Tangent vector interpolated to fine ambient space
-                    Vector<double> Iv(transfer.n_fine());
-                    transfer.to_fine_mesh(v, Iv);
+    virtual void vector_prolongation(const Vector<double>& x_coarse,
+                                     const Vector<double>& v,
+                                     Vector<double>& dst) const = 0;
 
-                    // Base point for fine tangent space
-                    Vector<double> Px(transfer.n_fine());
-                    point_transfer.prolongation(x_coarse, Px);
-
-                    // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
-                    ellipsoid::project_onto_tangent_space(Px, M_fine, Iv, dst);
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_R:
-                {
-                    point_transfer.diff_prolongation(x_coarse, v, dst);
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_P:
-                {
-                    // TODO
-                }
-                break;
-            default:
-                throw dealii::ExcNotImplemented("Unknown transport kind");
-        }
-    }
-
-    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const
-    {
-        switch (m_vtk) {
-            case VectorTransportKind::PROJECTION:
-                {
-                    // Tangent vector restricted to coarse ambient space
-                    Vector<double> Iv(transfer.n_coarse());
-                    transfer.to_coarse_mesh(v, Iv);
-
-                    // Base point for coarse tangent space
-                    Vector<double> Ry(transfer.n_coarse());
-                    point_transfer.restriction(y_fine, Ry);
-
-                    // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
-                    ellipsoid::project_onto_tangent_space(Ry, M_coarse, Iv, dst);
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_R:
-                {
-                    // TODO
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_P:
-                {
-                    point_transfer.diff_restriction(y_fine, v, dst);
-                }
-                break;
-            default:
-                throw dealii::ExcNotImplemented("Unknown transport kind");
-        }
-    }
-
-private:
-    const MatrixType& M_coarse;
-    const MatrixType& M_fine;
-    const LinearTransfer<dim>& transfer;
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
-    VectorTransferKind m_vtk;
+    virtual void vector_restriction(const Vector<double>& y_fine,
+                                    const Vector<double>& v,
+                                    Vector<double>& dst) const = 0;
 };
 
 
-// TODO: template on a projector, instead of copying implementation?
-//       (alternative: factor out projection prolongation/restriction)
-template <int dim, typename MatrixType, typename InverseMatrixType>
-class VectorTransferEnergy
+// Strategy A: Transport via orthogonal projection (M-metric)
+template <int dim, typename MatrixType>
+class ProjectionTransport : public VectorTransportBase<dim>
 {
 public:
-    VectorTransferEnergy(const MatrixType& M_c, const MatrixType& M_f,
-                         const InverseMatrixType& A_inv_c,
-                         const InverseMatrixType& A_inv_f,
-                         const LinearTransfer<dim>& I,
-                         VectorTransportKind vtk)
+    ProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
+                            const LinearTransfer<dim>& I,
+                            const ManifoldTransfer<dim, MatrixType>& pt)
         : M_coarse(M_c), M_fine(M_f)
-        , A_inv_coarse(A_inv_c), A_inv_fine(A_inv_f)
-        , transfer(I), point_transfer(M_c, M_f, I), m_vtk(vtk)
+        , transfer(I), point_transfer(pt)
     {}
 
-
-    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const
+    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
     {
-        switch (m_vtk) {
-            case VectorTransportKind::PROJECTION:
-                {
-                    // Tangent vector interpolated to fine ambient space
-                    Vector<double> Iv(transfer.n_fine());
-                    transfer.to_fine_mesh(v, Iv);
+        // Tangent vector interpolated to fine ambient space
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v, Iv);
 
-                    // Base point for fine tangent space
-                    Vector<double> Px(transfer.n_fine());
-                    point_transfer.prolongation(x_coarse, Px);
+        // Base point for fine tangent space
+        Vector<double> Px(transfer.n_fine());
+        point_transfer.prolongation(x_coarse, Px);
 
-                    // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
-                    // <---- difference here to VectorTransportMass
-                    ellipsoid::project_onto_tangent_space(A_inv_fine, Px, M_fine, Iv, dst);
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_R:
-                {
-                    point_transfer.diff_prolongation(x_coarse, v, dst);
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_P:
-                {
-                    // TODO
-                }
-                break;
-            default:
-                throw dealii::ExcNotImplemented("Unknown transport kind");
-        }
+        // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
+        ellipsoid::project_onto_tangent_space(Px, M_fine, Iv, dst);
     }
 
-    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const
+    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const override
     {
-        switch (m_vtk) {
-            case VectorTransportKind::PROJECTION:
-                {
-                    // Tangent vector restricted to coarse ambient space
-                    Vector<double> Iv(transfer.n_coarse());
-                    transfer.to_coarse_mesh(v, Iv);
+        // Tangent vector restricted to coarse ambient space
+        Vector<double> Iv(transfer.n_coarse());
+        transfer.to_coarse_mesh(v, Iv);
 
-                    // Base point for coarse tangent space
-                    Vector<double> Ry(transfer.n_coarse());
-                    point_transfer.restriction(y_fine, Ry);
+        // Base point for coarse tangent space
+        Vector<double> Ry(transfer.n_coarse());
+        point_transfer.restriction(y_fine, Ry);
 
-                    // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
-                    // <---- difference here to VectorTransportMass
-                    ellipsoid::project_onto_tangent_space(A_inv_coarse, Ry, M_coarse, Iv, dst);
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_R:
-                {
-                    // TODO
-                }
-                break;
-            case VectorTransportKind::DIFF_ADJOINT_P:
-                {
-                    point_transfer.diff_restriction(y_fine, v, dst);
-                }
-                break;
-            default:
-                throw dealii::ExcNotImplemented("Unknown transport kind");
-        }
+        // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
+        ellipsoid::project_onto_tangent_space(Ry, M_coarse, Iv, dst);
     }
-
 
 private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
-    const InverseMatrixType& A_inv_coarse;
-    const InverseMatrixType& A_inv_fine;
+
     const LinearTransfer<dim>& transfer;
     const ManifoldTransfer<dim, MatrixType>& point_transfer;
-    VectorTransferKind m_vtk;
+};
+
+
+// Strategy B: Transport via push-forward
+template <int dim, typename MatrixType>
+class DifferentialTransport : public VectorTransportBase<dim>
+{
+public:
+    DifferentialTransport(const ManifoldTransfer<dim, MatrixType>& pt)
+        : point_transfer(pt)
+    {}
+
+    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        point_transfer.diff_prolongation(x_coarse, v, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        point_transfer.diff_restriction(y_fine, v, dst);
+    }
+
+private:
+    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+};
+
+
+// Strategy C: Transport with Galerkin condition (M-metric)
+template <int dim, typename MatrixType>
+class GalerkinTransport : public VectorTransportBase<dim>
+{
+public:
+    GalerkinTransport() {} // TODO
+private:
+};
+
+
+// Strategy D: Transport through pseudo-inverse
+template <int dim, typename MatrixType>
+class PseudoInvTransport : public VectorTransportBase<dim>
+{
+public:
+    PseudoInvTransport() {} // TODO
+private:
 };
 
 } // namespace gpe
