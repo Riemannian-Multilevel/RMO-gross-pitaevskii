@@ -219,6 +219,20 @@ public:
                                     Vector<double>& dst) const = 0;
 };
 
+// Coarse correction term:
+//    w_k <- grad_M E_H(x_k) - R_{y_k} (grad_M E_h(y_k))
+template <int dim>
+void coarse_correction(const VectorTransportBase<dim>& transport,
+                       const Vector<double>& x_grad_coarse,
+                       const Vector<double>& y_grad_fine,
+                       Vector<double>& dst)
+{
+    Vector<double> y_grad_restr(x_grad_coarse.size());
+    transport.vector_restriction(y_grad_fine, y_grad_restr);
+
+    dst = x_grad_coarse;
+    dst.add(-1.0, y_grad_restr);
+}
 
 // Strategy A: Transport via orthogonal projection (M-metric)
 template <int dim, typename MatrixType>
@@ -226,8 +240,8 @@ class ProjectionTransport : public VectorTransportBase<dim>
 {
 public:
     ProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
-                            const LinearTransfer<dim>& I,
-                            const ManifoldTransfer<dim, MatrixType>& pt)
+                        const LinearTransfer<dim>& I,
+                        const ManifoldTransfer<dim, MatrixType>& pt)
         : M_coarse(M_c), M_fine(M_f)
         , transfer(I), point_transfer(pt)
     {}
@@ -298,8 +312,22 @@ template <int dim, typename MatrixType>
 class GalerkinTransport : public VectorTransportBase<dim>
 {
 public:
-    GalerkinTransport() {} // TODO
+    GalerkinTransport(const ManifoldTransfer<dim, MatrixType>& pt)
+        : point_transfer(pt)
+    {}
+
+    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        point_transfer.diff_prolongation(x_coarse, v, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
 private:
+    const ManifoldTransfer<dim, MatrixType>& point_transfer;
 };
 
 
@@ -308,8 +336,29 @@ template <int dim, typename MatrixType>
 class PseudoInvTransport : public VectorTransportBase<dim>
 {
 public:
-    PseudoInvTransport() {} // TODO
+    PseudoInvTransport(const MatrixType& M_c, const MatrixType& M_f,
+                       const LinearTransfer<dim>& I,
+                       const ManifoldTransfer<dim, MatrixType>& pt)
+        : M_coarse(M_c), M_fine(M_f)
+        , transfer(I), point_transfer(pt)
+    {}
+
+    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
+    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
 private:
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+
+    const LinearTransfer<dim>& transfer;
+    const ManifoldTransfer<dim, MatrixType>& point_transfer;
 };
 
 } // namespace gpe

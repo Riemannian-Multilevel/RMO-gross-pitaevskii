@@ -189,9 +189,16 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
 
 template <typename OracleCoarse, typename OracleFine>
 void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
-                               const Vector<double>& x0, DescentOptions options, std::ostream& os)
+                               const Vector<double>& x0, DescentOptions options,
+                               unsigned n_cycles, std::ostream& os)
 {
+    for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
+        // Pre-smoothing
 
+        // Coarse step
+
+        // Post-smoothing
+    }
 }
 
 } // namespace gpe
