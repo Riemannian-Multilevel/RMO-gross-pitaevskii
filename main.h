@@ -140,8 +140,9 @@ public:
         return (lmb_diff < options.tol_lambda * lmb_factor && current.residual < options.tol_residual);
     }
 
-    const auto& get_M() const { return problem.get_operator_M(); }
-    const auto& get_A(double beta) const { return problem.get_operator_A(beta); }
+    auto get_M() { return problem.get_operator_M(); }
+    auto get_A() const { return problem.get_operator_A(beta); }
+    double get_beta() const { return beta; }
 
     unsigned n_dofs() const { return problem.n_dofs(); }
 
@@ -157,11 +158,90 @@ private:
     OperatorType A;
     /** @brief Mass operator \f$ M \f$. */
     OperatorType M;
-
-    bool needs_assembly = true;
-    bool needs_gradient = true;
 };
 
+// TODO: separate geometry and objective
+template <int dim>
+class CoarseOracle
+{
+public:
+    using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
+    using InverseOpType = InverseMatrix<OperatorType, dealii::SparseILU<double>>;
+
+    CoarseOracle(const GrossPitaevskiiProblem<dim>& problem, double beta,
+                 const Vector<double>& w, const Vector<double>& phi)
+        : problem(problem)
+        , beta(beta)
+        , M(problem.get_operator_M())
+        , A(problem.get_operator_A(beta))
+        , w(w)
+        , phi(phi)
+    {
+        precond.initialize(problem.get_A0());
+    }
+
+    void update(const Vector<double>& x) const
+    {
+        problem.assemble_nonlinear_term(x);
+    }
+
+    double value(const Vector<double>& x) const
+    {
+        return coarse::function_value(x, phi, w,
+            problem.get_M(), problem.get_A0(), problem.get_Mpp(), beta);
+    }
+
+    // Gradient in the energy metric
+    unsigned gradient(const Vector<double>& x, Vector<double>& output,
+        const DescentOptions& options) const
+    {
+        const InverseOpType A_inv(A, options.solver, precond, options.max_inner, options.tol_inner);
+
+        coarse::gradient(M, A_inv, x, phi, w, output);
+
+        return A_inv.control().last_step();
+    }
+
+    // XXX: geometry of the problem
+    void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const
+    {
+        ellipsoid::retract_by_norm(problem.get_M(), z, x, factor);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x,
+                 Vector<double>& output, double factor = 1.0) const
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) const
+    {
+        AssertDimension(y.size(), z.size());
+
+        Vector<double> Az(z.size());
+        A.vmult(Az, y);
+        return y*Az;
+    }
+
+    // XXX: methods for gradient_descent()
+    iteration::State residual(Vector<double>& x) const
+    {
+        return {.energy=value(x)};
+    }
+
+    static bool check_convergence(const iteration::State&, const iteration::State&,
+                                  const DescentOptions&) { return false; }
+
+private:
+    const GrossPitaevskiiProblem<dim>& problem;
+    double beta;
+    OperatorType M;
+    OperatorType A;
+    Vector<double> w;
+    Vector<double> phi;
+    dealii::SparseILU<double> precond;
+};
 
 /**
  * @brief Orchestrator for Gross-Pitaevskii simulations.
@@ -236,11 +316,13 @@ private:
 };
 
 // 2-level FAS
-template <int dim, typename OracleCoarse, typename OracleFine>
-void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
+template <int dim, typename Oracle>
+void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
                                const GrossPitaevskiiPackage<dim>& domain_coarse,
                                const GrossPitaevskiiPackage<dim>& domain_fine,
+                               const GrossPitaevskiiProblem<dim>& problem_coarse,
                                const Vector<double>& y0, DescentOptions options,
+                               DescentOptions options_coarse,
                                unsigned n_cycles, std::ostream& os)
 {
     using OperatorType = LinearCombination<SparseMatrix<double>,Vector<double>>;
@@ -248,9 +330,8 @@ void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
     unsigned n_fine = O_fine.n_dofs();
     const auto& M_coarse = O_coarse.get_M();
     const auto& M_fine = O_fine.get_M();
-    // TODO: adjust tolerances for coarse level (such as inner solve)
-    DescentOptions options_coarse(options);
-    // TODO: ignore termination criteria? (avoid only coarse steps are taken)
+
+    // TODO: ignore termination criteria? (avoid post-smoothing breaks down)
     options.max_iter = 1;  // number of pre-/post-smoothing steps
     Vector<double> y(y0);
     LinearTransfer transfer(domain_coarse.get_dofs(), domain_fine.get_dofs(),
@@ -263,22 +344,30 @@ void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
         y = gradient_descent(O_fine, y, options, os);
 
         // 2. Coarse step
-        // Restrict point from fine to coarse manifold
+        // Restrict point from fine to coarse manifold, x = r(y)
         Vector<double> x(n_coarse);
         point_transfer.restriction(y, x);
         // Compute fine gradient
         Vector<double> y_grad(n_fine);
-        O_fine.gradient(y, y_grad);
+        O_fine.gradient(y, y_grad, options);
         // Compute coarse gradient
         Vector<double> x_grad(n_coarse);
         O_coarse.gradient(x, x_grad, options_coarse);
         // Compute coarse correction step
         Vector<double> w(n_coarse);
-        coarse_correction(vector_transport, x_grad, y_grad, w);
+        coarse_correction(vector_transport, x_grad, y_grad, x, w);
         // Set up coarse model
-        // TODO: oracle for coarse model (NashOracle)
-        //       find some easier way to define functions (i.e. separate geometry and objective)
-        
+        CoarseOracle<dim> qk(problem_coarse, O_coarse.get_beta(), w, x);
+        Vector<double> zk(n_coarse);
+        // Find zk such that qk(zk) < qk(x)
+        zk = gradient_descent(qk, x, options_coarse, os);
+        // Compute the search direction, zk <- L_x(zk)
+        ellipsoid::retract_inv_by_norm(M_coarse, zk, x);
+        Vector<double> dk(n_fine);
+        vector_transport.vector_prolongation(y, zk, dk);
+        // DIAGNOSTIC
+        std::cerr << "COARSE DESCENT: " << O_fine.metric(y_grad, dk) << std::endl;
+
         // 3. Post-smoothing
         y = gradient_descent(O_fine, y, options, os);
     }

@@ -104,6 +104,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
 }
 
 // TODO: separate linear solver options
+//       encode default values in option_type.h and remove default_value()?
 // ---------- DescentOptions ----------
 inline po::options_description gd_cli_options() {
     po::options_description d("RGD options");

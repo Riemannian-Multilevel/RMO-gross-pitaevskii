@@ -40,6 +40,7 @@ namespace iteration
 // TODO: make this generic?
 struct State
 {
+    double energy{0};
     double mass{0};
     double lambda{0};
     double residual{0};
@@ -626,7 +627,9 @@ template <typename MatrixType>
 double function_value(const Vector<double>& zeta,
                       const Vector<double>& phi,
                       const Vector<double>& w,
-                      const MatrixType& M, const MatrixType& A0, const MatrixType& Mpp, double beta)
+                      const MatrixType& M,
+                      const MatrixType& A0,
+                      const MatrixType& Mpp, double beta)
 {
     // Using the existing function_value helper
     const double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);

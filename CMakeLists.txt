@@ -46,6 +46,12 @@ target_sources(main_bench PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(main_bench)
 target_link_libraries(main_bench fmt::fmt)
 
+# Nash coarse model
+add_executable(main_coarse main_coarse.cc)
+target_sources(main_coarse PRIVATE ${COMMON_HEADERS})
+deal_ii_setup_target(main_coarse)
+target_link_libraries(main_coarse fmt::fmt)
+
 # Verification of gradients
 # TODO: register cmake test
 add_executable(test_gradient test_gradient.cc)

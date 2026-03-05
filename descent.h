@@ -75,8 +75,11 @@ double armijo_line_search(const OracleType& oracle,
 
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
-        if (fx_new - fx <= options.ls_sigma * alpha * dir_deriv || alpha < 1e-8) {
+        if (fx_new - fx <= options.ls_sigma * alpha * dir_deriv) {
             return alpha; // step accepted
+        }
+        if (alpha < 1e-8) {
+            return  1e-8;
         }
         oracle.update(x);  // step discarded, restore reference point
 
@@ -121,6 +124,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
         // Assemble iteration matrices for new iterate
         current_state = O.residual(x);
         double Ex = O.value(x);
+        current_state.energy = Ex;
 
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
@@ -131,17 +135,17 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
         convergence_table.add_value("mass", current_state.mass);
         convergence_table.add_value("lambda", current_state.lambda);
         convergence_table.add_value("residual", current_state.residual);
-        convergence_table.add_value("energy", Ex);
+        convergence_table.add_value("energy", current_state.energy);
 
-        if (break_on_next) {
-            break;
-        }
-        if (O.check_convergence(current_state, previous_state, options)) {
-            // trick so that convergence_table is updated for last step
-            // n iterations + starting solution -> n+1 table entries
-            break_on_next = true;
-            continue;
-        }
+        // if (break_on_next) {
+        //     break;
+        // }
+        // if (O.check_convergence(current_state, previous_state, options)) {
+        //     // trick so that convergence_table is updated for last step
+        //     // n iterations + starting solution -> n+1 table entries
+        //     break_on_next = true;
+        //     continue;
+        // }
 
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
@@ -149,6 +153,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
         lac_iter = O.gradient(x, g, options);
         // Retraction: x <- (x - h g) / ||x - h g||_M
         if (options.line_search) {
+            // TODO: support other descent directions (i.e. coarse descent)
             Vector eta(g);  // search direction
             eta *= -1.0;
             double dd = O.metric(g, eta); // <grad f(x), -grad f(x)>_x
