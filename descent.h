@@ -1,11 +1,14 @@
 #ifndef GPE_DESCENT_H
 #define GPE_DESCENT_H
 
+#include "option_types.h"
 #include "manifold.h"
 #include "lac.h"
-#include "option_types.h"
+#include "grid_operators.h"
 
 #include <deal.II/base/convergence_table.h>
+
+#include "gpe.h"
 
 namespace gpe
 {
@@ -184,21 +187,6 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
 
     //constraints.distribute(x);
     return x;
-}
-
-
-template <typename OracleCoarse, typename OracleFine>
-void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
-                               const Vector<double>& x0, DescentOptions options,
-                               unsigned n_cycles, std::ostream& os)
-{
-    for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
-        // Pre-smoothing
-
-        // Coarse step
-
-        // Post-smoothing
-    }
 }
 
 } // namespace gpe

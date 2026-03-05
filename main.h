@@ -11,6 +11,7 @@
 namespace gpe
 {
 
+// TODO: define interface and move to `oracle.h`, merge functions from `manifold.h`
 /**
  * @brief Mathematical Oracle for the Gross-Pitaevskii energy functional.
  * This class provides the interface required by the @ref gradient_descent algorithm.
@@ -19,7 +20,6 @@ namespace gpe
  *
  * @tparam dim The spatial dimension of the problem.
  */
-// TODO: use PreconditionInverse for preconditioners chosen at runtime
 template <int dim>
 class EnergyOracle
 {
@@ -76,6 +76,7 @@ public:
      */
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient`
+    //       use LinearOptions instead of DescentOptions (separate inner solve and rgd options)
     unsigned gradient(const Vector<double>& x, Vector<double>& output, const DescentOptions& options) const
     {
         const InverseOpType A_inv(A, options.solver, precond, options.max_inner, options.tol_inner);
@@ -138,6 +139,11 @@ public:
 
         return (lmb_diff < options.tol_lambda * lmb_factor && current.residual < options.tol_residual);
     }
+
+    const auto& get_M() const { return problem.get_operator_M(); }
+    const auto& get_A(double beta) const { return problem.get_operator_A(beta); }
+
+    unsigned n_dofs() const { return problem.n_dofs(); }
 
 private:
     /** @brief Reference to the problem matrices. */
@@ -228,6 +234,55 @@ private:
     /** @brief Problem configuration options. */
     GPE_Options options;
 };
+
+// 2-level FAS
+template <int dim, typename OracleCoarse, typename OracleFine>
+void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
+                               const GrossPitaevskiiPackage<dim>& domain_coarse,
+                               const GrossPitaevskiiPackage<dim>& domain_fine,
+                               const Vector<double>& y0, DescentOptions options,
+                               unsigned n_cycles, std::ostream& os)
+{
+    using OperatorType = LinearCombination<SparseMatrix<double>,Vector<double>>;
+    unsigned n_coarse = O_coarse.n_dofs();
+    unsigned n_fine = O_fine.n_dofs();
+    const auto& M_coarse = O_coarse.get_M();
+    const auto& M_fine = O_fine.get_M();
+    // TODO: adjust tolerances for coarse level (such as inner solve)
+    DescentOptions options_coarse(options);
+    // TODO: ignore termination criteria? (avoid only coarse steps are taken)
+    options.max_iter = 1;  // number of pre-/post-smoothing steps
+    Vector<double> y(y0);
+    LinearTransfer transfer(domain_coarse.get_dofs(), domain_fine.get_dofs(),
+        domain_coarse.get_constraints(), domain_fine.get_constraints());
+    ManifoldTransfer<dim, OperatorType> point_transfer(M_coarse, M_fine, transfer);
+    ProjectionTransport vector_transport(M_coarse, M_fine, transfer, point_transfer);
+
+    for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
+        // 1. Pre-smoothing
+        y = gradient_descent(O_fine, y, options, os);
+
+        // 2. Coarse step
+        // Restrict point from fine to coarse manifold
+        Vector<double> x(n_coarse);
+        point_transfer.restriction(y, x);
+        // Compute fine gradient
+        Vector<double> y_grad(n_fine);
+        O_fine.gradient(y, y_grad);
+        // Compute coarse gradient
+        Vector<double> x_grad(n_coarse);
+        O_coarse.gradient(x, x_grad, options_coarse);
+        // Compute coarse correction step
+        Vector<double> w(n_coarse);
+        coarse_correction(vector_transport, x_grad, y_grad, w);
+        // Set up coarse model
+        // TODO: oracle for coarse model (NashOracle)
+        //       find some easier way to define functions (i.e. separate geometry and objective)
+        
+        // 3. Post-smoothing
+        y = gradient_descent(O_fine, y, options, os);
+    }
+}
 
 } // namespace gpe
 
