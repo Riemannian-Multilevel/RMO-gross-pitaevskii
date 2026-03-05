@@ -17,6 +17,7 @@ The system is divided into three primary layers:
 | **Optimization** | `EnergyOracle` | Bridges the physics to the Riemannian Gradient Descent algorithm.                                         |
 
 These layers are combined in the `EnergySimulator` class, which serves as an orchestrator.
+The manifold geometry is exposed in the `gpe::ellipsoid` namespace (`manifold.h`).
 
 ### 2. Reuse of computation
 The triangulation and FE space often remain constant while physical parameters (like the potential V or the coupling constant beta) change.

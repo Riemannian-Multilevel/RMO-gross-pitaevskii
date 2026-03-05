@@ -462,7 +462,7 @@ void retract_inv_diff_by_norm_adjoint(const MatrixType& M,
 template <typename MatrixType>
 void retract_inv_diff_by_norm_adjoint()
 {
-
+    throw dealii::ExcNotImplemented("retract_inv_diff_by_norm_adjoint");
 }
 
 /**

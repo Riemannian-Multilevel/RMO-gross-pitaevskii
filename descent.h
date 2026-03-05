@@ -193,6 +193,7 @@ void full_approximation_scheme(OracleCoarse&& O_coarse, OracleFine&& O_fine,
 {
 
 }
+
 } // namespace gpe
 
 #endif //GPE_DESCENT_H
