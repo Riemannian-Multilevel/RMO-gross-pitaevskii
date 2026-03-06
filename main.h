@@ -7,11 +7,13 @@
 #include "manifold.h"
 #include "lac.h"
 #include "gpe.h"
+#include "grid_operators.h"
 
 namespace gpe
 {
 
 // TODO: define interface and move to `oracle.h`, merge functions from `manifold.h`
+//       support other preconditioner types
 /**
  * @brief Mathematical Oracle for the Gross-Pitaevskii energy functional.
  * This class provides the interface required by the @ref gradient_descent algorithm.
@@ -337,7 +339,8 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
                                const GrossPitaevskiiProblem<dim>& problem_coarse,
                                const Vector<double>& y0, DescentOptions options,
                                DescentOptions options_coarse,
-                               unsigned n_cycles, std::ostream& os)
+                               unsigned n_cycles, std::ostream& os,
+                               unsigned n_pre = 1, unsigned n_post = 1)
 {
     using OperatorType = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
@@ -364,6 +367,10 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
     ProjectionTransport vector_transport(M_coarse, M_fine, transfer, point_transfer);
     dealii::ConvergenceTable convergence_table;
 
+    // Define the timer
+    dealii::Timer timer;
+    timer.reset();
+
     int i = 1;
     for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
         //Vector<double> y_grad_m_restr(n_coarse);
@@ -377,29 +384,35 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
 
         // 1. Pre-smoothing
         Vector<double> y_grad(n_fine);
-        auto lac_iter = O_fine.gradient(y, y_grad, options);
-        O_fine.retract(y_grad, y, -options.step_size);
-        O_fine.update(y);
+        for (unsigned pre = 0; pre < n_pre; pre++) {
+            timer.start();
+            auto lac_iter = O_fine.gradient(y, y_grad, options);
+            O_fine.retract(y_grad, y, -options.step_size);
+            O_fine.update(y);
+            timer.stop();
 
-        // Print stats
-        auto state = O_fine.residual(y);
-        state.energy = O_fine.value(y);
-        convergence_table.add_value("iter", i++);
-        convergence_table.add_value("coarse", " ");
-        convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", state.mass);
-        convergence_table.add_value("lambda", state.lambda);
-        convergence_table.add_value("residual", state.residual);
-        convergence_table.add_value("energy", state.energy);
-        convergence_table.add_value("step",options.step_size);
+            // Print stats
+            auto state = O_fine.residual(y);
+            state.energy = O_fine.value(y);
+            convergence_table.add_value("iter", i++);
+            convergence_table.add_value("coarse", " ");
+            convergence_table.add_value("lac_iter", lac_iter);
+            convergence_table.add_value("mass", state.mass);
+            convergence_table.add_value("lambda", state.lambda);
+            convergence_table.add_value("residual", state.residual);
+            convergence_table.add_value("energy", state.energy);
+            convergence_table.add_value("step",options.step_size);
+            convergence_table.add_value("elapsed",timer.cpu_time());
+        }
 
         // 2. Coarse step
         // Restrict point from fine to coarse manifold, x = r(y)
+        timer.start();
         Vector<double> x(n_coarse);
         point_transfer.restriction(y, x);
         O_coarse.update(x);
         // Compute fine A-gradient
-        O_fine.gradient(y, y_grad, options);
+        auto lac_iter = O_fine.gradient(y, y_grad, options);
         // Compute coarse M-gradient
         Vector<double> x_grad_m(n_coarse);
         ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, x, x_grad_m);
@@ -419,9 +432,12 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         Vector<double> dk(n_fine);
         vector_transport.vector_prolongation(y, zk, dk);
         // DIAGNOSTIC
-        double dd = O_fine.metric(y_grad, dk); // <grad f(x), -grad f(x)>_x
-        std::cerr << "COARSE DESCENT: " << dd << std::endl;
+        double dd = O_fine.metric(y_grad, dk);
+        //double denom = std::sqrt(O_fine.metric(y_grad,y_grad));
+        //std::cerr << "COARSE DESCENT: " << dd/denom << std::endl;
+
         // double coarse_step = 1.0*std::pow(0.5,cycle);
+        // double coarse_step = 1.0;  // for comparison purposes
         // O_fine.retract(dk, y, coarse_step);
         // O_fine.update(y);
         // Armijo line search along dk
@@ -435,9 +451,10 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         } else {
             std::cerr << "  -> Coarse step rejected by line search." << std::endl;
         }
+        timer.stop();
 
         // Print stats
-        state = O_fine.residual(y);
+        auto state = O_fine.residual(y);
         state.energy = O_fine.value(y);
         convergence_table.add_value("iter",  i++);
         convergence_table.add_value("coarse", "*");
@@ -447,23 +464,29 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         convergence_table.add_value("residual", state.residual);
         convergence_table.add_value("energy", state.energy);
         convergence_table.add_value("step", coarse_step);
+        convergence_table.add_value("elapsed",timer.cpu_time());
 
         // 3. Post-smoothing
-        lac_iter = O_fine.gradient(y, y_grad, options);
-        O_fine.retract(y_grad, y, -options.step_size);
-        O_fine.update(y);
+        for (unsigned post = 0; post < n_post; ++post) {
+            timer.start();
+            auto lac_iter = O_fine.gradient(y, y_grad, options);
+            O_fine.retract(y_grad, y, -options.step_size);
+            O_fine.update(y);
+            timer.stop();
 
-        // Print stats
-        state = O_fine.residual(y);
-        state.energy = O_fine.value(y);
-        convergence_table.add_value("iter", i++);
-        convergence_table.add_value("coarse", " ");
-        convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", state.mass);
-        convergence_table.add_value("lambda", state.lambda);
-        convergence_table.add_value("residual", state.residual);
-        convergence_table.add_value("energy", state.energy);
-        convergence_table.add_value("step",options.step_size);
+            // Print stats
+            auto state = O_fine.residual(y);
+            state.energy = O_fine.value(y);
+            convergence_table.add_value("iter", i++);
+            convergence_table.add_value("coarse", " ");
+            convergence_table.add_value("lac_iter", lac_iter);
+            convergence_table.add_value("mass", state.mass);
+            convergence_table.add_value("lambda", state.lambda);
+            convergence_table.add_value("residual", state.residual);
+            convergence_table.add_value("energy", state.energy);
+            convergence_table.add_value("step",options.step_size);
+            convergence_table.add_value("elapsed",timer.cpu_time());
+        }
     }
 
     convergence_table.set_precision("mass", 4);
@@ -471,15 +494,17 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
     convergence_table.set_precision("residual", 4);
     convergence_table.set_precision("energy", 8);
     convergence_table.set_precision("step", 4);
+    convergence_table.set_precision("elapsed", 4);
 
     convergence_table.set_scientific("lambda", true);
     convergence_table.set_scientific("residual", true);
     convergence_table.set_scientific("energy", true);
     convergence_table.set_scientific("step", true);
+    convergence_table.set_scientific("elapsed", true);
 
     convergence_table.evaluate_convergence_rates("residual", reduction_rate);
     convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
-    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::table_with_headers);
+    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::org_mode_table);
 
 }
 

@@ -7,6 +7,7 @@ using namespace gpe;
 int main()
 {
     // --- options as before ---
+    // TODO: command-line interface
     DescentOptions options_gd{};
     options_gd.step_size    = 1.0;
     options_gd.max_inner    = 500;
@@ -38,8 +39,11 @@ int main()
     constexpr int dim = 2;
     Square<dim> V;
 
-    EnergySimulator<dim> GP_coarse(V, options, 8);
-    EnergySimulator<dim> GP_fine(V, options, 9);
+    unsigned int n_coarse_levels = 10;
+    unsigned int n_fine_levels = 11;
+    EnergySimulator<dim> GP_coarse(V, options, n_coarse_levels);
+    EnergySimulator<dim> GP_fine(V, options, n_fine_levels);
+
     Vector<double> y0(GP_fine.n_dofs());
     y0 = 1.0;  // starting value should be non-zero
     unsigned int n_cycles = 4;

@@ -4,11 +4,9 @@
 #include "option_types.h"
 #include "manifold.h"
 #include "lac.h"
-#include "grid_operators.h"
 
 #include <deal.II/base/convergence_table.h>
-
-#include "gpe.h"
+#include <deal.II/base/timer.h>
 
 namespace gpe
 {
@@ -100,54 +98,56 @@ double armijo_line_search(const OracleType& oracle,
 //! @return
 template <typename Oracle>
 Vector<double>
-gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, std::ostream& os)
+gradient_descent(Oracle&& O, const Vector<double>& x0,
+                 DescentOptions options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
     Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
 
+    // Keep track of states locally
+    iteration::State current_state;
+    iteration::State previous_state;
+
+    // Define the timer
+    dealii::Timer timer;
+    timer.reset();
+
     Vector x(x0);
     dealii::ConvergenceTable convergence_table;
     O.update(x);
-
-    bool break_on_next = false;
+    current_state = O.residual(x);
+    double Ex = O.value(x);
+    current_state.energy = Ex;
     unsigned int lac_iter = 0;  // number of iterations in inner solver taken
+
+    // TODO: move to function.h
+    convergence_table.add_value("iter", 0);
+    convergence_table.add_value("lac_iter", lac_iter);
+    convergence_table.add_value("mass", current_state.mass);
+    convergence_table.add_value("lambda", current_state.lambda);
+    convergence_table.add_value("residual", current_state.residual);
+    convergence_table.add_value("energy", current_state.energy);
+    convergence_table.add_value("elapsed", 0);  // does not include setup time
+    convergence_table.add_value("step",0);
+
     // TODO: turn debug printing into logger/verbosity flag in options
     std::cerr << "Iteration: ";
 
     // Begin RGD iteration
     Vector<double> g(x.size());
 
-    // Keep track of states locally
-    iteration::State current_state;
-    iteration::State previous_state;
-
-    for (unsigned int iter = 0; iter < options.max_iter; iter++) {
-        // Assemble iteration matrices for new iterate
-        current_state = O.residual(x);
-        double Ex = O.value(x);
-        current_state.energy = Ex;
-
+    for (unsigned int iter = 1; iter <= options.max_iter; iter++) {
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
-        // TODO: move to function.h
-        convergence_table.add_value("iter", iter);
-        convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", current_state.mass);
-        convergence_table.add_value("lambda", current_state.lambda);
-        convergence_table.add_value("residual", current_state.residual);
-        convergence_table.add_value("energy", current_state.energy);
-
-        if (break_on_next) {
-            break;
-        }
         if (O.check_convergence(current_state, previous_state, options)) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
-            break_on_next = true;
-            continue;
+            break;
         }
 
+        // ---- Timed section
+        timer.start();
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
         //options.tol_inner = std::min(options.tol_inner, 0.1 * current_state.residual);
@@ -159,7 +159,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
             eta *= -1.0;
             double dd = O.metric(g, eta); // <grad f(x), -grad f(x)>_x
             Vector x_new(x);
-            // runs O.retract, O.update
+            // runs O.retract(), O.update()
             double h = armijo_line_search(O, x, eta, Ex, dd, options, x_new);
             if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
@@ -170,6 +170,19 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
             O.update(x);
             convergence_table.add_value("step",options.step_size);
         }
+        // ---- End timed section
+        timer.stop();
+
+        current_state = O.residual(x);
+        double Ex = O.value(x);
+        current_state.energy = Ex;
+        convergence_table.add_value("iter", iter);
+        convergence_table.add_value("lac_iter", lac_iter);
+        convergence_table.add_value("mass", current_state.mass);
+        convergence_table.add_value("lambda", current_state.lambda);
+        convergence_table.add_value("residual", current_state.residual);
+        convergence_table.add_value("energy", current_state.energy);
+        convergence_table.add_value("elapsed",timer.cpu_time());
 
         // Store current state for the next iteration's delta check
         previous_state = current_state;
@@ -181,15 +194,18 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
     convergence_table.set_precision("residual", 4);
     convergence_table.set_precision("energy", 8);
     convergence_table.set_precision("step", 4);
+    convergence_table.set_precision("elapsed", 4);
 
+    //convergence_table.set_scientific("mass",true);
     convergence_table.set_scientific("lambda", true);
     convergence_table.set_scientific("residual", true);
     convergence_table.set_scientific("energy", true);
     convergence_table.set_scientific("step", true);
+    convergence_table.set_scientific("elapsed", true);
 
     convergence_table.evaluate_convergence_rates("residual", reduction_rate);
     convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
-    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::table_with_headers);
+    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::org_mode_table);
 
     //constraints.distribute(x);
     return x;
