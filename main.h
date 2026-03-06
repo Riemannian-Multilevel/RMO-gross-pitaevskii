@@ -345,8 +345,11 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
     unsigned n_coarse = O_coarse.n_dofs();
     unsigned n_fine = O_fine.n_dofs();
     const auto& M_coarse = O_coarse.get_M();
+    const auto& A_coarse = O_coarse.get_A();
     const auto& M_fine = O_fine.get_M();
     const auto& A_fine = O_fine.get_A();
+    InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
+        options_coarse.max_inner, options_coarse.tol_inner);
     InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
         options.max_inner, options.tol_inner);
 
@@ -363,15 +366,8 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
 
     int i = 1;
     for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
-        // Restrict point from fine to coarse manifold, x = r(y)
-        Vector<double> x(n_coarse);
-        point_transfer.restriction(y, x);
-
-        // 0. Coarse condition
-        Vector<double> y_grad_m(n_fine);
-        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
-        Vector<double> y_grad_m_restr(n_coarse);
-        vector_transport.vector_restriction(x, y_grad_m, y_grad_m_restr);
+        //Vector<double> y_grad_m_restr(n_coarse);
+        //vector_transport.vector_restriction(x, y_grad_m, y_grad_m_restr);
 
         // double restr_grad_norm = M_norm(M_coarse, y_grad_m_restr);
         // double grad_norm = M_norm(M_fine, y_grad_m);
@@ -389,6 +385,7 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         auto state = O_fine.residual(y);
         state.energy = O_fine.value(y);
         convergence_table.add_value("iter", i++);
+        convergence_table.add_value("coarse", " ");
         convergence_table.add_value("lac_iter", lac_iter);
         convergence_table.add_value("mass", state.mass);
         convergence_table.add_value("lambda", state.lambda);
@@ -397,14 +394,21 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         convergence_table.add_value("step",options.step_size);
 
         // 2. Coarse step
-        // Compute fine gradient
+        // Restrict point from fine to coarse manifold, x = r(y)
+        Vector<double> x(n_coarse);
+        point_transfer.restriction(y, x);
+        O_coarse.update(x);
+        // Compute fine A-gradient
         O_fine.gradient(y, y_grad, options);
-        // Compute coarse gradient
-        Vector<double> x_grad(n_coarse);
-        lac_iter = O_coarse.gradient(x, x_grad, options_coarse);
+        // Compute coarse M-gradient
+        Vector<double> x_grad_m(n_coarse);
+        ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, x, x_grad_m);
+        // Compute fine M-gradient
+        Vector<double> y_grad_m(n_fine);
+        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
         // Compute coarse correction step
         Vector<double> w(n_coarse);
-        coarse_correction(vector_transport, x_grad, y_grad, x, w);
+        coarse_correction(vector_transport, x_grad_m, y_grad_m, x, w);
         // Set up coarse model
         CoarseOracle<dim> qk(problem_coarse, O_coarse.get_beta(), w, x);
         Vector<double> zk(n_coarse);
@@ -417,24 +421,26 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         // DIAGNOSTIC
         double dd = O_fine.metric(y_grad, dk); // <grad f(x), -grad f(x)>_x
         std::cerr << "COARSE DESCENT: " << dd << std::endl;
-        double coarse_step = 1.0*std::pow(0.5,cycle);
-        O_fine.retract(dk, y, coarse_step);
-        O_fine.update(y);
+        // double coarse_step = 1.0*std::pow(0.5,cycle);
+        // O_fine.retract(dk, y, coarse_step);
+        // O_fine.update(y);
         // Armijo line search along dk
-        // double Ex = O_fine.value(y);
-        // Vector<double> y_new(y);
-        // double coarse_step = armijo_line_search(O_fine, y, dk, Ex, dd, options, y_new);
-        // if (coarse_step > 0.0) {
-        //     y = y_new; // Accept the step
-        //     O_fine.update(y);
-        // } else {
-        //     std::cerr << "  -> Coarse step rejected by line search." << std::endl;
-        // }
+        double Ex = O_fine.value(y);
+        Vector<double> y_new(y);
+        // runs update(), retract()
+        double coarse_step = armijo_line_search(O_fine, y, dk, Ex, dd, options, y_new);
+        if (coarse_step > 0.0) {
+            y = y_new; // Accept the step
+            //O_fine.update(y);
+        } else {
+            std::cerr << "  -> Coarse step rejected by line search." << std::endl;
+        }
 
         // Print stats
         state = O_fine.residual(y);
         state.energy = O_fine.value(y);
-        convergence_table.add_value("iter", i++);
+        convergence_table.add_value("iter",  i++);
+        convergence_table.add_value("coarse", "*");
         convergence_table.add_value("lac_iter", lac_iter);
         convergence_table.add_value("mass", state.mass);
         convergence_table.add_value("lambda", state.lambda);
@@ -451,6 +457,7 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         state = O_fine.residual(y);
         state.energy = O_fine.value(y);
         convergence_table.add_value("iter", i++);
+        convergence_table.add_value("coarse", " ");
         convergence_table.add_value("lac_iter", lac_iter);
         convergence_table.add_value("mass", state.mass);
         convergence_table.add_value("lambda", state.lambda);
@@ -462,7 +469,7 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
     convergence_table.set_precision("mass", 4);
     convergence_table.set_precision("lambda", 4);
     convergence_table.set_precision("residual", 4);
-    convergence_table.set_precision("energy", 4);
+    convergence_table.set_precision("energy", 8);
     convergence_table.set_precision("step", 4);
 
     convergence_table.set_scientific("lambda", true);

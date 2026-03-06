@@ -19,11 +19,11 @@ int main()
     options_gd.ls_alpha    = 1.0;
     options_gd.ls_beta     = 0.6;
     options_gd.ls_sigma    = 0.2;
-    options_gd.max_search  = 4;
+    options_gd.max_search  = 6;
 
     DescentOptions options_gd_coarse = options_gd;
-    options_gd_coarse.max_iter    = 3;
-    options_gd_coarse.step_size   = 0.5;
+    options_gd_coarse.max_iter    = 5;
+    options_gd_coarse.step_size   = 1.0;
     options_gd_coarse.line_search = false; // TODO: armijo line search
 
     GPE_Options options{};

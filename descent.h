@@ -179,7 +179,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
     convergence_table.set_precision("mass", 4);
     convergence_table.set_precision("lambda", 4);
     convergence_table.set_precision("residual", 4);
-    convergence_table.set_precision("energy", 4);
+    convergence_table.set_precision("energy", 8);
     convergence_table.set_precision("step", 4);
 
     convergence_table.set_scientific("lambda", true);
