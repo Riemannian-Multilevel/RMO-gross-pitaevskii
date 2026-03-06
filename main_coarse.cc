@@ -16,15 +16,15 @@ int main()
     options_gd.tol_residual = 1e-4;
     options_gd.max_iter     = 1;
     options_gd.line_search  = false;
+    options_gd.ls_alpha    = 1.0;
+    options_gd.ls_beta     = 0.6;
+    options_gd.ls_sigma    = 0.2;
+    options_gd.max_search  = 4;
 
     DescentOptions options_gd_coarse = options_gd;
-    options_gd_coarse.max_iter    = 5;
-    options_gd_coarse.step_size   = 1.0;
+    options_gd_coarse.max_iter    = 3;
+    options_gd_coarse.step_size   = 0.5;
     options_gd_coarse.line_search = false; // TODO: armijo line search
-    options_gd_coarse.ls_alpha    = 1.0;
-    options_gd_coarse.ls_beta     = 0.5;
-    options_gd_coarse.ls_sigma    = 0.4;
-    options_gd_coarse.max_search  = 20;
 
     GPE_Options options{};
     options.dimension = 2;
@@ -42,7 +42,7 @@ int main()
     EnergySimulator<dim> GP_fine(V, options, 9);
     Vector<double> y0(GP_fine.n_dofs());
     y0 = 1.0;  // starting value should be non-zero
-    unsigned int n_cycles = 10;
+    unsigned int n_cycles = 4;
 
     EnergyOracle oracle_fine(GP_fine.get_problem(), options.beta);
     EnergyOracle oracle_coarse(GP_coarse.get_problem(), options.beta);

@@ -57,7 +57,8 @@ double armijo_line_search(const OracleType& oracle,
                           const double fx,
                           const double dir_deriv,
                           const DescentOptions& options,
-                          VectorType& x_new)
+                          VectorType& x_new,
+                          double threshold = 1e-4)
 {
     double alpha = options.ls_alpha;
 
@@ -78,8 +79,8 @@ double armijo_line_search(const OracleType& oracle,
         if (fx_new - fx <= options.ls_sigma * alpha * dir_deriv) {
             return alpha; // step accepted
         }
-        if (alpha < 1e-8) {
-            return  1e-8;
+        if (alpha < threshold) {
+            return threshold;
         }
         oracle.update(x);  // step discarded, restore reference point
 
@@ -137,15 +138,15 @@ gradient_descent(Oracle&& O, const Vector<double>& x0, DescentOptions options, s
         convergence_table.add_value("residual", current_state.residual);
         convergence_table.add_value("energy", current_state.energy);
 
-        // if (break_on_next) {
-        //     break;
-        // }
-        // if (O.check_convergence(current_state, previous_state, options)) {
-        //     // trick so that convergence_table is updated for last step
-        //     // n iterations + starting solution -> n+1 table entries
-        //     break_on_next = true;
-        //     continue;
-        // }
+        if (break_on_next) {
+            break;
+        }
+        if (O.check_convergence(current_state, previous_state, options)) {
+            // trick so that convergence_table is updated for last step
+            // n iterations + starting solution -> n+1 table entries
+            break_on_next = true;
+            continue;
+        }
 
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)

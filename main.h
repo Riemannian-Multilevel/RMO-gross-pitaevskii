@@ -315,6 +315,20 @@ private:
     GPE_Options options;
 };
 
+// TODO
+double first_order_coherence()
+{
+    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+}
+
+template <typename MatrixType>
+double M_norm(const MatrixType& M, const Vector<double>& x)
+{
+    Vector<double> Ax(x.size());
+    M.vmult(Ax, x);
+    return std::sqrt(x*Ax);
+}
+
 // 2-level FAS
 template <int dim, typename Oracle>
 void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
@@ -326,33 +340,68 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
                                unsigned n_cycles, std::ostream& os)
 {
     using OperatorType = LinearCombination<SparseMatrix<double>,Vector<double>>;
+    using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
+
     unsigned n_coarse = O_coarse.n_dofs();
     unsigned n_fine = O_fine.n_dofs();
     const auto& M_coarse = O_coarse.get_M();
     const auto& M_fine = O_fine.get_M();
+    const auto& A_fine = O_fine.get_A();
+    InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
+        options.max_inner, options.tol_inner);
 
     // TODO: ignore termination criteria? (avoid post-smoothing breaks down)
     options.max_iter = 1;  // number of pre-/post-smoothing steps
     Vector<double> y(y0);
+    O_fine.update(y); // TODO
+
     LinearTransfer transfer(domain_coarse.get_dofs(), domain_fine.get_dofs(),
         domain_coarse.get_constraints(), domain_fine.get_constraints());
     ManifoldTransfer<dim, OperatorType> point_transfer(M_coarse, M_fine, transfer);
     ProjectionTransport vector_transport(M_coarse, M_fine, transfer, point_transfer);
+    dealii::ConvergenceTable convergence_table;
 
+    int i = 1;
     for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
-        // 1. Pre-smoothing
-        y = gradient_descent(O_fine, y, options, os);
-
-        // 2. Coarse step
         // Restrict point from fine to coarse manifold, x = r(y)
         Vector<double> x(n_coarse);
         point_transfer.restriction(y, x);
-        // Compute fine gradient
+
+        // 0. Coarse condition
+        Vector<double> y_grad_m(n_fine);
+        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
+        Vector<double> y_grad_m_restr(n_coarse);
+        vector_transport.vector_restriction(x, y_grad_m, y_grad_m_restr);
+
+        // double restr_grad_norm = M_norm(M_coarse, y_grad_m_restr);
+        // double grad_norm = M_norm(M_fine, y_grad_m);
+        // double eta = 0.3;
+        // std::cout << "Restricted gradient norm: " << restr_grad_norm << std::endl;
+        // std::cout << "Gradient norm: " << grad_norm << std::endl;
+
+        // 1. Pre-smoothing
         Vector<double> y_grad(n_fine);
+        auto lac_iter = O_fine.gradient(y, y_grad, options);
+        O_fine.retract(y_grad, y, -options.step_size);
+        O_fine.update(y);
+
+        // Print stats
+        auto state = O_fine.residual(y);
+        state.energy = O_fine.value(y);
+        convergence_table.add_value("iter", i++);
+        convergence_table.add_value("lac_iter", lac_iter);
+        convergence_table.add_value("mass", state.mass);
+        convergence_table.add_value("lambda", state.lambda);
+        convergence_table.add_value("residual", state.residual);
+        convergence_table.add_value("energy", state.energy);
+        convergence_table.add_value("step",options.step_size);
+
+        // 2. Coarse step
+        // Compute fine gradient
         O_fine.gradient(y, y_grad, options);
         // Compute coarse gradient
         Vector<double> x_grad(n_coarse);
-        O_coarse.gradient(x, x_grad, options_coarse);
+        lac_iter = O_coarse.gradient(x, x_grad, options_coarse);
         // Compute coarse correction step
         Vector<double> w(n_coarse);
         coarse_correction(vector_transport, x_grad, y_grad, x, w);
@@ -360,17 +409,71 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         CoarseOracle<dim> qk(problem_coarse, O_coarse.get_beta(), w, x);
         Vector<double> zk(n_coarse);
         // Find zk such that qk(zk) < qk(x)
-        zk = gradient_descent(qk, x, options_coarse, os);
+        zk = gradient_descent(qk, x, options_coarse, std::cerr);
         // Compute the search direction, zk <- L_x(zk)
         ellipsoid::retract_inv_by_norm(M_coarse, zk, x);
         Vector<double> dk(n_fine);
         vector_transport.vector_prolongation(y, zk, dk);
         // DIAGNOSTIC
-        std::cerr << "COARSE DESCENT: " << O_fine.metric(y_grad, dk) << std::endl;
+        double dd = O_fine.metric(y_grad, dk); // <grad f(x), -grad f(x)>_x
+        std::cerr << "COARSE DESCENT: " << dd << std::endl;
+        double coarse_step = 1.0*std::pow(0.5,cycle);
+        O_fine.retract(dk, y, coarse_step);
+        O_fine.update(y);
+        // Armijo line search along dk
+        // double Ex = O_fine.value(y);
+        // Vector<double> y_new(y);
+        // double coarse_step = armijo_line_search(O_fine, y, dk, Ex, dd, options, y_new);
+        // if (coarse_step > 0.0) {
+        //     y = y_new; // Accept the step
+        //     O_fine.update(y);
+        // } else {
+        //     std::cerr << "  -> Coarse step rejected by line search." << std::endl;
+        // }
+
+        // Print stats
+        state = O_fine.residual(y);
+        state.energy = O_fine.value(y);
+        convergence_table.add_value("iter", i++);
+        convergence_table.add_value("lac_iter", lac_iter);
+        convergence_table.add_value("mass", state.mass);
+        convergence_table.add_value("lambda", state.lambda);
+        convergence_table.add_value("residual", state.residual);
+        convergence_table.add_value("energy", state.energy);
+        convergence_table.add_value("step", coarse_step);
 
         // 3. Post-smoothing
-        y = gradient_descent(O_fine, y, options, os);
+        lac_iter = O_fine.gradient(y, y_grad, options);
+        O_fine.retract(y_grad, y, -options.step_size);
+        O_fine.update(y);
+
+        // Print stats
+        state = O_fine.residual(y);
+        state.energy = O_fine.value(y);
+        convergence_table.add_value("iter", i++);
+        convergence_table.add_value("lac_iter", lac_iter);
+        convergence_table.add_value("mass", state.mass);
+        convergence_table.add_value("lambda", state.lambda);
+        convergence_table.add_value("residual", state.residual);
+        convergence_table.add_value("energy", state.energy);
+        convergence_table.add_value("step",options.step_size);
     }
+
+    convergence_table.set_precision("mass", 4);
+    convergence_table.set_precision("lambda", 4);
+    convergence_table.set_precision("residual", 4);
+    convergence_table.set_precision("energy", 4);
+    convergence_table.set_precision("step", 4);
+
+    convergence_table.set_scientific("lambda", true);
+    convergence_table.set_scientific("residual", true);
+    convergence_table.set_scientific("energy", true);
+    convergence_table.set_scientific("step", true);
+
+    convergence_table.evaluate_convergence_rates("residual", reduction_rate);
+    convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
+    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::table_with_headers);
+
 }
 
 } // namespace gpe
