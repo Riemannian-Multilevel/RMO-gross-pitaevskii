@@ -8,18 +8,6 @@
 namespace gpe
 {
 
-enum class VectorTransportKind
-{
-    PROJECTION,         // composition of orthogonal projection and linear interpolation
-    DIFF,               // differential of prolongation and restriction maps
-    DIFF_ADJ_COARSE,    // metric adjoint w.r.t. A/M-metric, starting from prolongation map
-                        //    p -> Dp -> Dp* =: R,  Dp =: P
-    PINV_ADJ_COARSE,    // as above, but taking the pseudo-inverse Dp+
-    DIFF_ADJ_FINE,      // metric adjoint w.r.t. A/M-metric, starting from restriction map
-                            //    r -> Dr -> Dr* =: P,  Dr =: R
-    PINV_ADJ_FINE,      // as above, but taking the pseudo-inverse Dr+
-};
-
 // Linear interpolation/restriction for the ambient space R^n
 template <int dim>
 class LinearTransfer

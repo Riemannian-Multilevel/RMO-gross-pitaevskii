@@ -12,7 +12,7 @@
 namespace gpe
 {
 
-// TODO: define interface and move to `oracle.h`, merge functions from `manifold.h`
+// TODO: define interface and move to `objective.h`, merge functions from `manifold.h`
 //       support other preconditioner types
 /**
  * @brief Mathematical Oracle for the Gross-Pitaevskii energy functional.
@@ -26,6 +26,7 @@ template <int dim>
 class EnergyOracle
 {
 public:
+    static constexpr int dimension = dim;
     /** @brief Alias for the combined linear operator type. */
     using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
     /** @brief Alias for the preconditioned inverse operator type. */
@@ -110,7 +111,7 @@ public:
     /**
      * @brief Computes the iteration state (eigenvalue, residual, etc.) at point x.
      */
-    iteration::State residual(Vector<double>& x) const
+    iteration::State residual(const Vector<double>& x) const
     {
         return iteration::residual(x, A, M);
     }
@@ -162,11 +163,11 @@ private:
     OperatorType M;
 };
 
-// TODO: separate geometry and objective
 template <int dim>
 class CoarseOracle
 {
 public:
+    static constexpr int dimension = dim;
     using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using InverseOpType = InverseMatrix<OperatorType, dealii::SparseILU<double>>;
 
@@ -185,6 +186,12 @@ public:
     void update(const Vector<double>& x) const
     {
         problem.assemble_nonlinear_term(x);
+    }
+
+    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    {
+        w   = w_new;
+        phi = phi_new;
     }
 
     double value(const Vector<double>& x) const
@@ -227,7 +234,7 @@ public:
     }
 
     // XXX: methods for gradient_descent()
-    iteration::State residual(Vector<double>& x) const
+    iteration::State residual(const Vector<double>& x) const
     {
         return {.energy=value(x)};
     }
@@ -305,8 +312,18 @@ public:
     const GrossPitaevskiiProblem<dim>& get_problem() const { return problem; }
 
     unsigned int n_dofs() const { return package.n_dofs(); }
-    const dealii::DoFHandler<dim>& get_dofs() const { return package.get_dofs(); }
-    const dealii::AffineConstraints<double>& get_constraints() const { return package.get_constraints(); }
+
+    const dealii::DoFHandler<dim>&
+    get_dofs() const { return package.get_dofs(); }
+
+    const dealii::AffineConstraints<double>&
+    get_constraints() const { return package.get_constraints(); }
+
+    EnergyOracle<dim>
+    get_oracle(double beta) const { return EnergyOracle<dim>(problem, beta); }
+
+    const auto& get_M() const { return problem.get_M(); }
+    const auto& get_A(double beta) const { return problem.get_operator_A(beta); }
 
 private:
     /** @brief Persistent discretization infrastructure. */
@@ -317,11 +334,6 @@ private:
     GPE_Options options;
 };
 
-// TODO
-double first_order_coherence()
-{
-    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-}
 
 template <typename MatrixType>
 double M_norm(const MatrixType& M, const Vector<double>& x)
@@ -331,165 +343,36 @@ double M_norm(const MatrixType& M, const Vector<double>& x)
     return std::sqrt(x*Ax);
 }
 
-// 2-level FAS
-template <int dim, typename Oracle>
-void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
-                               const GrossPitaevskiiPackage<dim>& domain_coarse,
-                               const GrossPitaevskiiPackage<dim>& domain_fine,
-                               const GrossPitaevskiiProblem<dim>& problem_coarse,
-                               const Vector<double>& y0, DescentOptions options,
-                               DescentOptions options_coarse,
-                               unsigned n_cycles, std::ostream& os,
-                               unsigned n_pre = 1, unsigned n_post = 1)
+struct CycleInfo
 {
-    using OperatorType = LinearCombination<SparseMatrix<double>,Vector<double>>;
-    using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
+    unsigned iter;
+    unsigned lac_iter;
+    double step_size;
+    double elapsed;
+    bool coarse;
+};
 
-    unsigned n_coarse = O_coarse.n_dofs();
-    unsigned n_fine = O_fine.n_dofs();
-    const auto& M_coarse = O_coarse.get_M();
-    const auto& A_coarse = O_coarse.get_A();
-    const auto& M_fine = O_fine.get_M();
-    const auto& A_fine = O_fine.get_A();
-    InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
-        options_coarse.max_inner, options_coarse.tol_inner);
-    InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
-        options.max_inner, options.tol_inner);
+template <typename Oracle>
+void cycle_eval(const Oracle& O, const Vector<double>& y,
+                dealii::ConvergenceTable& convergence_table,
+                CycleInfo info)
+{
+    auto state   = O.residual(y);
+    state.energy = O.value(y);
 
-    // TODO: ignore termination criteria? (avoid post-smoothing breaks down)
-    options.max_iter = 1;  // number of pre-/post-smoothing steps
-    Vector<double> y(y0);
-    O_fine.update(y); // TODO
+    convergence_table.add_value("iter", info.iter);
+    convergence_table.add_value("coarse", info.coarse ? "*" : " ");
+    convergence_table.add_value("lac_iter", info.lac_iter);
+    convergence_table.add_value("mass", state.mass);
+    convergence_table.add_value("lambda", state.lambda);
+    convergence_table.add_value("residual", state.residual);
+    convergence_table.add_value("energy", state.energy);
+    convergence_table.add_value("step",info.step_size);
+    convergence_table.add_value("elapsed",info.elapsed);
+}
 
-    LinearTransfer transfer(domain_coarse.get_dofs(), domain_fine.get_dofs(),
-        domain_coarse.get_constraints(), domain_fine.get_constraints());
-    ManifoldTransfer<dim, OperatorType> point_transfer(M_coarse, M_fine, transfer);
-    ProjectionTransport vector_transport(M_coarse, M_fine, transfer, point_transfer);
-    dealii::ConvergenceTable convergence_table;
-
-    // Define the timer
-    dealii::Timer timer;
-    timer.reset();
-
-    int i = 1;
-    for (unsigned cycle = 0; cycle < n_cycles; cycle++) {
-        //Vector<double> y_grad_m_restr(n_coarse);
-        //vector_transport.vector_restriction(x, y_grad_m, y_grad_m_restr);
-
-        // double restr_grad_norm = M_norm(M_coarse, y_grad_m_restr);
-        // double grad_norm = M_norm(M_fine, y_grad_m);
-        // double eta = 0.3;
-        // std::cout << "Restricted gradient norm: " << restr_grad_norm << std::endl;
-        // std::cout << "Gradient norm: " << grad_norm << std::endl;
-
-        // 1. Pre-smoothing
-        Vector<double> y_grad(n_fine);
-        for (unsigned pre = 0; pre < n_pre; pre++) {
-            timer.start();
-            auto lac_iter = O_fine.gradient(y, y_grad, options);
-            O_fine.retract(y_grad, y, -options.step_size);
-            O_fine.update(y);
-            timer.stop();
-
-            // Print stats
-            auto state = O_fine.residual(y);
-            state.energy = O_fine.value(y);
-            convergence_table.add_value("iter", i++);
-            convergence_table.add_value("coarse", " ");
-            convergence_table.add_value("lac_iter", lac_iter);
-            convergence_table.add_value("mass", state.mass);
-            convergence_table.add_value("lambda", state.lambda);
-            convergence_table.add_value("residual", state.residual);
-            convergence_table.add_value("energy", state.energy);
-            convergence_table.add_value("step",options.step_size);
-            convergence_table.add_value("elapsed",timer.cpu_time());
-        }
-
-        // 2. Coarse step
-        // Restrict point from fine to coarse manifold, x = r(y)
-        timer.start();
-        Vector<double> x(n_coarse);
-        point_transfer.restriction(y, x);
-        O_coarse.update(x);
-        // Compute fine A-gradient
-        auto lac_iter = O_fine.gradient(y, y_grad, options);
-        // Compute coarse M-gradient
-        Vector<double> x_grad_m(n_coarse);
-        ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, x, x_grad_m);
-        // Compute fine M-gradient
-        Vector<double> y_grad_m(n_fine);
-        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
-        // Compute coarse correction step
-        Vector<double> w(n_coarse);
-        coarse_correction(vector_transport, x_grad_m, y_grad_m, x, y, w);
-        // Set up coarse model
-        CoarseOracle<dim> qk(problem_coarse, O_coarse.get_beta(), w, x);
-        Vector<double> zk(n_coarse);
-        // Find zk such that qk(zk) < qk(x)
-        zk = gradient_descent(qk, x, options_coarse, std::cerr);
-        // Compute the search direction, zk <- L_x(zk)
-        ellipsoid::retract_inv_by_norm(M_coarse, zk, x);
-        Vector<double> dk(n_fine);
-        // Coarse base point not required for ProjectionTransport
-        vector_transport.vector_prolongation(y, {}, zk, dk);
-        // DIAGNOSTIC
-        double dd = O_fine.metric(y_grad, dk);
-        //double denom = std::sqrt(O_fine.metric(y_grad,y_grad));
-        //std::cerr << "COARSE DESCENT: " << dd/denom << std::endl;
-
-        // double coarse_step = 1.0*std::pow(0.5,cycle);
-        // double coarse_step = 1.0;  // for comparison purposes
-        // O_fine.retract(dk, y, coarse_step);
-        // O_fine.update(y);
-        // Armijo line search along dk
-        double Ex = O_fine.value(y);
-        Vector<double> y_new(y);
-        // runs update(), retract()
-        double coarse_step = armijo_line_search(O_fine, y, dk, Ex, dd, options, y_new);
-        if (coarse_step > 0.0) {
-            y = y_new; // Accept the step
-            //O_fine.update(y);
-        } else {
-            std::cerr << "  -> Coarse step rejected by line search." << std::endl;
-        }
-        timer.stop();
-
-        // Print stats
-        auto state = O_fine.residual(y);
-        state.energy = O_fine.value(y);
-        convergence_table.add_value("iter",  i++);
-        convergence_table.add_value("coarse", "*");
-        convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", state.mass);
-        convergence_table.add_value("lambda", state.lambda);
-        convergence_table.add_value("residual", state.residual);
-        convergence_table.add_value("energy", state.energy);
-        convergence_table.add_value("step", coarse_step);
-        convergence_table.add_value("elapsed",timer.cpu_time());
-
-        // 3. Post-smoothing
-        for (unsigned post = 0; post < n_post; ++post) {
-            timer.start();
-            auto lac_iter = O_fine.gradient(y, y_grad, options);
-            O_fine.retract(y_grad, y, -options.step_size);
-            O_fine.update(y);
-            timer.stop();
-
-            // Print stats
-            auto state = O_fine.residual(y);
-            state.energy = O_fine.value(y);
-            convergence_table.add_value("iter", i++);
-            convergence_table.add_value("coarse", " ");
-            convergence_table.add_value("lac_iter", lac_iter);
-            convergence_table.add_value("mass", state.mass);
-            convergence_table.add_value("lambda", state.lambda);
-            convergence_table.add_value("residual", state.residual);
-            convergence_table.add_value("energy", state.energy);
-            convergence_table.add_value("step",options.step_size);
-            convergence_table.add_value("elapsed",timer.cpu_time());
-        }
-    }
-
+void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ostream& os)
+{
     convergence_table.set_precision("mass", 4);
     convergence_table.set_precision("lambda", 4);
     convergence_table.set_precision("residual", 4);
@@ -506,8 +389,220 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
     convergence_table.evaluate_convergence_rates("residual", reduction_rate);
     convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
     convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::org_mode_table);
-
 }
+
+template <int dim>
+class FullApproximationScheme
+{
+public:
+    using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
+    using MatrixType    = SparseMatrix<double>;
+    using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
+
+    FullApproximationScheme(const EnergySimulator<dim>& GP_coarse,
+                            const EnergySimulator<dim>& GP_fine,
+                            double beta)
+        : O_coarse(GP_coarse.get_oracle(beta))
+        , O_fine(GP_fine.get_oracle(beta))
+        , qk(GP_coarse.get_problem(), beta, {}, {})
+        , n_coarse(GP_coarse.n_dofs())
+        , n_fine(GP_fine.n_dofs())
+        , transfer(GP_coarse.get_dofs(), GP_fine.get_dofs(), GP_coarse.get_constraints(), GP_fine.get_constraints())
+        , point_transfer(GP_coarse.get_M(), GP_fine.get_M(), transfer)
+        , vector_transport(GP_coarse.get_M(), GP_fine.get_M(), transfer, point_transfer)
+    {
+        // Set up operators
+        M_coarse = O_coarse.get_M();  // problem.get_operator_M()
+        A_coarse = O_coarse.get_A();  // problem.get_operator_A(beta)
+        M_fine   = O_fine.get_M();
+        A_fine   = O_fine.get_A();
+
+        // TODO: Set up preconditioner for M
+    }
+
+    void cycle(const Vector<double>& y0, std::ostream& os,
+               DescentOptions options, DescentOptions options_coarse,
+               unsigned n_pre = 1, unsigned n_post = 1)
+    {
+        dealii::Timer timer;
+        timer.reset();
+
+        // 0. Initialize oracle and coarse model
+        Vector<double> y(y0);
+        O_fine.update(y);
+
+        unsigned i = 1;
+        while (true) {
+            // 1. Pre-smoothing
+            Vector<double> y_grad(O_fine.n_dofs());
+
+            for (unsigned pre = 0; pre < n_pre; pre++) {
+                if (i > options.max_iter) break;
+
+                CycleInfo info = cycle_fine(y, y_grad, options);
+                info.iter = i++;
+                info.coarse = false;
+
+                cycle_eval(O_fine, y, convergence_table, info);
+            }
+
+            // 2. Coarse step
+            if (i > options.max_iter) break;
+
+            CycleInfo info = cycle_coarse(y, options, options_coarse);
+            info.iter = i++;
+            info.coarse = true;
+
+            cycle_eval(O_fine, y, convergence_table, info);
+
+            // 3. Post-smoothing
+            for (unsigned post = 0; post < n_post; ++post) {
+                if (i > options.max_iter) break;
+
+                CycleInfo info = cycle_fine(y, y_grad, options);
+                info.iter = i++;
+                info.coarse = false;
+
+                cycle_eval(O_fine, y, convergence_table, info);
+            }
+        }
+        cycle_finalize(convergence_table, os);
+    }
+
+private:
+    dealii::ConvergenceTable convergence_table;
+    dealii::Timer timer;
+
+    // Function evaluation
+    EnergyOracle<dim> O_coarse, O_fine;
+    CoarseOracle<dim> qk;
+    unsigned n_coarse, n_fine;
+
+    // Grid operators
+    LinearTransfer<dim> transfer;
+    ManifoldTransfer<dim, MatrixType> point_transfer;
+    ProjectionTransport<dim, MatrixType> vector_transport;
+
+    OperatorType M_coarse, M_fine;
+    OperatorType A_coarse, A_fine;
+
+    // Methods
+    double line_search(Vector<double>& y, const Vector<double>& y_grad, const Vector<double>& eta,
+                       DescentOptions options)
+    {
+        double threshold = 1e-4;
+        double Ex   = O_fine.value(y);
+        double dd   = O_fine.metric(y_grad, eta);
+        double step = armijo_line_search(O_fine, y, eta, Ex, dd, options, threshold);
+
+        if (step < threshold) {
+            std::cerr << "  -> Coarse step rejected by line search." << std::endl;
+        }
+        return step;
+    }
+
+    // TODO: CoarseOracle is *NOT* a light-weight object; it sets up the preconditioner for A0
+    //       like EnergyOracle would. Therefore, it should not be initialized for every iteration.
+    Vector<double>
+    descent_coarse(const Vector<double>& y, DescentOptions options, DescentOptions options_coarse)
+    {
+        // TODO: use class preconditioner
+        InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
+            options_coarse.max_inner, options_coarse.tol_inner);
+        InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
+            options.max_inner, options.tol_inner);
+
+        // Starting coarse point
+        Vector<double> x(n_coarse);
+        point_transfer.restriction(y, x);
+        O_coarse.update(x);
+
+        // Compute coarse M-gradient
+        Vector<double> x_grad_m(n_coarse);
+        ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, x, x_grad_m);
+
+        // Compute fine M-gradient
+        Vector<double> y_grad_m(n_fine);
+        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
+
+        // Compute coarse correction step
+        Vector<double> w(n_coarse);
+        coarse_correction(vector_transport, x_grad_m, y_grad_m, x, y, w);
+
+        // Set up coarse model
+        // TODO: preconditioner for coarse A0 is computed for every step
+        //       factor this out and call some update function?
+        //CoarseOracle<dim> qk(prob_coarse, O_coarse.get_beta(), w, x);
+        qk.update_parameters(w, x);
+        Vector<double> zk(n_coarse);
+
+        // Find zk such that qk(zk) < qk(x)
+        // TODO: variable descent method, or use cycle_fine() for consistency
+        zk = gradient_descent(qk, x, options_coarse, std::cerr);
+
+        // Compute the search direction, zk <- L_x(zk)
+        ellipsoid::retract_inv_by_norm(M_coarse, zk, x);
+        Vector<double> dk(n_fine);
+
+        // Coarse base point not required for ProjectionTransport
+        vector_transport.vector_prolongation(y, {}, zk, dk);
+        return dk;
+    }
+
+    // Implementation of fine and coarse cycles
+    // TODO: factor out Oracle::update (possible with matrix-free line search)
+    CycleInfo cycle_fine(Vector<double>& y, Vector<double>& y_grad, DescentOptions options)
+    {
+        timer.start();
+
+        // Update gradient
+        auto lac_iter = O_fine.gradient(y, y_grad, options);
+        double step_size = options.step_size;
+
+        // Update point (fixed step or line search)
+        if (options.line_search) {
+            Vector<double> eta(y_grad);
+            eta *= -1.0;
+
+            step_size = line_search(y, y_grad, eta, options);
+        }
+        else {
+            O_fine.retract(y_grad, y, -options.step_size);  // update y
+            O_fine.update(y);
+        }
+
+        timer.stop();
+        return {.lac_iter = lac_iter, .step_size = step_size, .elapsed = timer.cpu_time()};
+    }
+
+    // TODO: factor out Oracle::update (possible with matrix-free line search)
+    CycleInfo cycle_coarse(Vector<double>& y, DescentOptions options, DescentOptions options_coarse)
+    {
+        timer.start();
+
+        // Coarse descent direction
+        Vector<double> dk = descent_coarse(y, options, options_coarse);
+        double step_size = options.step_size;
+
+        // Update point (fixed step or line search)
+        if (options.line_search) {
+            // TODO: dk is computed in the A-metric, but the coarse model is formulated in the M-metric.
+            //       This means that we need to compute both the M and the A-gradient, former for the coarse model,
+            //       and later for evaluating the Armijo condition on dk.
+            Vector<double> y_grad(n_fine);
+            auto lac_iter = O_fine.gradient(y, y_grad, options);
+
+            step_size = line_search(y, y_grad, dk, options);
+        }
+        else {
+            O_fine.retract(dk, y, options.step_size);
+            O_fine.update(y);
+        }
+
+        timer.stop();
+        return {.lac_iter = 0, .step_size = step_size, .elapsed = timer.cpu_time()};
+    }
+};
 
 } // namespace gpe
 

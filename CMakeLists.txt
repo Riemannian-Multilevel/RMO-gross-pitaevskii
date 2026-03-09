@@ -25,6 +25,7 @@ set(COMMON_HEADERS
         random.h
         main.h
         grid_operators.h
+        function.h
 )
 deal_ii_initialize_cached_variables()
 

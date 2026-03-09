@@ -36,51 +36,53 @@ struct SolverInfo {
 //     UNKNOWN
 // };
 
-// TODO: Armijo line search (cf. fcvx/descent.h)
 /**
  * @brief Performs the Armijo backtracking line search on the manifold.
  * @param oracle The manifold and objective function interface.
- * @param x Current base point.
+ * @param x [in-out] Current base point.
  * @param eta Search direction (must be a descent direction).
  * @param fx Function value at current point f(x).
  * @param dir_deriv Directional derivative <grad f(x), eta>_x.
  * @param options Line search parameters.
- * @param x_new [out] The accepted new point.
+ * @param threshold Minimal step-size taken.
  * @return The accepted step size alpha (returns 0 if failed to converge).
  */
+// TODO: vector x is updated in place, even for tentative steps, since no copy
+//       of the problem state (large sparse matrix term Mpp) is made
 template <typename VectorType, typename OracleType>
 double armijo_line_search(const OracleType& oracle,
-                          const VectorType& x,
+                          VectorType& x,
                           const VectorType& eta,
                           const double fx,
                           const double dir_deriv,
                           const DescentOptions& options,
-                          VectorType& x_new,
                           double threshold = 1e-4)
 {
     double alpha = options.ls_alpha;
+    Vector<double> x_trial(x);
 
     for (unsigned int ls_iter = 0; ls_iter < options.max_search; ++ls_iter) {
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
         step *= alpha;
-
-        oracle.retract(x, step, x_new);
+        oracle.retract(x, step, x_trial);
 
         // Evaluate function at the new point
         // TODO: this requires a new assembly of A_x - use matrix-free evaluation
-        oracle.update(x_new);
-        double fx_new = oracle.value(x_new);
+        oracle.update(x_trial);
+        double fx_new = oracle.value(x_trial);
 
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
         if (fx_new - fx <= options.ls_sigma * alpha * dir_deriv) {
-            return alpha; // step accepted
+            x = x_trial;    // step accepted, write x
+            return alpha;
         }
         if (alpha < threshold) {
+            x = x_trial;    // step accepted, write x
             return threshold;
         }
-        oracle.update(x);  // step discarded, restore reference point
+        oracle.update(x);   // step discarded, restore original state
 
         // Backtrack
         alpha *= options.ls_beta;
@@ -158,10 +160,9 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
             Vector eta(g);  // search direction
             eta *= -1.0;
             double dd = O.metric(g, eta); // <grad f(x), -grad f(x)>_x
-            Vector x_new(x);
             // runs O.retract(), O.update()
-            double h = armijo_line_search(O, x, eta, Ex, dd, options, x_new);
-            if (h > 0) x = x_new;
+            double h = armijo_line_search(O, x, eta, Ex, dd, options, 1e-4);
+            //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
             convergence_table.add_value("step",h);
         }

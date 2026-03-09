@@ -708,6 +708,11 @@ void gradient(const MatrixType& M,
     ellipsoid::project_onto_tangent_space(A_inv, zeta, M, invAz, dst);
 }
 
+double first_order_coherence()  // TODO
+{
+    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+}
+
 } // namespace coarse
 
 } // namespace gpe

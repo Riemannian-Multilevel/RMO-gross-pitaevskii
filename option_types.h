@@ -43,22 +43,47 @@ enum class MeshKind
     SIMPLEX
 };
 
-// TODO: separate (inner) solver options from gradient-descent options
+enum class VectorTransportKind  // ~Method?
+{
+    PROJECTION,         // composition of orthogonal projection and linear interpolation
+    DIFF,               // differential of prolongation and restriction maps
+    DIFF_ADJ_COARSE,    // metric adjoint w.r.t. A/M-metric, starting from prolongation map
+    PINV_ADJ_COARSE,    // as above, but taking the pseudo-inverse Dp+
+    DIFF_ADJ_FINE,      // metric adjoint w.r.t. A/M-metric, starting from restriction map
+    PINV_ADJ_FINE,      // as above, but taking the pseudo-inverse Dr+
+};
+
+// TODO: separate inner solver + line search options from (gradient) descent options
 struct DescentOptions
 {
-    double tol_inner;           // relative tolerance for inner solver
     double tol_lambda;          // tolerance for rayleigh quotients
     double tol_residual;        // tolerance for M-residual
     double step_size;           // fixed step-size used in iteration steps
     unsigned int max_iter;      // maximum GD iterations
+    bool line_search;           // determine step-size by line search
+
+    // TODO: move to separate struct
     unsigned int max_inner;     // maximum sparse solver iterations
-    unsigned int max_search;    // maximum line search iterations
+    double tol_inner;           // relative tolerance for inner solver
     SolverMethod solver;        // method for solving sparse linear equations
     Precondition precond;       // preconditioner for solving sparse linear equations
-    bool line_search;           // determine step-size by line search
+
+    // TODO: move to separate struct
+    unsigned int max_search;    // maximum line search iterations
     double ls_alpha;
     double ls_beta;
     double ls_sigma;
+    double ls_min;
+};
+
+struct SolverOptions
+{
+
+};
+
+struct LineSearchOptions
+{
+
 };
 
 struct MG_Options
@@ -81,4 +106,5 @@ struct GPE_Options
 };
 
 }
+
 #endif //GPE_OPTION_TYPES_H

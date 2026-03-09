@@ -15,12 +15,12 @@ int main()
     options_gd.tol_inner    = 1e-6;
     options_gd.tol_lambda   = 1e-8;
     options_gd.tol_residual = 1e-4;
-    options_gd.max_iter     = 1;
+    options_gd.max_iter     = 10;
     options_gd.line_search  = false;
-    options_gd.ls_alpha    = 1.0;
-    options_gd.ls_beta     = 0.6;
-    options_gd.ls_sigma    = 0.2;
-    options_gd.max_search  = 6;
+    // options_gd.ls_alpha    = 1.0;
+    // options_gd.ls_beta     = 0.6;
+    // options_gd.ls_sigma    = 0.2;
+    // options_gd.max_search  = 6;
 
     DescentOptions options_gd_coarse = options_gd;
     options_gd_coarse.max_iter    = 5;
@@ -46,14 +46,8 @@ int main()
 
     Vector<double> y0(GP_fine.n_dofs());
     y0 = 1.0;  // starting value should be non-zero
-    unsigned int n_cycles = 4;
 
-    EnergyOracle oracle_fine(GP_fine.get_problem(), options.beta);
-    EnergyOracle oracle_coarse(GP_coarse.get_problem(), options.beta);
-
-    full_approximation_scheme(oracle_coarse, oracle_fine,
-        GP_coarse.get_package(), GP_fine.get_package(),
-        GP_coarse.get_problem(), y0, options_gd, options_gd_coarse,
-        n_cycles, std::cout);
+    FullApproximationScheme<dim> FAS(GP_coarse, GP_fine, options.beta);
+    FAS.cycle(y0, std::cout, options_gd, options_gd_coarse);
 }
 
