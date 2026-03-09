@@ -1,4 +1,5 @@
 #include "manifold.h"
+#include "function.h"
 #include "main.h"
 
 using namespace dealii;

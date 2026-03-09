@@ -5,6 +5,7 @@
 #define GPE_MAIN_H
 
 #include "manifold.h"
+#include "function.h"
 #include "lac.h"
 #include "gpe.h"
 #include "grid_operators.h"

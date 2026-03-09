@@ -4,6 +4,7 @@
 #include "gpe.h"
 #include "random.h"
 #include "manifold.h"
+#include "function.h"
 
 #include <fstream>
 #include <fmt/format.h>
