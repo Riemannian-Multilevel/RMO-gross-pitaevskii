@@ -197,6 +197,9 @@ public:
         dst /= n_h;
     }
 
+    unsigned n_fine() const { return transfer.n_fine(); }
+    unsigned n_coarse() const { return transfer.n_coarse(); }
+
 private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
@@ -210,47 +213,30 @@ class VectorTransportBase
 public:
     virtual ~VectorTransportBase() = default;
 
-    // TODO: should the argument be y_fine (target base point?)
-    virtual void vector_prolongation(const Vector<double>& x_coarse,
-                                     const Vector<double>& v,
-                                     Vector<double>& dst) const = 0;
+    /**
+     * @brief Prolongs a tangent vector from the coarse grid to the fine grid.
+     * @param y_fine The actual fine iterate (defines the target tangent space).
+     * @param x_coarse The coarse iterate (defines the source tangent space).
+     * @param v_coarse The vector in T_x S_H to be prolonged.
+     * @param dst_fine [out] The prolonged vector, guaranteed to be in T_y S_h.
+     */
+    virtual void vector_prolongation(const Vector<double>& y_fine,
+                                     const Vector<double>& x_coarse,
+                                     const Vector<double>& v_coarse,
+                                     Vector<double>& dst_fine) const = 0;
 
-    // TODO: should the argument be x_coarse (target base point?)
-    virtual void vector_restriction(const Vector<double>& y_fine,
-                                    const Vector<double>& v,
-                                    Vector<double>& dst) const = 0;
+    /**
+     * @brief Restricts a tangent vector from the fine grid to the coarse grid.
+     * @param x_coarse The actual coarse iterate (defines the target tangent space).
+     * @param y_fine The fine iterate (defines the source tangent space).
+     * @param v_fine The vector in T_y S_h to be restricted.
+     * @param dst_coarse [out] The restricted vector, guaranteed to be in T_x S_H.
+     */
+    virtual void vector_restriction(const Vector<double>& x_coarse,
+                                    const Vector<double>& y_fine,
+                                    const Vector<double>& v_fine,
+                                    Vector<double>& dst_coarse) const = 0;
 };
-
-// template <int dim>
-// class VectorTransportBase
-// {
-// public:
-//     virtual ~VectorTransportBase() = default;
-//
-//     /**
-//      * @brief Prolongs a tangent vector from the coarse grid to the fine grid.
-//      * @param y_fine The actual fine iterate (defines the target tangent space).
-//      * @param x_coarse The coarse iterate (defines the source tangent space).
-//      * @param v_coarse The vector in T_x S_H to be prolonged.
-//      * @param dst_fine [out] The prolonged vector, guaranteed to be in T_y S_h.
-//      */
-//     virtual void vector_prolongation(const Vector<double>& y_fine,
-//                                      const Vector<double>& x_coarse,
-//                                      const Vector<double>& v_coarse,
-//                                      Vector<double>& dst_fine) const = 0;
-//
-//     /**
-//      * @brief Restricts a tangent vector from the fine grid to the coarse grid.
-//      * @param x_coarse The actual coarse iterate (defines the target tangent space).
-//      * @param y_fine The fine iterate (defines the source tangent space).
-//      * @param v_fine The vector in T_y S_h to be restricted.
-//      * @param dst_coarse [out] The restricted vector, guaranteed to be in T_x S_H.
-//      */
-//     virtual void vector_restriction(const Vector<double>& x_coarse,
-//                                     const Vector<double>& y_fine,
-//                                     const Vector<double>& v_fine,
-//                                     Vector<double>& dst_coarse) const = 0;
-// };
 
 // Coarse correction term:
 //    w_k <- grad_M E_H(x_k) - R_{x_k} (grad_M E_h(y_k))
@@ -259,11 +245,12 @@ void coarse_correction(const VectorTransportBase<dim>& transport,
                        const Vector<double>& x_grad_coarse,
                        const Vector<double>& y_grad_fine,
                        const Vector<double>& x_coarse,
+                       const Vector<double>& y_fine,
                        Vector<double>& dst)
 {
     Vector<double> y_grad_restr(x_grad_coarse.size());
-    // TODO: 3-input interface for projection + differentiation transports
-    transport.vector_restriction(x_coarse, y_grad_fine, y_grad_restr);
+    // 3-input interface for projection + differentiation transports
+    transport.vector_restriction(x_coarse, y_fine, y_grad_fine, y_grad_restr);
 
     dst = x_grad_coarse;
     dst.add(-1.0, y_grad_restr);
@@ -281,29 +268,23 @@ public:
         , transfer(I), point_transfer(pt)
     {}
 
-    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
-        transfer.to_fine_mesh(v, Iv);
-
-        // Base point for fine tangent space
-        // Vector<double> Px(transfer.n_fine());
-        // point_transfer.prolongation(x_coarse, Px);
+        transfer.to_fine_mesh(v_coarse, Iv);
 
         // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
         ellipsoid::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
     }
 
-    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
-        transfer.to_coarse_mesh(v, Iv);
-
-        // Base point for coarse tangent space
-        // Vector<double> Ry(transfer.n_coarse());
-        // point_transfer.restriction(y_fine, Ry);
+        transfer.to_coarse_mesh(v_fine, Iv);
 
         // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
         ellipsoid::project_onto_tangent_space(x_coarse, M_coarse, Iv, dst);
@@ -323,22 +304,49 @@ template <int dim, typename MatrixType>
 class DifferentialTransport : public VectorTransportBase<dim>
 {
 public:
-    DifferentialTransport(const ManifoldTransfer<dim, MatrixType>& pt)
-        : point_transfer(pt)
+    DifferentialTransport(const ManifoldTransfer<dim, MatrixType>& pt,
+                          const MatrixType& M_f, const MatrixType& M_c)
+        : point_transfer(pt), M_fine(M_f), M_coarse(M_c)
     {}
 
-    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v_coarse,
+                             Vector<double>& dst) const
     {
-        point_transfer.diff_prolongation(x_coarse, v, dst);
+        point_transfer.diff_prolongation(x_coarse, v_coarse, dst);
     }
 
-    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>& x_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
-        point_transfer.diff_restriction(y_fine, v, dst);
+        // Differential D_p(x): T_x S_H -> T_p(x) S_h
+        Vector<double> D_px(point_transfer.n_fine());
+        vector_prolongation(x_coarse, v_coarse, D_px);
+
+        // Vector transport T_p(x) S_h -> T_y S_h
+        ellipsoid::project_onto_tangent_space(y_fine, M_fine, D_px, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v_fine,
+                            Vector<double>& dst) const
+    {
+        point_transfer.diff_restriction(y_fine, v_fine, dst);
+    }
+
+    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>& y_fine,
+        const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Differential D_r(y): T_y S_h -> T_r(y) S_H
+        Vector<double> D_ry(point_transfer.n_coarse());
+        vector_restriction(y_fine, v_fine, D_ry);
+
+        // Vector transport T_r(y) S_H -> T_x S_H
+        ellipsoid::project_onto_tangent_space(x_coarse, M_coarse, D_ry, dst);
     }
 
 private:
     const ManifoldTransfer<dim, MatrixType>& point_transfer;
+    const MatrixType& M_fine;
+    const MatrixType& M_coarse;
 };
 
 
@@ -351,12 +359,14 @@ public:
         : point_transfer(pt)
     {}
 
-    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>&, const Vector<double>&,
+                             const Vector<double>&, Vector<double>&) const override
     {
-        point_transfer.diff_prolongation(x_coarse, v, dst);
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
 
-    void vector_restriction(const Vector<double>&, const Vector<double>&, Vector<double>&) const override
+    void vector_restriction(const Vector<double>&, const Vector<double>&,
+                            const Vector<double>&, Vector<double>&) const override
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
@@ -378,12 +388,14 @@ public:
         , transfer(I), point_transfer(pt)
     {}
 
-    void vector_prolongation(const Vector<double>&, const Vector<double>&, Vector<double>&) const override
+    void vector_prolongation(const Vector<double>&, const Vector<double>&,
+                             const Vector<double>&, Vector<double>&) const override
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
 
-    void vector_restriction(const Vector<double>&, const Vector<double>&, Vector<double>&) const override
+    void vector_restriction(const Vector<double>&, const Vector<double>&,
+                            const Vector<double>&, Vector<double>&) const override
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }

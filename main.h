@@ -421,7 +421,7 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
         // Compute coarse correction step
         Vector<double> w(n_coarse);
-        coarse_correction(vector_transport, x_grad_m, y_grad_m, x, w);
+        coarse_correction(vector_transport, x_grad_m, y_grad_m, x, y, w);
         // Set up coarse model
         CoarseOracle<dim> qk(problem_coarse, O_coarse.get_beta(), w, x);
         Vector<double> zk(n_coarse);
@@ -430,7 +430,8 @@ void full_approximation_scheme(Oracle&& O_coarse, Oracle&& O_fine,
         // Compute the search direction, zk <- L_x(zk)
         ellipsoid::retract_inv_by_norm(M_coarse, zk, x);
         Vector<double> dk(n_fine);
-        vector_transport.vector_prolongation(y, zk, dk);
+        // Coarse base point not required for ProjectionTransport
+        vector_transport.vector_prolongation(y, {}, zk, dk);
         // DIAGNOSTIC
         double dd = O_fine.metric(y_grad, dk);
         //double denom = std::sqrt(O_fine.metric(y_grad,y_grad));
