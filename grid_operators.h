@@ -238,8 +238,26 @@ public:
                                     Vector<double>& dst_coarse) const = 0;
 };
 
-// Coarse correction term:
-//    w_k <- grad_M E_H(x_k) - R_{x_k} (grad_M E_h(y_k))
+/**
+ * @brief Computes the coarse grid correction term for a multilevel cycle.
+ *
+ * In Riemannian multilevel optimization, the coarse grid problem is modified so that
+ * its initial gradient matches the restricted fine grid gradient (first-order coherence.)
+ * This function computes the correction vector $w_k$, which acts as a tilt to the coarse
+ * energy landscape.
+ *
+ * Mathematically, the correction term is defined as the difference between the actual
+ * coarse gradient and the restricted fine gradient:
+ * $$w_k = \nabla_M E_H(x_H) - \mathcal{T}_{h \to H}(\nabla_M E_h(y_h))$$
+ *
+ * @tparam dim The spatial dimension of the problem.
+ * @param transport The vector transport strategy used to move tangent vectors between grids.
+ * @param x_grad_coarse The gradient of the coarse energy evaluated at the coarse base point, $\nabla_M E_H(x_H)$.
+ * @param y_grad_fine The gradient of the fine energy evaluated at the fine base point, $\nabla_M E_h(y_h)$.
+ * @param x_coarse The target coarse base point $x_H \in \mathcal{S}_H$.
+ * @param y_fine The source fine base point $y_h \in \mathcal{S}_h$.
+ * @param dst [out] The computed correction vector $w_k \in T_{x_H} \mathcal{S}_H$.
+ */
 template <int dim>
 void coarse_correction(const VectorTransportBase<dim>& transport,
                        const Vector<double>& x_grad_coarse,
@@ -256,7 +274,24 @@ void coarse_correction(const VectorTransportBase<dim>& transport,
     dst.add(-1.0, y_grad_restr);
 }
 
-// Strategy A: Transport via orthogonal projection (M-metric)
+
+/**
+ * @brief Strategy for vector transport via ambient space transfer and orthogonal projection.
+ * This class implements the `VectorTransportBase` interface using the standard projection
+ * strategy. Tangent vectors are first transferred as standard Euclidean vectors in the
+ * ambient space $\mathbb{R}^n$, and then forcefully projected onto the target tangent
+ * space using the mass-metric orthogonal projector.
+ *
+ * This strategy is highly efficient as it does not require computing the exact differentials
+ * of the manifold restriction/prolongation maps.
+ *
+ * @note Because the ambient interpolation transfers the vector directly to the target space
+ * grid, this strategy only requires the *target* base point to define the final tangent space.
+ * The *source* base points in the overridden methods are ignored.
+ *
+ * @tparam dim The spatial dimension of the problem.
+ * @tparam MatrixType The matrix type defining the ambient space metric (typically the Mass matrix).
+ */
 template <int dim, typename MatrixType>
 class ProjectionTransport : public VectorTransportBase<dim>
 {
@@ -268,6 +303,12 @@ public:
         , transfer(I), point_transfer(pt)
     {}
 
+    /**
+     * @brief Prolongs a tangent vector using ambient interpolation and M-metric projection.
+     * Computes:
+     * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
+     * where $I_H^h$ is the standard linear prolongation operator.
+     */
     void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
@@ -279,6 +320,12 @@ public:
         ellipsoid::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
     }
 
+    /**
+     * @brief Restricts a tangent vector using ambient restriction and M-metric projection.
+     * Computes:
+     * $$\mathcal{T}_{h \to H}(v) = P_{T_x \mathcal{S}_H} (I_h^H v)$$
+     * where $I_h^H$ is the standard linear restriction operator.
+     */
     void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
     {
@@ -299,7 +346,21 @@ private:
 };
 
 
-// Strategy B: Transport via push-forward
+/**
+ * @brief Strategy for vector transport via differentials.
+ * This class implements the `VectorTransportBase` interface by computing the differential
+ * of the manifold point transfer maps (restriction $r$ and prolongation $p$).
+ *
+ * The push-forward of a vector maps it to the tangent space of the
+ * mapped point (e.g., $D p(x)[v] \in T_{p(x)} \mathcal{S}_h$).
+ * Since the target point of the solver might differ (e.g., $y_h \neq p(x_H)$),
+ * this class employs a two-step interface:
+ * 1. Evaluate the differential.
+ * 2. Apply a corrective orthogonal projection to move the vector to the target tangent space.
+ *
+ * @tparam dim The spatial dimension of the problem.
+ * @tparam MatrixType The matrix type defining the metric.
+ */
 template <int dim, typename MatrixType>
 class DifferentialTransport : public VectorTransportBase<dim>
 {
@@ -315,6 +376,13 @@ public:
         point_transfer.diff_prolongation(x_coarse, v_coarse, dst);
     }
 
+    /**
+     * @brief Prolongs a tangent vector by computing the differential of the prolongation map.
+     * This two-step method computes the differential and then performs a corrective
+     * vector transport to the fine target space:
+     * $$\hat{v} = D p(x_H)[v_H] \quad \in T_{p(x_H)} \mathcal{S}_h$$
+     * $$\mathcal{T}_{H \to h}(v_H) = P_{T_y \mathcal{S}_h} (\hat{v})$$
+     */
     void vector_prolongation(const Vector<double>& y_fine, const Vector<double>& x_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
@@ -332,6 +400,13 @@ public:
         point_transfer.diff_restriction(y_fine, v_fine, dst);
     }
 
+    /**
+     * @brief Restricts a tangent vector by computing the differential of the restriction map.
+     * This two-step method computes the differential and then performs a corrective
+     * vector transport to the coarse target space:
+     * $$\hat{v} = D r(y_h)[v_h] \quad \in T_{r(y_h)} \mathcal{S}_H$$
+     * $$\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})$$
+     */
     void vector_restriction(const Vector<double>& x_coarse, const Vector<double>& y_fine,
         const Vector<double>& v_fine, Vector<double>& dst) const override
     {

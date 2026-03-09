@@ -39,8 +39,8 @@ int main()
     constexpr int dim = 2;
     Square<dim> V;
 
-    unsigned int n_coarse_levels = 10;
-    unsigned int n_fine_levels = 11;
+    unsigned int n_coarse_levels = 8;
+    unsigned int n_fine_levels = 9;
     EnergySimulator<dim> GP_coarse(V, options, n_coarse_levels);
     EnergySimulator<dim> GP_fine(V, options, n_fine_levels);
 
