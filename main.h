@@ -16,10 +16,9 @@ namespace gpe
 // TODO: define interface and move to `objective.h`, merge functions from `manifold.h`
 //       support other preconditioner types
 /**
- * @brief Oracle for the Gross-Pitaevskii energy functional.
- * This class provides the interface required by the @ref gradient_descent algorithm.
- * It translates physical concepts (matrices and assembly) into optimization concepts
- * (functional values and gradients).
+ * @brief Base Oracle for the Gross-Pitaevskii energy functional.
+ * This class translates physical concepts (matrices and assembly) into optimization concepts
+ * (functional values and gradients) for use in Riemannian descent algorithms.
  *
  * @tparam dim The spatial dimension of the problem.
  */
@@ -28,23 +27,13 @@ class OracleBase
 {
 public:
     static constexpr int dimension = dim;
-    /** @brief Alias for the combined linear operator type. */
-    // Light-weight wrapper for the matrices stored in GrossPitaevskiiProblem
     using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
-    /** @brief Alias for the preconditioned inverse operator type. */
-    // Heavy-weight wrapper for matrix preconditioning
-    using InverseOpType = PreconditionInverse<OperatorType,SparseMatrix<double>>;
+    using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
     /**
      * @brief Constructs the Oracle by referencing an existing GPE problem.
-     * @param problem_ Reference to the assembled GPE problem.
-     * @param beta_ Non-linear coupling constant (interaction strength).
-     * @param options_ Solver and tolerance options for the inner iteration.
-     * @note The Oracle does not own the problem; it holds a reference. The Problem object
-     * must outlive this Oracle.
+     * @note The Oracle holds a reference; the Problem object must outlive this Oracle.
      */
-    // TODO: LinearOptions instead of DescentOptions (separate inner solve and rgd options)
-    //       dealii::ObserverPointer instead of const reference for `problem`
     OracleBase(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
                DescentOptions options_)
         : problem(problem_)
@@ -53,30 +42,28 @@ public:
         , A(problem.get_operator_A(beta))
         , A_inv(A, options.solver, options.precond, options.max_inner, options.tol_inner)
     {
-        A_inv.update_static(problem.get_A0());     // for ILU or AMG
+        A_inv.update_static(problem.get_A0());
     }
+
     virtual ~OracleBase() = default;
 
-    // TODO: store `x` argument
-    //       set markers `needs_assembly=true`, `need_gradient=true`
+    /**
+     * @brief Updates the problem state and preconditioner for a new evaluation point.
+     * @note This method is NOT const, as it mutates the internal operator state.
+     */
     void update(const Vector<double>& x)
     {
-        problem.assemble_nonlinear_term(x);        // update M_pp <- A
-
-        A_inv.update_dynamic(A.diagonal());   // updates preconditioner stored in A_inv
+        problem.assemble_nonlinear_term(x);
+        A_inv.update_dynamic(A.diagonal());
     }
 
     /**
      * @brief Retracts a tangent vector back to the unit-mass manifold.
-     * \f[ R_x(z) = \frac{x + z}{\|x + z\|_M} \f]
-     * @param z The update vector.
-     * @param x The base vector (modified in place).
-     * @param factor Step size scaling factor.
+     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
      */
     void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const
     {
-        const auto M = problem.get_M();
-        ellipsoid::retract_by_norm(M, z, x, factor);
+        ellipsoid::retract_by_norm(problem.get_M(), z, x, factor);
     }
 
     void retract(const Vector<double>& z, const Vector<double>& x,
@@ -86,33 +73,31 @@ public:
         retract(z, output, factor);
     }
 
-    auto get_M() { return problem.get_operator_M(); }
-    auto get_A() const { return problem.get_operator_A(beta); }
+    // Accessors
+    const auto& get_M() const { return problem.get_M(); }
+    const auto& get_A() const { return A; }
     double get_beta() const { return beta; }
     unsigned n_dofs() const { return problem.n_dofs(); }
 
-    // Problem / metric-dependent methods
+    // Pure virtual interface
+    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
+    //       check marker `needs_assembly`
     virtual double value(const Vector<double>& x) const = 0;
 
+    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
+    //       check marker `needs_gradient
     virtual unsigned gradient(const Vector<double>& x, Vector<double>& output) const = 0;
 
     virtual double metric(const Vector<double>& y, const Vector<double>& z) const = 0;
-
     virtual iteration::State residual(const Vector<double>& x) const = 0;
-
     virtual bool check_convergence(const iteration::State& current,
                                    const iteration::State& previous) const { return false; };
 
-private:
-    /** @brief Reference to the problem matrices. */
+protected:
     const GrossPitaevskiiProblem<dim>& problem;
-    /** @brief Interaction strength parameter. */
     double beta;
     DescentOptions options;
-
-    /** @brief Total operator \f$ A_0 + \beta M_{pp} \f$. */
     OperatorType A;
-    /** @brief Inverse operator \f$(A_0 + \beta M_{pp})^{-1} \f$. */
     InverseOpType A_inv;
 };
 
@@ -121,75 +106,46 @@ template <int dim>
 class EnergyOracle : public OracleBase<dim>
 {
 public:
+    // Inherit constructors from OracleBase
     using OracleBase<dim>::OracleBase;
 
     /**
      * @brief Computes the Gross-Pitaevskii energy functional value.
-     * \f[ E(\phi) = \langle \phi, A_0 \phi \rangle + \frac{\beta}{2} \langle \phi, M_{pp}(\phi) \phi \rangle \f]
-     * @param x The current state vector.
-     * @return The energy value.
+     * $$ E(\phi) = \langle \phi, A_0 \phi \rangle + \frac{\beta}{2} \langle \phi, M_{pp}(\phi) \phi \rangle $$
      */
-    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
-    //       check marker `needs_assembly`
     double value(const Vector<double>& x) const override
     {
-        const auto A0  = this->problem.get_A0();
-        const auto Mpp = this->problem.get_Mpp();
-
-        return ellipsoid::function_value(x, A0, Mpp, this->beta);
+        return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
     /**
-     * @brief Computes the Riemannian gradient.
-     * Solves the inner linear system \f$ A^{-1} \nabla E \f$ using the @ref InverseMatrix
-     * wrapper and the provided solver options.
-     * @param x The current state vector.
-     * @param output Vector to store the computed gradient.
-     * @return The number of inner iterations performed by the linear solver.
+     * @brief Computes the Riemannian gradient in the A-metric.
+     * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
      */
-    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
-    //       check marker `needs_gradient`
-    //       enum for selecting metric
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        const auto M = this->problem.get_M();
-        ellipsoid::gradient(this->A_inv, M, x, output);
-
+        ellipsoid::gradient(this->A_inv, this->problem.get_M(), x, output);
         return this->A_inv.control().last_step();
     }
 
-    /**
-     * @brief Computes the iteration state (eigenvalue, residual, etc.) at point x.
-     */
     iteration::State residual(const Vector<double>& x) const override
     {
-        const auto M = this->problem.get_M();
-
-        return iteration::residual(x, this->A, M);
+        return iteration::residual(x, this->A, this->problem.get_M());
     }
 
     double metric(const Vector<double>& y, const Vector<double>& z) const override
     {
         AssertDimension(y.size(), z.size());
-
         Vector<double> Az(z.size());
         this->A.vmult(Az, y);
-        return y*Az;
+        return y * Az;
     }
 
-    /**
-     * @brief Checks if the optimization has converged.
-     * Convergence is achieved if both the eigenvalue (\f$ \lambda \f$) and the
-     * non-linear residual fall below specified tolerances.
-     * @param current
-     * @param previous
-     */
     bool check_convergence(const iteration::State& current,
                            const iteration::State& previous) const override
     {
         const double lmb_diff   = std::abs(current.lambda - previous.lambda);
         const double lmb_factor = 1.0 + std::abs(current.lambda);
-
         return (lmb_diff < this->options.tol_lambda * lmb_factor && current.residual < this->options.tol_residual);
     }
 };
@@ -199,6 +155,14 @@ template <int dim>
 class CoarseOracle : public OracleBase<dim>
 {
 public:
+    // Explicit constructor to initialize the correction parameters
+    CoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
+                 DescentOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , w(problem_.n_dofs())
+        , phi(problem_.n_dofs())
+    {}
+
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
         w = w_new;
@@ -207,34 +171,30 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        const auto M   = this->problem.get_M();
-        const auto A0  = this->problem.get_A0();
-        const auto Mpp = this->problem.get_Mpp();
-
-        return coarse::function_value(x, phi, w, M, A0, Mpp, this->beta);
+        return coarse::function_value(x, phi, w, this->problem.get_M(),
+                                      this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
-    // TODO: the coarse model has the coarse correction in the M-metric.
-    //       either formulate the coarse correction in the A-metric, or compute the M-gradient?
+    /**
+     * @brief Computes the coarse model gradient in the M-metric.
+     * $$ \nabla_M q_k(x) = \nabla_M E_H(x) - w $$
+     */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        const auto M = this->problem.get_M();
-        coarse::gradient(M, this->A_inv, x, phi, w, output);
-
-        return this->A_inv.control().last_step();
+        coarse::gradient(this->problem.get_M(), this->A_inv, x, phi, w, output);
+        //coarse::gradient(this->problem.get_M(), x, phi, w, output);
+        return 0; // No linear solver needed for pure M-gradient
     }
 
-    // TODO: the coarse model is formulated in the M-metric
     double metric(const Vector<double>& y, const Vector<double>& z) const override
     {
+        // Metric for line search evaluation on the coarse grid
         AssertDimension(y.size(), z.size());
-
         Vector<double> Az(z.size());
         this->A.vmult(Az, y);
-        return y*Az;
+        return y * Az;
     }
 
-    // XXX: methods for gradient_descent()
     iteration::State residual(const Vector<double>& x) const override
     {
         return {.energy=value(x)};
@@ -244,6 +204,7 @@ private:
     Vector<double> w;
     Vector<double> phi;
 };
+
 
 /**
  * @brief Orchestrator for Gross-Pitaevskii simulations.
