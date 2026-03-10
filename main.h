@@ -13,8 +13,7 @@
 namespace gpe
 {
 
-// TODO: define interface and move to `objective.h`, merge functions from `manifold.h`
-//       support other preconditioner types
+// TODO: refactor into UnitMassSphere and Oracle
 /**
  * @brief Base Oracle for the Gross-Pitaevskii energy functional.
  * This class translates physical concepts (matrices and assembly) into optimization concepts
@@ -82,16 +81,16 @@ public:
     // Pure virtual interface
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_assembly`
-    virtual double value(const Vector<double>& x) const = 0;
+    virtual double value(const Vector<double>&) const = 0;
 
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
-    virtual unsigned gradient(const Vector<double>& x, Vector<double>& output) const = 0;
+    virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
 
-    virtual double metric(const Vector<double>& y, const Vector<double>& z) const = 0;
-    virtual iteration::State residual(const Vector<double>& x) const = 0;
-    virtual bool check_convergence(const iteration::State& current,
-                                   const iteration::State& previous) const { return false; };
+    virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
+    virtual iteration::State residual(const Vector<double>&) const = 0;
+    virtual bool check_convergence(const iteration::State&,
+                                   const iteration::State&) const { return false; };
 
 protected:
     const GrossPitaevskiiProblem<dim>& problem;
@@ -258,7 +257,7 @@ public:
         // Create the oracle (light-weight object, references problem matrices)
         // TODO: separate linear options (for inner solve/gradient computation)
         //       and descent options (tolerance and step size)
-        OracleBase<dim> oracle(problem, beta, options_gd);
+        EnergyOracle<dim> oracle(problem, beta, options_gd);
 
         // Riemannian gradient descent
         // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
@@ -277,9 +276,9 @@ public:
     const dealii::AffineConstraints<double>&
     get_constraints() const { return package.get_constraints(); }
 
-    OracleBase<dim> get_oracle(double beta, DescentOptions options_gd) const
+    EnergyOracle<dim> get_oracle(double beta, DescentOptions options_gd) const
     {
-        return OracleBase<dim>(problem, beta, options_gd);
+        return EnergyOracle<dim>(problem, beta, options_gd);
     }
 
     auto get_M() const { return problem.get_operator_M(); }
@@ -381,28 +380,27 @@ public:
                             const EnergySimulator<dim>& GP_fine,
                             double beta, DescentOptions options, DescentOptions options_coarse)
         // Function evaluation
-        : O_coarse(GP_coarse.get_oracle(beta, options_coarse))
+        : options(options), options_coarse(options_coarse)
+        , O_coarse(GP_coarse.get_oracle(beta, options_coarse))
         , O_fine(GP_fine.get_oracle(beta, options))
         , qk(GP_coarse.get_problem(), beta, {}, {})
 
         // Problem components
         , n_coarse(GP_coarse.n_dofs())
         , n_fine(GP_fine.n_dofs())
-        , M_coarse(GP_coarse.get_M()), M_fine(GP_fine.get_M())
-        , A_coarse(GP_coarse.get_A(beta)), A_fine(GP_fine.get_A(beta))
-        //, M_inv_coarse(GP_coarse.get_M_inv(options)), M_inv_fine(GP_fine.get_M_inv(options))
-
-        // Grid operators
         , transfer(GP_coarse.get_dofs(), GP_fine.get_dofs(), GP_coarse.get_constraints(), GP_fine.get_constraints())
         , point_transfer(M_coarse, M_fine, transfer)
-        , vector_transport(M_coarse, M_fine, transfer, point_transfer)
+        , vector_transport(M_coarse, M_fine, transfer, point_transfer), M_coarse(GP_coarse.get_M())
+
+        // Grid operators
+        , M_fine(GP_fine.get_M())
+        , A_coarse(GP_coarse.get_A(beta))
+        , A_fine(GP_fine.get_A(beta))
     {} // TODO: Set up preconditioner for M
 
     void cycle(const Vector<double>& y0, std::ostream& os,
-               DescentOptions options, DescentOptions options_coarse,
                unsigned n_pre = 1, unsigned n_post = 1)
     {
-        dealii::Timer timer;
         timer.reset();
 
         // 0. Initialize oracle and coarse model
@@ -454,9 +452,10 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
+    DescentOptions options, options_coarse;
 
     // Function evaluation
-    OracleBase<dim> O_coarse, O_fine;
+    EnergyOracle<dim> O_coarse, O_fine;
     CoarseOracle<dim> qk;
     unsigned n_coarse, n_fine;
 

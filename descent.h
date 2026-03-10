@@ -50,7 +50,7 @@ struct SolverInfo {
 // TODO: vector x is updated in place, even for tentative steps, since no copy
 //       of the problem state (large sparse matrix term Mpp) is made
 template <typename VectorType, typename OracleType>
-double armijo_line_search(const OracleType& oracle,
+double armijo_line_search(OracleType& oracle,
                           VectorType& x,
                           const VectorType& eta,
                           const double fx,
@@ -93,14 +93,14 @@ double armijo_line_search(const OracleType& oracle,
 }
 
 //! Riemannian gradient descent for the GPE energy minimization
-//! @param O Oracle for function value and (Riemannian) gradient
+//! @param oracle Oracle for function value and (Riemannian) gradient
 //! @param x0 Starting value
 //! @param options Termination criteria
 //! @param os Output stream for diagnostics
 //! @return
-template <typename Oracle>
+template <typename OracleType>
 Vector<double>
-gradient_descent(Oracle&& O, const Vector<double>& x0,
+gradient_descent(OracleType& oracle, const Vector<double>& x0,
                  DescentOptions options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
@@ -116,9 +116,9 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
 
     Vector x(x0);
     dealii::ConvergenceTable convergence_table;
-    O.update(x);
-    current_state = O.residual(x);
-    double Ex = O.value(x);
+    oracle.update(x);
+    current_state = oracle.residual(x);
+    double Ex = oracle.value(x);
     current_state.energy = Ex;
     unsigned int lac_iter = 0;  // number of iterations in inner solver taken
 
@@ -142,7 +142,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
-        if (O.check_convergence(current_state, previous_state, options)) {
+        if (oracle.check_convergence(current_state, previous_state)) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break;
@@ -153,29 +153,29 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
         //options.tol_inner = std::min(options.tol_inner, 0.1 * current_state.residual);
-        lac_iter = O.gradient(x, g, options);
+        lac_iter = oracle.gradient(x, g);
         double step_size = options.step_size;
         // Retraction: x <- (x - h g) / ||x - h g||_M
         if (options.line_search) {
             // TODO: support other descent directions (i.e. coarse descent)
             Vector eta(g);  // search direction
             eta *= -1.0;
-            double dd = O.metric(g, eta); // <grad f(x), -grad f(x)>_x
+            double dd = oracle.metric(g, eta); // <grad f(x), -grad f(x)>_x
             // runs O.retract(), O.update()
-            double h = armijo_line_search(O, x, eta, Ex, dd, options, 1e-4);
+            double h = armijo_line_search(oracle, x, eta, Ex, dd, options, 1e-4);
             //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
             step_size = h;
         }
         else {
-            O.retract(g, x, -options.step_size);
-            O.update(x);
+            oracle.retract(g, x, -options.step_size);
+            oracle.update(x);
         }
         // ---- End timed section
         timer.stop();
 
-        current_state = O.residual(x);
-        Ex = O.value(x);
+        current_state = oracle.residual(x);
+        Ex = oracle.value(x);
         current_state.energy = Ex;
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", lac_iter);

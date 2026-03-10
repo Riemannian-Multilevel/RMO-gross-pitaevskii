@@ -48,7 +48,7 @@ int main()
     Vector<double> y0(GP_fine.n_dofs());
     y0 = 1.0;  // starting value should be non-zero
 
-    FullApproximationScheme<dim> FAS(GP_coarse, GP_fine, options.beta);
-    FAS.cycle(y0, std::cout, options_gd, options_gd_coarse);
+    FullApproximationScheme<dim> FAS(GP_coarse, GP_fine, options.beta, options_gd, options_gd_coarse);
+    FAS.cycle(y0, std::cout);
 }
 

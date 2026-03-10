@@ -32,12 +32,12 @@ class GrossPitaevskiiEnergy
 public:
     // TODO: constructor which takes a LinearCombination (object with matrix/operator pointers)
     //       such that matrices can be assembled elsewhere, and value/gradient remain accurate
-    double value(const Vector<double>& x)
+    double value(const Vector<double>&)
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
 
-    Vector<double> gradient(const Vector<double>& x)
+    Vector<double> gradient(const Vector<double>&)
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
@@ -46,12 +46,12 @@ public:
 template <int dim>
 class NashCoarseModel
 {
-    double value(const Vector<double>& x)
+    double value(const Vector<double>&)
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
 
-    Vector<double> gradient(const Vector<double>& x)
+    Vector<double> gradient(const Vector<double>&)
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
