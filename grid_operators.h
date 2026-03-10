@@ -270,9 +270,6 @@ void coarse_correction(const VectorTransportBase<dim>& transport,
  * ambient space $\mathbb{R}^n$, and then forcefully projected onto the target tangent
  * space using the mass-metric orthogonal projector.
  *
- * This strategy is highly efficient as it does not require computing the exact differentials
- * of the manifold restriction/prolongation maps.
- *
  * @note Because the ambient interpolation transfers the vector directly to the target space
  * grid, this strategy only requires the *target* base point to define the final tangent space.
  * The *source* base points in the overridden methods are ignored.
@@ -328,6 +325,50 @@ public:
 private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
+
+    const LinearTransfer<dim>& transfer;
+    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+};
+
+
+template <int dim, typename MatrixType, typename InverseMatrixType>
+class EnergyProjectionTransport : public VectorTransportBase<dim>
+{
+public:
+    EnergyProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
+                              const InverseMatrixType& A_inv_c, const InverseMatrixType& A_inv_f,
+                              const LinearTransfer<dim>& I,
+                              const ManifoldTransfer<dim, MatrixType>& pt)
+    : M_coarse(M_c), M_fine(M_f)
+    , A_inv_coarse(A_inv_c), A_inv_fine(A_inv_f)
+    , transfer(I), point_transfer(pt)
+    {}
+
+    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
+                         const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Tangent vector interpolated to fine ambient space
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v_coarse, Iv);
+
+        // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in A-metric
+        ellipsoid::project_onto_tangent_space(A_inv_fine, y_fine, M_fine, Iv, dst);
+    }
+
+    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
+                        const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Tangent vector restricted to coarse ambient space
+        Vector<double> Iv(transfer.n_coarse());
+        transfer.to_coarse_mesh(v_fine, Iv);
+
+        // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H in A-metric
+        ellipsoid::project_onto_tangent_space(A_inv_coarse, x_coarse, M_coarse, Iv, dst);
+    }
+
+private:
+    const MatrixType& M_coarse, M_fine;
+    const InverseMatrixType& A_inv_coarse, A_inv_fine;
 
     const LinearTransfer<dim>& transfer;
     const ManifoldTransfer<dim, MatrixType>& point_transfer;

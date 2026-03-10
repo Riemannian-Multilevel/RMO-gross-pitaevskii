@@ -136,6 +136,22 @@ public:
         }
     }
 
+    Vector<double> diagonal() const
+    {
+        Vector<double> diag(m());
+        diag = 0.0;
+
+        for (const auto& pair : m_components) {
+            const double weight = pair.first;
+            const auto* matrix = pair.second;
+
+            for (unsigned row = 0; row < m(); ++row) {
+                diag[row] += weight*matrix->diag_element(row);
+            }
+        }
+        return diag;
+    }
+
 private:
     /** @brief Collection of weights and matrix pointers. */
     std::vector<std::pair<double, const MatrixType*>> m_components;
@@ -283,14 +299,16 @@ private:
  *
  * @tparam MatrixType Represents an explicitly assembled sparse matrix
  * (e.g., `dealii::SparseMatrix<double>`). This strict requirement exists because
- * preconditioners like ILU, Jacobi, and SSOR must directly access explicit matrix
- * elements (like the diagonal or triangular components) during setup.
+ * preconditioners like ILU must directly access explicit matrix elements
+ * during the setup phase.
  */
-// TODO pass on additional data to preconditioner, instead of fixing parameters
+// TODO pass on additional data to preconditioner, instead of fixed parameters
 template <typename OperatorType, typename MatrixType>
 class PreconditionInverse
 {
 public:
+    using VectorType = Vector<double>;
+
     /**
      * @brief Constructs the generic preconditioned solver.
      * @param method The Krylov method to use (e.g., CG, MINRES, GMRES).
@@ -315,7 +333,6 @@ public:
      * @brief Builds preconditioners that only need to be set up once.
      * e.g., ILU or AMG on the stationary matrix A0.
      */
-    // TODO: function name
     void update_static(const MatrixType& static_matrix)
     {
         if (m_precond_type == Precondition::SPARSE_ILU) {
@@ -328,34 +345,35 @@ public:
 
     /**
      * @brief Rebuilds dynamic preconditioners using the latest assembled matrix.
+     * To minimize storage usage and avoid copies of large matrix objects, we
+     * assume a diagonal preconditioner. The diagonal can arise from the
+     * preconditioned matrix itself, or from mass lumping.
      */
-    // TODO: function name
-    void update_dynamic(const MatrixType& dynamic_matrix)
+    void update_dynamic(const Vector<double>& diag)
     {
-        if (m_precond_type == Precondition::JACOBI) {
-            typename dealii::PreconditionJacobi<MatrixType>::AdditionalData data(0.6);
-            jacobi_precond.initialize(dynamic_matrix, data);
-        }
-        else if (m_precond_type == Precondition::SSOR) {
-            typename dealii::PreconditionSSOR<MatrixType>::AdditionalData data(1.2);
-            ssor_precond.initialize(dynamic_matrix, data);
+        diag_matrix.reinit(diag);
+
+        if (m_precond_type == Precondition::DIAGONAL) {
+            typename dealii::PreconditionJacobi<dealii::DiagonalMatrix<VectorType>>::AdditionalData data(0.6);
+            jacobi_precond.initialize(diag_matrix, data);
         }
     }
 
     /** @brief Solves op * dst = src. */
-    template <typename VectorType>
     void vmult(VectorType& dst, const VectorType& src) const
     {
         switch (m_precond_type) {
             case Precondition::SPARSE_ILU:
                 solve_with(m_op, dst, src, ilu_precond);
-            case Precondition::JACOBI:
+                break;
+            case Precondition::DIAGONAL:
                 solve_with(m_op, dst, src, jacobi_precond);
-            case Precondition::SSOR:
-                solve_with(m_op, dst, src, ssor_precond);
+                break;
             case Precondition::NONE:
+                break;
             default:
                 solve_with(m_op, dst, src, dealii::PreconditionIdentity());
+                break;
         }
     }
 
@@ -367,9 +385,7 @@ private:
     void solve_with(const OperatorType& matrix, VectorType& dst, const VectorType& src,
                     const PrecondType& precond) const
     {
-        // InverseMatrix now takes the decoupled parameters perfectly
-        const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_method,
-            precond, m_max_iter, m_reltol);
+        const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_method, precond, m_max_iter, m_reltol);
 
         inv.vmult(dst, src);
         m_control = inv.control();
@@ -382,8 +398,8 @@ private:
     double       m_reltol;
 
     dealii::SparseILU<double> ilu_precond;
-    dealii::PreconditionJacobi<MatrixType> jacobi_precond;
-    dealii::PreconditionSSOR<MatrixType> ssor_precond;
+    dealii::PreconditionJacobi<dealii::DiagonalMatrix<VectorType>> jacobi_precond;
+    dealii::DiagonalMatrix<VectorType> diag_matrix;
 
     // Stores the state of the most recent solve_internal call
     mutable SolverControl m_control;

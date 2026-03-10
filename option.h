@@ -20,7 +20,7 @@ BOOST_DESCRIBE_STRUCT(GPE_Options, (),
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
-BOOST_DESCRIBE_ENUM(Precondition, NONE, JACOBI, SSOR, SPARSE_ILU, AMG);
+BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 
 // ---------- MG_Options ----------
@@ -28,13 +28,13 @@ inline po::options_description mg_cli_options() {
     po::options_description d("multilevel options");
     d.add_options()
         ("levels", po::value<int>()->default_value(3),
-        "number of times to globally refine the mesh")
+            "number of times to globally refine the mesh")
         ("multilevel", po::value<bool>()->default_value(false)->implicit_value(true),
-         "enable multilevel (0|1)")
+            "enable multilevel (0|1)")
         ("min-level", po::value<int>()->default_value(0),
-         "minimal level for multilevel")
+            "minimal level for multilevel")
         ("max-level", po::value<int>()->default_value(0),
-         "maximal level for multilevel");
+            "maximal level for multilevel");
     return d;
 }
 
@@ -73,19 +73,19 @@ inline po::options_description gpe_cli_options() {
     po::options_description d("General problem options");
     d.add_options()
         ("degree", po::value<int>()->default_value(1),
-         "polynomial degree for finite element")
+            "polynomial degree for finite element")
         ("dimension", po::value<int>()->default_value(2),
-         "problem dimension")
+            "problem dimension")
         ("order", po::value<std::string>()->default_value("default"),
-         "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
+            "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
         ("boundary", po::value<std::string>()->default_value("neumann"),
-         "boundary constraints (neumann|dirichlet)")
+            "boundary constraints (neumann|dirichlet)")
         ("radius", po::value<double>()->default_value(10.0),
-         "default radius of the cube domain")
+            "default radius of the cube domain")
         ("beta", po::value<double>()->default_value(100.0),
-         "non-linearity factor")
+            "non-linearity factor")
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
-         "type of mesh elements used (quadrilateral|simplex)");
+            "type of mesh elements used (quadrilateral|simplex)");
     return d;
 }
 
@@ -110,23 +110,23 @@ inline po::options_description gd_cli_options() {
     po::options_description d("RGD options");
     d.add_options()
         ("solver", po::value<std::string>()->default_value("gmres"),
-         "sparse solver (gmres|minres|cg)")
-        ("precond", po::value<std::string>()->default_value("sparse_ilu"),
-         "preconditioner (none|jacobi|ssor|sparse_ilu|amg)")
+            "sparse solver (gmres|minres|cg)")
+        ("precond", po::value<std::string>()->default_value("none"),
+            "preconditioner (none|diagonal|sparse_ilu|amg)")
         ("max-iter", po::value<int>()->default_value(25),
-         "maximum number of iterations")
+            "maximum number of iterations")
         ("max-inner", po::value<int>()->default_value(100),
-         "maximum number of iterations for sparse solver")
+            "maximum number of iterations for sparse solver")
         ("max-search", po::value<int>()->default_value(20),
             "maximum number of iterations for line search")
         ("tol-residual", po::value<double>()->default_value(1e-4),
-         "tolerance for M-residual")
+            "tolerance for M-residual")
         ("tol-inner", po::value<double>()->default_value(1e-6),
-         "tolerance for sparse solver, relative to right-hand side")
+            "tolerance for sparse solver, relative to right-hand side")
         ("tol-lambda", po::value<double>()->default_value(1e-8),
-         "tolerance for rayleigh quotient")
+            "tolerance for rayleigh quotient")
         ("step-size", po::value<double>()->default_value(1.0),
-         "step size for RGD")
+            "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
             "use armijo line search")
         ("ls-alpha", po::value<double>()->default_value(1.0),

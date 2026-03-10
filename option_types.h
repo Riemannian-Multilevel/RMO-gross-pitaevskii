@@ -31,8 +31,7 @@ enum class SolverMethod
 enum class Precondition
 {
     NONE,
-    JACOBI,
-    SSOR,
+    DIAGONAL,
     SPARSE_ILU,
     AMG
 };

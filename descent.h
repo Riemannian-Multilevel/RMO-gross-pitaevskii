@@ -129,8 +129,8 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
     convergence_table.add_value("lambda", current_state.lambda);
     convergence_table.add_value("residual", current_state.residual);
     convergence_table.add_value("energy", current_state.energy);
-    convergence_table.add_value("elapsed", 0);  // does not include setup time
     convergence_table.add_value("step",0);
+    convergence_table.add_value("elapsed", 0);  // does not include setup time
 
     // TODO: turn debug printing into logger/verbosity flag in options
     std::cerr << "Iteration: ";
@@ -154,6 +154,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
         //options.tol_inner = std::min(options.tol_inner, 0.1 * current_state.residual);
         lac_iter = O.gradient(x, g, options);
+        double step_size = options.step_size;
         // Retraction: x <- (x - h g) / ||x - h g||_M
         if (options.line_search) {
             // TODO: support other descent directions (i.e. coarse descent)
@@ -164,18 +165,17 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
             double h = armijo_line_search(O, x, eta, Ex, dd, options, 1e-4);
             //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
-            convergence_table.add_value("step",h);
+            step_size = h;
         }
         else {
             O.retract(g, x, -options.step_size);
             O.update(x);
-            convergence_table.add_value("step",options.step_size);
         }
         // ---- End timed section
         timer.stop();
 
         current_state = O.residual(x);
-        double Ex = O.value(x);
+        Ex = O.value(x);
         current_state.energy = Ex;
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", lac_iter);
@@ -183,6 +183,7 @@ gradient_descent(Oracle&& O, const Vector<double>& x0,
         convergence_table.add_value("lambda", current_state.lambda);
         convergence_table.add_value("residual", current_state.residual);
         convergence_table.add_value("energy", current_state.energy);
+        convergence_table.add_value("step",step_size);
         convergence_table.add_value("elapsed",timer.cpu_time());
 
         // Store current state for the next iteration's delta check
