@@ -33,8 +33,7 @@ public:
      * @brief Constructs the Oracle by referencing an existing GPE problem.
      * @note The Oracle holds a reference; the Problem object must outlive this Oracle.
      */
-    OracleBase(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-               DescentOptions options_)
+    OracleBase(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
         : problem(problem_)
         , beta(beta_)
         , options(options_)
@@ -89,13 +88,11 @@ public:
 
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
     virtual iteration::State residual(const Vector<double>&) const = 0;
-    virtual bool check_convergence(const iteration::State&,
-                                   const iteration::State&) const { return false; };
 
 protected:
     const GrossPitaevskiiProblem<dim>& problem;
     double beta;
-    DescentOptions options;
+    SolverOptions options;
     OperatorType A;
     InverseOpType A_inv;
 };
@@ -129,7 +126,7 @@ public:
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->problem.get_M());
+        return iteration::residual(x, this->A, this->problem.get_operator_M());
     }
 
     double metric(const Vector<double>& y, const Vector<double>& z) const override
@@ -138,14 +135,6 @@ public:
         Vector<double> Az(z.size());
         this->A.vmult(Az, y);
         return y * Az;
-    }
-
-    bool check_convergence(const iteration::State& current,
-                           const iteration::State& previous) const override
-    {
-        const double lmb_diff   = std::abs(current.lambda - previous.lambda);
-        const double lmb_factor = 1.0 + std::abs(current.lambda);
-        return (lmb_diff < this->options.tol_lambda * lmb_factor && current.residual < this->options.tol_residual);
     }
 };
 
@@ -156,10 +145,10 @@ class CoarseOracle : public OracleBase<dim>
 public:
     // Explicit constructor to initialize the correction parameters
     CoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-                 DescentOptions options_)
+                 const Vector<double>& w_, const Vector<double>& phi_,
+                 SolverOptions options_)
         : OracleBase<dim>(problem_, beta_, options_)
-        , w(problem_.n_dofs())
-        , phi(problem_.n_dofs())
+        , w(w_), phi(phi_)
     {}
 
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
@@ -259,9 +248,18 @@ public:
         //       and descent options (tolerance and step size)
         EnergyOracle<dim> oracle(problem, beta, options_gd);
 
+        // Termination criterium
+        auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
+        {
+            const double lmb_diff   = std::abs(current.lambda - previous.lambda);
+            const double lmb_factor = 1.0 + std::abs(current.lambda);
+
+            return (lmb_diff < options_gd.tol_lambda * lmb_factor && current.residual < options_gd.tol_residual);
+        };
+
         // Riemannian gradient descent
         // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
-        return gradient_descent(oracle, x0, options_gd, os);
+        return gradient_descent(oracle, x0, options_gd, os, conv_check);
     }
 
     /** @brief Access the discretization package. */
@@ -276,14 +274,14 @@ public:
     const dealii::AffineConstraints<double>&
     get_constraints() const { return package.get_constraints(); }
 
-    EnergyOracle<dim> get_oracle(double beta, DescentOptions options_gd) const
+    EnergyOracle<dim> get_oracle(double beta, SolverOptions options_gd) const
     {
         return EnergyOracle<dim>(problem, beta, options_gd);
     }
 
     auto get_M() const { return problem.get_operator_M(); }
 
-    auto get_M_inv(DescentOptions options_gd) const
+    auto get_M_inv(SolverOptions options_gd) const
     {
         using InverseOpType = InverseMatrix<decltype(this->get_M()), dealii::PreconditionIdentity>;
 
@@ -293,7 +291,7 @@ public:
 
     auto get_A(double beta) const { return problem.get_operator_A(beta); }
 
-    auto get_A_inv(double beta, DescentOptions options_gd) const
+    auto get_A_inv(double beta, SolverOptions options_gd) const
     {
         using InverseOpType = InverseMatrix<decltype(this->get_A(beta)), dealii::PreconditionIdentity>;
 
@@ -376,14 +374,15 @@ public:
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
 
+    // TODO: take transfer and oracles (TypeFine, TypeCoarseNash) as arguments, instead of EnergySimulator/Problem
     FullApproximationScheme(const EnergySimulator<dim>& GP_coarse,
                             const EnergySimulator<dim>& GP_fine,
-                            double beta, DescentOptions options, DescentOptions options_coarse)
+                            double beta, SolverOptions options, SolverOptions options_coarse)
         // Function evaluation
         : options(options), options_coarse(options_coarse)
         , O_coarse(GP_coarse.get_oracle(beta, options_coarse))
         , O_fine(GP_fine.get_oracle(beta, options))
-        , qk(GP_coarse.get_problem(), beta, {}, {})
+        , qk(GP_coarse.get_problem(), beta, {}, {}, options)
 
         // Problem components
         , n_coarse(GP_coarse.n_dofs())
@@ -396,9 +395,10 @@ public:
         , M_fine(GP_fine.get_M())
         , A_coarse(GP_coarse.get_A(beta))
         , A_fine(GP_fine.get_A(beta))
-    {} // TODO: Set up preconditioner for M
+    {} // TODO: convergence check (cf. EnergySimulator::run)
 
     void cycle(const Vector<double>& y0, std::ostream& os,
+               DescentOptions options_gd, DescentOptions options_gd_coarse,
                unsigned n_pre = 1, unsigned n_post = 1)
     {
         timer.reset();
@@ -414,9 +414,9 @@ public:
 
             for (unsigned pre = 0; pre < n_pre; pre++) {
                 std::cerr << "Pre-smoothing: " << pre << "\n";
-                if (i > options.max_iter) break;
+                if (i > options_gd.max_iter) break;
 
-                CycleInfo info = cycle_fine(y, y_grad, options);
+                CycleInfo info = cycle_fine(y, y_grad, options_gd);
                 info.iter = i++;
                 info.coarse = false;
 
@@ -425,9 +425,9 @@ public:
 
             // 2. Coarse step
             {
-                if (i > options.max_iter) break;
+                if (i > options_gd.max_iter) break;
 
-                CycleInfo info = cycle_coarse(y, options, options_coarse);
+                CycleInfo info = cycle_coarse(y, options_gd, options_gd_coarse);
                 info.iter = i++;
                 info.coarse = true;
 
@@ -437,9 +437,9 @@ public:
             // 3. Post-smoothing
             for (unsigned post = 0; post < n_post; ++post) {
                 std::cerr << "Post-smoothing: " << post << "\n";
-                if (i > options.max_iter) break;
+                if (i > options_gd.max_iter) break;
 
-                CycleInfo info = cycle_fine(y, y_grad, options);
+                CycleInfo info = cycle_fine(y, y_grad, options_gd);
                 info.iter = i++;
                 info.coarse = false;
 
@@ -452,7 +452,7 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    DescentOptions options, options_coarse;
+    SolverOptions options, options_coarse;
 
     // Function evaluation
     EnergyOracle<dim> O_coarse, O_fine;
@@ -471,12 +471,12 @@ private:
 
     // Methods
     double line_search(Vector<double>& y, const Vector<double>& y_grad, const Vector<double>& eta,
-                       DescentOptions options)
+                       DescentOptions options_gd)
     {
         double threshold = 1e-4;
         double Ex   = O_fine.value(y);
         double dd   = O_fine.metric(y_grad, eta);
-        double step = armijo_line_search(O_fine, y, eta, Ex, dd, options, threshold);
+        double step = armijo_line_search(O_fine, y, eta, Ex, dd, options_gd, threshold);
 
         if (step < threshold) {
             std::cerr << "  -> Coarse step rejected by line search." << std::endl;
@@ -487,7 +487,7 @@ private:
     // TODO: CoarseOracle is *NOT* a light-weight object; it sets up the preconditioner for A0
     //       like EnergyOracle would. Therefore, it should not be initialized for every iteration.
     Vector<double>
-    descent_coarse(const Vector<double>& y, DescentOptions options, DescentOptions options_coarse)
+    descent_coarse(const Vector<double>& y, DescentOptions options_gd_coarse)
     {
         // TODO: use class preconditioner
         //       set up inverse objects in constructor
@@ -527,7 +527,7 @@ private:
         // Find zk such that qk(zk) < qk(x)
         // TODO: variable descent method, or use cycle_fine() for consistency
         std::cerr << "[" << timer.cpu_time() << "] coarse: gradient descent\n";
-        zk = gradient_descent(qk, x, options_coarse, std::cerr);
+        zk = gradient_descent(qk, x, options_gd_coarse, std::cerr);
 
         // Compute the search direction, zk <- L_x(zk)
         std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -541,26 +541,26 @@ private:
     }
 
     // Implementation of fine and coarse cycles
-    // TODO: factor out Oracle::update (possible with matrix-free line search)
-    CycleInfo cycle_fine(Vector<double>& y, Vector<double>& y_grad, DescentOptions options)
+    // TODO: refactor to cycle_smoother
+    CycleInfo cycle_fine(Vector<double>& y, Vector<double>& y_grad, DescentOptions options_gd)
     {
         timer.start();
 
         // Update gradient
         std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
         auto lac_iter = O_fine.gradient(y, y_grad);
-        double step_size = options.step_size;
+        double step_size = options_gd.step_size;
 
         // Update point (fixed step or line search)
-        if (options.line_search) {
+        if (options_gd.line_search) {
             Vector<double> eta(y_grad);
             eta *= -1.0;
 
-            step_size = line_search(y, y_grad, eta, options);
+            step_size = line_search(y, y_grad, eta, options_gd);
         }
         else {
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
-            O_fine.retract(y_grad, y, -options.step_size);  // update y
+            O_fine.retract(y_grad, y, -options_gd.step_size);  // update y
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
             O_fine.update(y);
         }
@@ -569,28 +569,29 @@ private:
         return {.lac_iter = lac_iter, .step_size = step_size, .elapsed = timer.cpu_time()};
     }
 
-    // TODO: factor out Oracle::update (possible with matrix-free line search)
-    CycleInfo cycle_coarse(Vector<double>& y, DescentOptions options, DescentOptions options_coarse)
+    // TODO: refactor to cycle_smoother
+    CycleInfo cycle_coarse(Vector<double>& y, DescentOptions options_gd, DescentOptions options_gd_coarse)
     {
         timer.start();
 
         // Coarse descent direction
-        Vector<double> dk = descent_coarse(y, options, options_coarse);
-        double step_size = options.step_size;
+        Vector<double> dk = descent_coarse(y, options_gd_coarse);
+        double step_size = options_gd.step_size;
 
         // Update point (fixed step or line search)
-        if (options.line_search) {
+        if (options_gd.line_search) {
             // TODO: dk is computed in the A-metric, but the coarse model is formulated in the M-metric.
             //       This means that we need to compute both the M and the A-gradient, former for the coarse model,
             //       and later for evaluating the Armijo condition on dk.
+            //       Just computed both in either the A- or M-metric?
             Vector<double> y_grad(n_fine);
             auto lac_iter = O_fine.gradient(y, y_grad);
 
-            step_size = line_search(y, y_grad, dk, options);
+            step_size = line_search(y, y_grad, dk, options_gd);
         }
         else {
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
-            O_fine.retract(dk, y, options.step_size);
+            O_fine.retract(dk, y, options_gd.step_size);
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
             O_fine.update(y);
         }

@@ -89,19 +89,29 @@ double armijo_line_search(OracleType& oracle,
     }
     std::cerr << "Warning: Armijo line search hit max iterations ("
               << options.max_search << ")." << std::endl;
-    return 0.0; // Line search failed
+    return threshold;
 }
 
+struct EmptyCheck
+{
+    bool operator()(iteration::State, iteration::State)
+    {
+        return false;
+    }
+};
+
 //! Riemannian gradient descent for the GPE energy minimization
-//! @param oracle Oracle for function value and (Riemannian) gradient
-//! @param x0 Starting value
-//! @param options Termination criteria
-//! @param os Output stream for diagnostics
+//! @param oracle Oracle for function value and (Riemannian) gradient.
+//! @param x0 Starting value.
+//! @param options Parameters for gradient descent, such as step-size.
+//! @param os Output stream for diagnostics.
+//! @param check_convergence Strategy for verifying if gradient descent converged.
 //! @return
-template <typename OracleType>
+template <typename OracleType, typename CheckType = EmptyCheck>
 Vector<double>
 gradient_descent(OracleType& oracle, const Vector<double>& x0,
-                 DescentOptions options, std::ostream& os)
+                 DescentOptions options, std::ostream& os,
+                 CheckType check_convergence = {})
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
     Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
@@ -117,6 +127,7 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
     Vector x(x0);
     dealii::ConvergenceTable convergence_table;
     oracle.update(x);
+
     current_state = oracle.residual(x);
     double Ex = oracle.value(x);
     current_state.energy = Ex;
@@ -142,7 +153,7 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
-        if (oracle.check_convergence(current_state, previous_state)) {
+        if (check_convergence(current_state, previous_state)) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break;
@@ -152,10 +163,10 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
         timer.start();
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-        //options.tol_inner = std::min(options.tol_inner, 0.1 * current_state.residual);
         lac_iter = oracle.gradient(x, g);
         double step_size = options.step_size;
         // Retraction: x <- (x - h g) / ||x - h g||_M
+
         if (options.line_search) {
             // TODO: support other descent directions (i.e. coarse descent)
             Vector eta(g);  // search direction

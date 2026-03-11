@@ -351,11 +351,20 @@ public:
      */
     void update_dynamic(const Vector<double>& diag)
     {
-        diag_matrix.reinit(diag);
-
         if (m_precond_type == Precondition::DIAGONAL) {
-            typename dealii::PreconditionJacobi<dealii::DiagonalMatrix<VectorType>>::AdditionalData data(0.6);
-            jacobi_precond.initialize(diag_matrix, data);
+            // Create a vector to hold the inverse diagonal elements
+            dealii::Vector<double> inv_diag(diag);
+            const double relaxation = 0.6;
+
+            for (unsigned int i = 0; i < inv_diag.size(); ++i) {
+                // Safeguard against division by zero
+                if (std::abs(inv_diag[i]) > 1e-14) {
+                    inv_diag[i] = relaxation / inv_diag[i];
+                } else {
+                    inv_diag[i] = 1.0;
+                }
+            }
+            jacobi_precond.reinit(inv_diag);
         }
     }
 
@@ -398,8 +407,7 @@ private:
     double       m_reltol;
 
     dealii::SparseILU<double> ilu_precond;
-    dealii::PreconditionJacobi<dealii::DiagonalMatrix<VectorType>> jacobi_precond;
-    dealii::DiagonalMatrix<VectorType> diag_matrix;
+    dealii::DiagonalMatrix<VectorType> jacobi_precond;
 
     // Stores the state of the most recent solve_internal call
     mutable SolverControl m_control;

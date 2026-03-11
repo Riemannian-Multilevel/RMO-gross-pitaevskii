@@ -62,12 +62,6 @@ struct DescentOptions
     bool line_search;           // determine step-size by line search
 
     // TODO: move to separate struct
-    unsigned int max_inner;     // maximum sparse solver iterations
-    double tol_inner;           // relative tolerance for inner solver
-    SolverMethod solver;        // method for solving sparse linear equations
-    Precondition precond;       // preconditioner for solving sparse linear equations
-
-    // TODO: move to separate struct
     unsigned int max_search;    // maximum line search iterations
     double ls_alpha;
     double ls_beta;
@@ -77,7 +71,10 @@ struct DescentOptions
 
 struct SolverOptions
 {
-
+    unsigned int max_inner;     // maximum sparse solver iterations
+    double tol_inner;           // relative tolerance for inner solver
+    SolverMethod solver;        // method for solving sparse linear equations
+    Precondition precond;       // preconditioner for solving sparse linear equations
 };
 
 struct LineSearchOptions
