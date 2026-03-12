@@ -655,6 +655,7 @@ void gradient(const MatrixType& M,
 
     Vector<double> invRet(zeta.size());
     ellipsoid::retract_inv_diff_by_norm_adjoint(M, phi, zeta, w, invRet);
+
     dst.add(-1.0, invRet);
 }
 

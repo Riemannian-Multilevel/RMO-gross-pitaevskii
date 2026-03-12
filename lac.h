@@ -379,10 +379,10 @@ public:
                 solve_with(m_op, dst, src, jacobi_precond);
                 break;
             case Precondition::NONE:
-                break;
-            default:
                 solve_with(m_op, dst, src, dealii::PreconditionIdentity());
                 break;
+            default:
+                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
         }
     }
 

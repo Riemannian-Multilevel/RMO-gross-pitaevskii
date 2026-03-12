@@ -13,19 +13,19 @@ int main()
     SolverOptions  options_slv{};  // inner solver options
     options_slv.max_inner    = 500;
     options_slv.solver       = SolverMethod::MINRES;
-    options_slv.precond      = Precondition::SPARSE_ILU;
+    //options_slv.precond      = Precondition::SPARSE_ILU;
     options_slv.tol_inner    = 1e-6;
 
     options_gd.step_size     = 1.0;
     options_gd.tol_lambda    = 1e-8;
     options_gd.tol_residual  = 1e-4;
-    options_gd.max_iter      = 10;
+    options_gd.max_iter      = 15;
     options_gd.line_search   = false;  // requires grad_A for coarse steps
 
     options_gd.ls_alpha      = 1.0;
     options_gd.ls_beta       = 0.6;
     options_gd.ls_sigma      = 0.2;
-    options_gd.max_search    = 6;
+    options_gd.max_search    = 5;
 
     SolverOptions options_slv_coarse = options_slv;
     // TODO: reduce tolerance for coarse level
@@ -42,7 +42,7 @@ int main()
     options.beta      = 100;
     options.bc        = BoundaryCondition::DIRICHLET;
     options.mesh_kind = MeshKind::QUADRILATERAL;
-    options.order     = Ordering::CUTHILL_MCKEE;
+    options.order     = Ordering::DEFAULT;
 
     constexpr int dim = 2;
     Square<dim> V;

@@ -234,19 +234,20 @@ public:
 
     /**
      * @brief Runs the energy minimization for a given potential.
+     * @param x0
      * @param beta The interaction strength constant.
+     * @param options_inner
      * @param options_gd Options for the gradient descent algorithm.
      */
     // TODO factor this out to caller, see get_oracle()
     Vector<double>
     run(const Vector<double>& x0, double beta,
+        const SolverOptions&  options_inner,
         const DescentOptions& options_gd, std::ostream& os) const
     {
         Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
         // Create the oracle (light-weight object, references problem matrices)
-        // TODO: separate linear options (for inner solve/gradient computation)
-        //       and descent options (tolerance and step size)
-        EnergyOracle<dim> oracle(problem, beta, options_gd);
+        EnergyOracle<dim> oracle(problem, beta, options_inner);
 
         // Termination criterium
         auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
@@ -366,6 +367,18 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
     convergence_table.write_text(os, format);
 }
 
+struct CoarseStep
+{
+    CoarseStep(unsigned n_coarse, unsigned n_fine)
+        : x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
+    {}
+
+    Vector<double> x;            // coarse point
+    Vector<double> x_grad;       // coarse gradient
+    Vector<double> y_grad;       // fine gradient
+    Vector<double> y_grad_restr; // restricted gradient
+};
+
 template <int dim>
 class FullApproximationScheme
 {
@@ -375,6 +388,7 @@ public:
     using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
 
     // TODO: take transfer and oracles (TypeFine, TypeCoarseNash) as arguments, instead of EnergySimulator/Problem
+    //       Only keep components for coarse step, to allow for flexible schemes (FAS, Gratton, ...)
     FullApproximationScheme(const EnergySimulator<dim>& GP_coarse,
                             const EnergySimulator<dim>& GP_fine,
                             double beta, SolverOptions options, SolverOptions options_coarse)
@@ -460,7 +474,8 @@ private:
     unsigned n_coarse, n_fine;
 
     // Grid operators
-    LinearTransfer<dim> transfer;
+    //LinearTransfer<dim> transfer;
+    LinearTransferMatrix<dim> transfer;
     ManifoldTransfer<dim, OperatorType> point_transfer;
     //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
     ProjectionTransport<dim, OperatorType> vector_transport;  // TODO select components
@@ -484,8 +499,38 @@ private:
         return step;
     }
 
-    // TODO: CoarseOracle is *NOT* a light-weight object; it sets up the preconditioner for A0
-    //       like EnergyOracle would. Therefore, it should not be initialized for every iteration.
+    // TODO: Separate computation of coarse vectors (for coarse condition) from minimization of coarse model
+    //       CoarseDescent class?
+    // CoarseStep vectors_coarse(const Vector<double>& y)
+    // {
+    //     InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
+    //         options_coarse.max_inner, options_coarse.tol_inner);
+    //     InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
+    //         options.max_inner, options.tol_inner);
+    //     CoarseStep step(n_coarse, n_fine);
+    //
+    //     // Starting coarse point
+    //     std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
+    //     point_transfer.restriction(y, step.x);
+    //     O_coarse.update(step.x);
+    //
+    //     // Compute coarse M-gradient
+    //     std::cerr << "[" << timer.cpu_time() << "] coarse: M-coarse gradient\n";
+    //     ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, step.x, step.x_grad);
+    //
+    //     // Compute fine M-gradient
+    //     std::cerr << "[" << timer.cpu_time() << "] coarse: M-fine gradient\n";
+    //     ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, step.y_grad);
+    //
+    //     // Compute coarse correction step
+    //     std::cerr << "[" << timer.cpu_time() << "] coarse: vector transfer\n";
+    //     vector_transport.vector_restriction(step.x, y, step.y_grad, step.y_grad_restr);
+    //
+    //     return step;
+    // }
+
+    // TODO: Separate computation of coarse vectors (for coarse condition) from minimization of coarse model
+    //       CoarseDescent class?
     Vector<double>
     descent_coarse(const Vector<double>& y, DescentOptions options_gd_coarse)
     {
@@ -518,9 +563,6 @@ private:
         coarse_correction(vector_transport, x_grad_m, y_grad_m, x, y, w);
 
         // Set up coarse model
-        // TODO: preconditioner for coarse A0 is computed for every step
-        //       factor this out and call some update function?
-        //CoarseOracle<dim> qk(prob_coarse, O_coarse.get_beta(), w, x);
         qk.update_parameters(w, x);
         Vector<double> zk(n_coarse);
 
@@ -541,7 +583,7 @@ private:
     }
 
     // Implementation of fine and coarse cycles
-    // TODO: refactor to cycle_smoother
+    // TODO: refactor to cycle_smoother()
     CycleInfo cycle_fine(Vector<double>& y, Vector<double>& y_grad, DescentOptions options_gd)
     {
         timer.start();
@@ -569,7 +611,7 @@ private:
         return {.lac_iter = lac_iter, .step_size = step_size, .elapsed = timer.cpu_time()};
     }
 
-    // TODO: refactor to cycle_smoother
+    // TODO: refactor to cycle_smoother()
     CycleInfo cycle_coarse(Vector<double>& y, DescentOptions options_gd, DescentOptions options_gd_coarse)
     {
         timer.start();

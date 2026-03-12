@@ -14,16 +14,18 @@ using namespace dealii;
 int main(int argc, char* argv[])
 {
     GPE_Options options{};
-    DescentOptions   options_rgd{};
-    MG_Options  options_mg{};
+    DescentOptions options_rgd{};
+    SolverOptions options_slv{};
+    MG_Options options_mg{};
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
         po::options_description all("Allowed options");
         all.add_options()("help", "produce help message");
         all.add(gpe_cli_options());
-        all.add(gd_cli_options());
+        all.add(descent_cli_options());
         all.add(mg_cli_options());
+        all.add(inner_cli_options());
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, all), vm);
@@ -36,6 +38,7 @@ int main(int argc, char* argv[])
         apply_gpe_options(vm, options);
         apply_descent_options(vm, options_rgd);
         apply_mg_options(vm, options_mg);
+        apply_inner_options(vm, options_slv);
 
         with_dimension(options.dimension, [&](auto D)
         {
@@ -57,7 +60,7 @@ int main(int argc, char* argv[])
                 // options_rgd contains the solver tolerances and step size
                 // options.beta is the non-linear coupling constant
                 simulator.distribute(x0);
-                auto x = simulator.run(x0, options.beta, options_rgd, std::cout);
+                auto x = simulator.run(x0, options.beta, options_slv, options_rgd, std::cout);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);

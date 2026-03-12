@@ -32,11 +32,13 @@ int main()
     TimerOutput timer(std::cout, TimerOutput::summary, TimerOutput::wall_times);
 
     // --- options as before ---
+    SolverOptions options_slv{};
+    options_slv.max_inner    = 500;
+    options_slv.solver       = SolverMethod::MINRES;
+    options_slv.tol_inner    = 1e-6;
+
     DescentOptions options_gd{};
     options_gd.step_size    = 1.0;
-    options_gd.max_inner    = 500;
-    options_gd.solver       = SolverMethod::MINRES;
-    options_gd.tol_inner    = 1e-6;
     options_gd.tol_lambda   = 1e-8;
     options_gd.tol_residual = 1e-4;
     options_gd.max_iter     = 20;
@@ -58,14 +60,16 @@ int main()
     const unsigned int ref_max = 11;  // fine
 
     // Adjust tolerances per level
+    MGLevelObject<SolverOptions> options_slv_level(ref_min, ref_max);
     MGLevelObject<DescentOptions> options_gd_level(ref_min, ref_max);
 
     for (unsigned int ref = ref_min; ref <= ref_max; ++ref) {
-        options_gd_level[ref] = options_gd;
+        options_slv_level[ref] = options_slv;
+        options_gd_level[ref]  = options_gd;
 
         if (ref < ref_max) {
             double factor = std::pow(10,ref_max-ref);  // 1.0 for ref_max
-            options_gd_level[ref].tol_inner  = 1e-6*factor;  // lower precision for multigrid
+            options_slv_level[ref].tol_inner  = 1e-6*factor;  // lower precision for multigrid
             //options_gd_level[ref].tol_lambda   = 1e-8/factor;
             //options_gd_level[ref].tol_residual = 1e-4/factor;
         }
@@ -122,7 +126,7 @@ int main()
             std::ofstream file(name.str());
             {
                 TimerOutput::Scope t(timer_ref, "Solve - ref " + std::to_string(ref));
-                x[ref] = solver[ref]->run(y0[ref], options.beta, options_gd_level[ref], file);
+                x[ref] = solver[ref]->run(y0[ref], options.beta, options_slv_level[ref], options_gd_level[ref], file);
             }
 
             if (ref < ref_max)
@@ -143,7 +147,7 @@ int main()
 
         std::ofstream file("solve_ref_max.csv");
         {
-            solver[ref_max]->run(y0_fine, options.beta, options_gd, file);
+            solver[ref_max]->run(y0_fine, options.beta, options_slv, options_gd, file);
         }
     }
 

@@ -11,7 +11,9 @@ namespace gpe
 namespace po = boost::program_options;
 
 BOOST_DESCRIBE_STRUCT(DescentOptions, (),
-    (tol_inner, tol_lambda, tol_residual, step_size, max_iter, max_inner, solver, precond));
+    (tol_lambda, tol_residual, step_size, max_iter));
+BOOST_DESCRIBE_STRUCT(SolverOptions, (),
+    (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (multilevel, n_levels, min_level, max_level));
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
@@ -103,26 +105,18 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.radius    = vm["radius"].as<double>();
 }
 
-// TODO: separate linear solver options
-//       encode default values in option_type.h and remove default_value()?
+
+// TODO: encode default values in option_type.h and remove default_value()?
 // ---------- DescentOptions ----------
-inline po::options_description gd_cli_options() {
+inline po::options_description descent_cli_options() {
     po::options_description d("RGD options");
     d.add_options()
-        ("solver", po::value<std::string>()->default_value("gmres"),
-            "sparse solver (gmres|minres|cg)")
-        ("precond", po::value<std::string>()->default_value("none"),
-            "preconditioner (none|diagonal|sparse_ilu|amg)")
         ("max-iter", po::value<int>()->default_value(25),
             "maximum number of iterations")
-        ("max-inner", po::value<int>()->default_value(100),
-            "maximum number of iterations for sparse solver")
         ("max-search", po::value<int>()->default_value(20),
             "maximum number of iterations for line search")
         ("tol-residual", po::value<double>()->default_value(1e-4),
             "tolerance for M-residual")
-        ("tol-inner", po::value<double>()->default_value(1e-6),
-            "tolerance for sparse solver, relative to right-hand side")
         ("tol-lambda", po::value<double>()->default_value(1e-8),
             "tolerance for rayleigh quotient")
         ("step-size", po::value<double>()->default_value(1.0),
@@ -139,22 +133,41 @@ inline po::options_description gd_cli_options() {
 }
 
 inline void apply_descent_options(const po::variables_map& vm, DescentOptions& options_rgd) {
-    const auto solver_str = upper(vm["solver"].as<std::string>());
-    const auto precond_str= upper(vm["precond"].as<std::string>());
-
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
-    options_rgd.max_inner    = vm["max-inner"].as<int>();
     options_rgd.max_search   = vm["max-search"].as<int>();
-    options_rgd.tol_inner    = vm["tol-inner"].as<double>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
-    options_rgd.solver       = string_to_enum<SolverMethod>(solver_str);
-    options_rgd.precond      = string_to_enum<Precondition>(precond_str);
     options_rgd.line_search  = vm["line-search"].as<bool>();
     options_rgd.ls_alpha     = vm["ls-alpha"].as<double>();
     options_rgd.ls_beta      = vm["ls-beta"].as<double>();
     options_rgd.ls_sigma     = vm["ls-sigma"].as<double>();
+}
+
+
+// ---------- SolverOptions ----------
+inline void apply_inner_options(const po::variables_map& vm, SolverOptions& options_slv) {
+    const auto solver_str = upper(vm["solver"].as<std::string>());
+    const auto precond_str= upper(vm["precond"].as<std::string>());
+
+    options_slv.max_inner    = vm["max-inner"].as<int>();
+    options_slv.tol_inner    = vm["tol-inner"].as<double>();
+    options_slv.solver       = string_to_enum<SolverMethod>(solver_str);
+    options_slv.precond      = string_to_enum<Precondition>(precond_str);
+}
+
+inline po::options_description inner_cli_options() {
+    po::options_description d("Inner solver options");
+    d.add_options()
+        ("solver", po::value<std::string>()->default_value("gmres"),
+            "sparse solver (gmres|minres|cg)")
+        ("precond", po::value<std::string>()->default_value("none"),
+            "preconditioner (none|diagonal|sparse_ilu|amg)")
+        ("max-inner", po::value<int>()->default_value(100),
+            "maximum number of iterations for sparse solver")
+        ("tol-inner", po::value<double>()->default_value(1e-6),
+            "tolerance for sparse solver, relative to right-hand side");
+    return d;
 }
 
 }
