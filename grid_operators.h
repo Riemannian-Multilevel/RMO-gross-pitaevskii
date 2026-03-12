@@ -73,11 +73,13 @@ public:
      * @brief Constructs the transfer operators between two given DoF handlers.
      * @param dof_coarse The DoFHandler for the coarse grid.
      * @param dof_fine The DoFHandler for the fine grid.
+     * @param constraints_coarse
+     * @param constraints_fine
      */
     LinearTransferMatrix(const dealii::DoFHandler<dim>& dof_coarse,
-                   const dealii::DoFHandler<dim>& dof_fine,
-                   const dealii::AffineConstraints<double>& constraints_coarse,
-                   const dealii::AffineConstraints<double>& constraints_fine)
+                         const dealii::DoFHandler<dim>& dof_fine,
+                         const dealii::AffineConstraints<double>& constraints_coarse,
+                         const dealii::AffineConstraints<double>& constraints_fine)
         : n_c(dof_coarse.n_dofs())
         , n_f(dof_fine.n_dofs())
         , constraints_c(constraints_coarse) // Store references

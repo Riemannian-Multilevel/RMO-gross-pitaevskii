@@ -13,7 +13,7 @@
 namespace gpe
 {
 
-// TODO: refactor into UnitMassSphere and Oracle
+// TODO: refactor into UnitMassSphere (<- Manifold) and Oracle
 /**
  * @brief Base Oracle for the Gross-Pitaevskii energy functional.
  * This class translates physical concepts (matrices and assembly) into optimization concepts
@@ -385,30 +385,32 @@ class FullApproximationScheme
 public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
+    // TODO: PreconditionInverse
     using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
 
-    // TODO: take transfer and oracles (TypeFine, TypeCoarseNash) as arguments, instead of EnergySimulator/Problem
-    //       Only keep components for coarse step, to allow for flexible schemes (FAS, Gratton, ...)
-    FullApproximationScheme(const EnergySimulator<dim>& GP_coarse,
-                            const EnergySimulator<dim>& GP_fine,
+    // TODO: Only keep coarse step logic, to allow for different schemes (FAS, Gratton, ...)
+    FullApproximationScheme(const GrossPitaevskiiProblem<dim>& problem_coarse,
+                            const GrossPitaevskiiProblem<dim>& problem_fine,
+                            const LinearTransferBase& transfer,
                             double beta, SolverOptions options, SolverOptions options_coarse)
         // Function evaluation
         : options(options), options_coarse(options_coarse)
-        , O_coarse(GP_coarse.get_oracle(beta, options_coarse))
-        , O_fine(GP_fine.get_oracle(beta, options))
-        , qk(GP_coarse.get_problem(), beta, {}, {}, options)
+        , O_coarse(problem_coarse, beta, options_coarse)
+        , O_fine(problem_fine, beta, options)
+        , qk(problem_coarse, beta, {}, {}, options)
 
         // Problem components
-        , n_coarse(GP_coarse.n_dofs())
-        , n_fine(GP_fine.n_dofs())
-        , transfer(GP_coarse.get_dofs(), GP_fine.get_dofs(), GP_coarse.get_constraints(), GP_fine.get_constraints())
-        , point_transfer(M_coarse, M_fine, transfer)
-        , vector_transport(M_coarse, M_fine, transfer, point_transfer), M_coarse(GP_coarse.get_M())
+        , n_coarse(problem_coarse.n_dofs())
+        , n_fine(problem_fine.n_dofs())
+        , M_coarse(problem_coarse.get_operator_M())
+        , M_fine(problem_fine.get_operator_M())
+        , A_coarse(problem_coarse.get_operator_A(beta))
+        , A_fine(problem_fine.get_operator_A(beta))
 
         // Grid operators
-        , M_fine(GP_fine.get_M())
-        , A_coarse(GP_coarse.get_A(beta))
-        , A_fine(GP_fine.get_A(beta))
+        , transfer(transfer)
+        , point_transfer(M_coarse, M_fine, transfer)
+        , vector_transport(M_coarse, M_fine, transfer, point_transfer)
     {} // TODO: convergence check (cf. EnergySimulator::run)
 
     void cycle(const Vector<double>& y0, std::ostream& os,
@@ -473,16 +475,15 @@ private:
     CoarseOracle<dim> qk;
     unsigned n_coarse, n_fine;
 
-    // Grid operators
-    //LinearTransfer<dim> transfer;
-    LinearTransferMatrix<dim> transfer;
-    ManifoldTransfer<dim, OperatorType> point_transfer;
-    //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
-    ProjectionTransport<dim, OperatorType> vector_transport;  // TODO select components
-
     OperatorType M_coarse, M_fine;
     OperatorType A_coarse, A_fine;
     //InverseOpType M_inv_coarse, M_inv_fine;
+
+    // Grid operators
+    const LinearTransferBase& transfer;
+    ManifoldTransfer<dim, OperatorType> point_transfer;
+    //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
+    ProjectionTransport<dim, OperatorType> vector_transport;  // TODO select vector transport (enum)
 
     // Methods
     double line_search(Vector<double>& y, const Vector<double>& y_grad, const Vector<double>& eta,
@@ -500,7 +501,6 @@ private:
     }
 
     // TODO: Separate computation of coarse vectors (for coarse condition) from minimization of coarse model
-    //       CoarseDescent class?
     // CoarseStep vectors_coarse(const Vector<double>& y)
     // {
     //     InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
