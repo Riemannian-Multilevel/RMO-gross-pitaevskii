@@ -19,7 +19,7 @@ int main()
     options_gd.step_size     = 1.0;
     options_gd.tol_lambda    = 1e-8;
     options_gd.tol_residual  = 1e-4;
-    options_gd.max_iter      = 15;
+    options_gd.max_iter      = 10;
     options_gd.line_search   = false;  // requires grad_A for coarse steps
 
     options_gd.ls_alpha      = 1.0;
@@ -32,9 +32,9 @@ int main()
 
     DescentOptions options_gd_coarse = options_gd;
     // TODO: heuristic: take steps UNTIL armijo line search fails OR max_iter encountered
-    options_gd_coarse.max_iter    = 3;
+    options_gd_coarse.max_iter    = 5;
     options_gd_coarse.step_size   = 1.0;
-    options_gd_coarse.line_search = true;
+    options_gd_coarse.line_search = false;
 
     GPE_Options options{};
     options.dimension = 2;

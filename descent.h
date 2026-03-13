@@ -107,6 +107,7 @@ struct EmptyCheck
 //! @param os Output stream for diagnostics.
 //! @param check_convergence Strategy for verifying if gradient descent converged.
 //! @return
+// TODO: split into cycle() and eval(), compare FullApproximationScheme
 template <typename OracleType, typename CheckType = EmptyCheck>
 Vector<double>
 gradient_descent(OracleType& oracle, const Vector<double>& x0,

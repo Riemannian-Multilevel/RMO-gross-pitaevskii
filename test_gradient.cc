@@ -7,6 +7,7 @@
 #include "function.h"
 
 #include <fstream>
+#include <boost/math/special_functions/math_fwd.hpp>
 #include <fmt/format.h>
 
 #define NUM_TRIALS 50
@@ -86,9 +87,6 @@ void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>&
 
 
 // TODO: check first order-coherence
-using OperatorType = LinearCombination<SparseMatrix<double>, Vector<double>>;
-template <typename PrecondType>
-using InverseOpType = InverseMatrix<OperatorType, PrecondType>;
 
 // Contains all metric-independent components for testing gradients on the ellipsoid
 // TODO: reflect in class name?
@@ -99,12 +97,17 @@ public:
     const double mean = 0.0;
     const double stddev = 1.0;
 
-    GradientTestBase(const GrossPitaevskiiProblem<dim>& problem, double beta)
+    using MatrixType    = SparseMatrix<double>;
+    using OperatorType  = LinearCombination<MatrixType, Vector<double>>;
+    using InverseOpType = PreconditionInverse<OperatorType, MatrixType>;
+
+    GradientTestBase(const GrossPitaevskiiProblem<dim>& problem, double beta,
+                     SolverOptions options)
         : m_problem(problem)
         , A(problem.get_operator_A(beta))   // all arguments are lazily evaluated
         , M(problem.get_operator_M())
-        , A_inv(InverseMatrix(A, SolverMethod::CG, {}, 2000, 1e-12))
-        , M_inv(InverseMatrix(M, SolverMethod::CG, {}, 2000, 1e-12))
+        , A_inv(InverseOpType(A, options))
+        , M_inv(InverseOpType(M, options))
         , m_beta(beta)
     {}
     virtual ~GradientTestBase() = default;
@@ -152,7 +155,7 @@ public:
 protected:
     const GrossPitaevskiiProblem<dim>& m_problem;
     OperatorType A, M;
-    InverseOpType<dealii::PreconditionIdentity> A_inv, M_inv;
+    InverseOpType A_inv, M_inv;
     double m_beta;
 };
 
@@ -160,8 +163,8 @@ template <int dim>
 class GradientTestEnergy : public GradientTestBase<dim>
 {
 public:
-    GradientTestEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta)
-        : GradientTestBase<dim>(problem, beta)
+    GradientTestEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GradientTestBase<dim>(problem, beta, options)
     {}
 
     double value(const Vector<double>& x) const override
@@ -206,8 +209,8 @@ template <int dim>
 class GradientTestMass : public GradientTestBase<dim>
 {
 public:
-    GradientTestMass(const GrossPitaevskiiProblem<dim>& problem, double beta)
-        : GradientTestBase<dim>(problem, beta)
+    GradientTestMass(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GradientTestBase<dim>(problem, beta, options)
     {}
 
     double value(const Vector<double>& x) const override
@@ -256,13 +259,25 @@ template <int dim>
 class GradientTestCoarseEnergy : public GradientTestBase<dim>
 {
 public:
-    GradientTestCoarseEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta,
+    GradientTestCoarseEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options,
                              const Vector<double>& phi,   // base point (restricted point)
-                             const Vector<double>& w)     // correction term (restricted gradient difference))
-        : GradientTestBase<dim>(problem, beta)
+                             const Vector<double>& w)     // correction term (restricted gradient difference)
+        : GradientTestBase<dim>(problem, beta, options)
         , m_phi(phi)
         , m_w(w)
     {}
+
+    GradientTestCoarseEnergy(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GradientTestBase<dim>(problem, beta, options)
+        , m_phi(problem.n_dofs())
+        , m_w(problem.n_dofs())
+    {}
+
+    void update_parameters(const Vector<double>& phi, const Vector<double>& w)
+    {
+        m_phi = phi;
+        m_w = w;
+    }
 
     double value(const Vector<double>& x) const override
     {
@@ -311,7 +326,7 @@ public:
     }
 
 private:
-    const Vector<double>& m_phi, m_w;   // copy for flipping sign
+    Vector<double> m_phi, m_w;   // copy for flipping sign
 };
 
 
@@ -319,13 +334,25 @@ template <int dim>
 class GradientTestCoarseMass : public GradientTestBase<dim>
 {
 public:
-    GradientTestCoarseMass(const GrossPitaevskiiProblem<dim>& problem, double beta,
+    GradientTestCoarseMass(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options,
                            const Vector<double>& phi,   // base point (restricted point)
                            const Vector<double>& w)     // correction term (restricted gradient difference)
-        : GradientTestBase<dim>(problem, beta)
+        : GradientTestBase<dim>(problem, beta, options)
         , m_phi(phi)
         , m_w(w)
     {}
+
+    GradientTestCoarseMass(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GradientTestBase<dim>(problem, beta, options)
+        , m_phi(problem.n_dofs())
+        , m_w(problem.n_dofs())
+    {}
+
+    void update_parameters(const Vector<double>& phi, const Vector<double>& w)
+    {
+        m_phi = phi;
+        m_w = w;
+    }
 
     double value(const Vector<double>& x) const override
     {
@@ -373,7 +400,7 @@ public:
     }
 
 private:
-    const Vector<double>& m_phi, m_w;  // copy stored for flipping sign
+    Vector<double> m_phi, m_w;  // copy stored for flipping sign
 };
 
 struct CheckGradInfo
@@ -385,6 +412,11 @@ struct CheckGradInfo
 
     std::vector<double> ts;
     std::vector<double> Ets;
+};
+
+struct EmptyStrategy
+{
+    void operator()() {};
 };
 
 // Test correctness of gradients for random samples
@@ -459,12 +491,14 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
     return check;
 }
 
-template <int dim>
-void check_gradient(const GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix)
+template <int dim, typename Strategy = EmptyStrategy>
+void check_gradient(const GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix,
+                    Strategy&& setup_trial = {})
 {
     dealii::ConvergenceTable convergence_table;
 
     for (unsigned int trial = 0; trial < n_trials; trial++) {
+        setup_trial();  // initialization method for GradientTestBase (-> base points for coarse model)
         auto info = check_gradient_trial(test_grad);
         
         convergence_table.add_value("x_constr", info.x_constr);
@@ -512,50 +546,74 @@ int main()
     options.mesh_kind = MeshKind::QUADRILATERAL;
     options.order     = Ordering::CUTHILL_MCKEE;
 
+    SolverOptions options_slv{};
+    options_slv.solver    = SolverMethod::CG;
+    options_slv.max_inner = 2000;
+    options_slv.precond   = Precondition::NONE;
+    options_slv.tol_inner = 1e-12;
+
     constexpr unsigned int n_levels = 8;
     GrossPitaevskiiPackage<2> GS(options, n_levels);
     GrossPitaevskiiProblem<2> problem = GS.problem(Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
-    std::cerr << "--- GRADIENT CHECK - ENERGY\n";
-    GradientTestEnergy<2> test_energy(problem, options.beta);
-    check_gradient(test_energy, NUM_TRIALS, "checkgradient_energy_2d");
-    std::cerr << "\n";
-    
-    std::cerr << "--- GRADIENT CHECK - MASS\n";
-    GradientTestMass<2> test_mass(problem, options.beta);
-    check_gradient(test_mass, NUM_TRIALS, "checkgradient_mass_2d");
-    std::cerr << "\n";
-
-    std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
-    Vector<double> w(n_dofs);
-    w = 1.0;
-
-    // TODO: separate loop (n_trials == 1) since w, phi change for every trial
-    for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
-        Vector<double> phi(n_dofs);
-        test_energy.random_point(phi);
-
-        Vector<double> w_proj(n_dofs);
-        ellipsoid::project_onto_tangent_space(test_mass.get_A_inv(), phi, test_mass.get_M(), w, w_proj);
-
-        GradientTestCoarseEnergy<2> test_coarse_energy(problem, options.beta, phi, w_proj);
-        check_gradient(test_coarse_energy, 1,
-            fmt::format("checkgradient_coarse_energy_2d_{:03}",trial));
+    {
+        std::cerr << "--- GRADIENT CHECK - ENERGY\n";
+        GradientTestEnergy<2> test_energy(problem, options.beta, options_slv);
+        check_gradient(test_energy, NUM_TRIALS, "checkgradient_energy_2d");
+        std::cerr << "\n";
     }
-    std::cerr << "\n";
 
-    // TODO: separate loop (n_trials == 1) since w, phi change for every trial
-    std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
-    for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
-        Vector<double> phi(n_dofs);
-        test_mass.random_point(phi);
+    {
+        std::cerr << "--- GRADIENT CHECK - MASS\n";
+        GradientTestMass<2> test_mass(problem, options.beta, options_slv);
+        check_gradient(test_mass, NUM_TRIALS, "checkgradient_mass_2d");
+        std::cerr << "\n";
+    }
 
-        Vector<double> w_proj(n_dofs);
-        ellipsoid::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
+    {
+        std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
+        GradientTestCoarseMass<2> test_coarse_mass(problem, options.beta, options_slv);
+        GradientTestMass<2> test_mass(problem, options.beta, options_slv);
 
-        GradientTestCoarseMass<2> test_coarse_mass(problem, options.beta, phi, w_proj);
-        check_gradient(test_coarse_mass, 1,
-            fmt::format("checkgradient_coarse_mass_2d_{:03}",trial));
+        Vector<double> w(n_dofs);  // fixed correction term
+        w = 1.0;
+
+        auto setup_base_points_mass = [&w,&test_mass,&test_coarse_mass,n_dofs]()
+        {
+            Vector<double> phi(n_dofs); // random base point
+            test_mass.random_point(phi);
+
+            Vector<double> w_proj(n_dofs);
+            ellipsoid::project_onto_tangent_space(test_mass.get_A_inv(), phi, test_mass.get_M(), w, w_proj);
+
+            test_coarse_mass.update_parameters(phi, w_proj);
+        };
+
+        check_gradient(test_coarse_mass, NUM_TRIALS,
+            "checkgradient_coarse_mass_2d", setup_base_points_mass);
+    }
+
+    {
+        std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
+        GradientTestCoarseEnergy<2> test_coarse_energy(problem, options.beta, options_slv);
+        GradientTestEnergy<2> test_energy(problem, options.beta, options_slv);
+
+        Vector<double> w(n_dofs);  // fixed correction term
+        w = 1.0;
+
+        auto setup_base_points_energy = [&w,&test_energy,&test_coarse_energy,n_dofs]()
+        {
+            Vector<double> phi(n_dofs);
+            test_energy.random_point(phi);
+
+            Vector<double> w_proj(n_dofs);
+            ellipsoid::project_onto_tangent_space(phi, test_energy.get_M(), w, w_proj);
+
+            test_coarse_energy.update_parameters(phi, w_proj);
+        };
+
+        check_gradient(test_coarse_energy, NUM_TRIALS,
+            "checkgradient_coarse_energy_2d", setup_base_points_energy);
     }
 }

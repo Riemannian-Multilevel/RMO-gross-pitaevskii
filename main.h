@@ -38,7 +38,7 @@ public:
         , beta(beta_)
         , options(options_)
         , A(problem.get_operator_A(beta))
-        , A_inv(A, options.solver, options.precond, options.max_inner, options.tol_inner)
+        , A_inv(A, options_)
     {
         A_inv.update_static(problem.get_A0());
     }
@@ -369,15 +369,126 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
 
 struct CoarseStep
 {
-    CoarseStep(unsigned n_coarse, unsigned n_fine)
-        : x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
-    {}
+    CoarseStep(const Vector<double>& y, unsigned n_coarse, unsigned n_fine)
+        : y(y), x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
+    {
+        AssertDimension(y.size(),n_fine);
+    }
 
+    const Vector<double>& y;     // fine point (unchanged in coarse cycle)
     Vector<double> x;            // coarse point
-    Vector<double> x_grad;       // coarse gradient
-    Vector<double> y_grad;       // fine gradient
+    Vector<double> x_grad;       // (M-)coarse gradient
+    Vector<double> y_grad;       // (M-)fine gradient
     Vector<double> y_grad_restr; // restricted gradient
 };
+
+
+template <int dim>
+class CoarseModel
+{
+public:
+    using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
+    using MatrixType    = SparseMatrix<double>;
+    using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
+
+    CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
+                const GrossPitaevskiiProblem<dim>& problem_fine,
+                const LinearTransferBase& transfer,
+                double beta, SolverOptions options, SolverOptions options_coarse)
+        // Function evaluation
+        : options(options), options_coarse(options_coarse)
+        , O_coarse(problem_coarse, beta, options_coarse)
+        , qk(problem_coarse, beta, {}, {}, options)
+
+        // Problem components
+        , n_coarse(problem_coarse.n_dofs())
+        , n_fine(problem_fine.n_dofs())
+        , M_coarse(problem_coarse.get_operator_M())
+        , M_fine(problem_fine.get_operator_M())
+        , A_coarse(problem_coarse.get_operator_A(beta))
+        , A_fine(problem_fine.get_operator_A(beta))  // only needed for A-gradient
+        , M_coarse_inv(M_coarse, options_coarse)
+        , M_fine_inv(M_fine, options)
+
+        // Grid operators
+        , transfer(transfer)
+        , point_transfer(M_coarse, M_fine, transfer)
+        , vector_transport(M_coarse, M_fine, transfer, point_transfer)
+    {}
+
+    // We separate the "setup" phase (fine/coarse vectors) from the "model" phase
+    // so that a coarse criterion can be efficiently evaluated.
+    CoarseStep setup(const Vector<double>& y)
+    {
+        CoarseStep step(y, n_coarse, n_fine);
+
+        // Starting coarse point
+        std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
+        point_transfer.restriction(y, step.x);
+
+        std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
+        O_coarse.update(step.x);
+
+        // Compute coarse M-gradient
+        std::cerr << "[" << timer.cpu_time() << "] coarse: M-coarse gradient\n";
+        ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, step.x, step.x_grad);
+
+        // Compute fine M-gradient
+        std::cerr << "[" << timer.cpu_time() << "] coarse: M-fine gradient\n";
+        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, step.y_grad);
+
+        // Compute coarse correction step
+        std::cerr << "[" << timer.cpu_time() << "] coarse: vector transfer\n";
+        vector_transport.vector_restriction(step.x, y, step.y_grad, step.y_grad_restr);
+
+        return step;
+    }
+
+    // TODO: Use cycle_fine() for consistency instead of gradient_descent()
+    void solve(const CoarseStep& step, DescentOptions options_gd, Vector<double>& dst)
+    {
+        Vector<double> w(n_coarse);
+        w = step.x;
+        w.add(-1.0, step.y_grad_restr);
+
+        // Set up coarse model
+        qk.update_parameters(w, step.x);
+        Vector<double> zk(n_coarse);
+
+        // Find zk such that qk(zk) < qk(x)
+        std::cerr << "[" << timer.cpu_time() << "] coarse: gradient descent\n";
+        zk = gradient_descent(qk, step.x, options_gd, std::cerr);
+
+        // Compute the search direction, zk <- L_x(zk)
+        std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
+        ellipsoid::retract_inv_by_norm(M_coarse, zk, step.x);
+        Vector<double> dk(n_fine);
+
+        // Coarse base point not required for ProjectionTransport
+        std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector prolongation\n";
+        vector_transport.vector_prolongation(step.y, {}, zk, dst);
+    }
+
+private:
+    dealii::Timer timer; // TODO: global timer?
+    SolverOptions options, options_coarse;
+
+    // Function evaluation
+    EnergyOracle<dim> O_coarse;
+    CoarseOracle<dim> qk;
+    unsigned n_coarse, n_fine;
+
+    OperatorType M_coarse, M_fine;
+    OperatorType A_coarse, A_fine;
+    InverseOpType M_coarse_inv, M_fine_inv;
+
+    // Grid operators
+    const LinearTransferBase& transfer;
+    ManifoldTransfer<dim, OperatorType> point_transfer;
+    //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
+    ProjectionTransport<dim, OperatorType> vector_transport;  // TODO select vector transport (enum)
+};
+
 
 template <int dim>
 class FullApproximationScheme
@@ -385,8 +496,7 @@ class FullApproximationScheme
 public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
-    // TODO: PreconditionInverse
-    using InverseOpType = InverseMatrix<OperatorType, dealii::PreconditionIdentity>;
+    using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
     // TODO: Only keep coarse step logic, to allow for different schemes (FAS, Gratton, ...)
     FullApproximationScheme(const GrossPitaevskiiProblem<dim>& problem_coarse,
@@ -406,6 +516,8 @@ public:
         , M_fine(problem_fine.get_operator_M())
         , A_coarse(problem_coarse.get_operator_A(beta))
         , A_fine(problem_fine.get_operator_A(beta))
+        , M_coarse_inv(M_coarse, options_coarse)
+        , M_fine_inv(M_fine, options)
 
         // Grid operators
         , transfer(transfer)
@@ -477,7 +589,7 @@ private:
 
     OperatorType M_coarse, M_fine;
     OperatorType A_coarse, A_fine;
-    //InverseOpType M_inv_coarse, M_inv_fine;
+    InverseOpType M_coarse_inv, M_fine_inv;
 
     // Grid operators
     const LinearTransferBase& transfer;
@@ -501,46 +613,10 @@ private:
     }
 
     // TODO: Separate computation of coarse vectors (for coarse condition) from minimization of coarse model
-    // CoarseStep vectors_coarse(const Vector<double>& y)
-    // {
-    //     InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
-    //         options_coarse.max_inner, options_coarse.tol_inner);
-    //     InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
-    //         options.max_inner, options.tol_inner);
-    //     CoarseStep step(n_coarse, n_fine);
-    //
-    //     // Starting coarse point
-    //     std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
-    //     point_transfer.restriction(y, step.x);
-    //     O_coarse.update(step.x);
-    //
-    //     // Compute coarse M-gradient
-    //     std::cerr << "[" << timer.cpu_time() << "] coarse: M-coarse gradient\n";
-    //     ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, step.x, step.x_grad);
-    //
-    //     // Compute fine M-gradient
-    //     std::cerr << "[" << timer.cpu_time() << "] coarse: M-fine gradient\n";
-    //     ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, step.y_grad);
-    //
-    //     // Compute coarse correction step
-    //     std::cerr << "[" << timer.cpu_time() << "] coarse: vector transfer\n";
-    //     vector_transport.vector_restriction(step.x, y, step.y_grad, step.y_grad_restr);
-    //
-    //     return step;
-    // }
-
-    // TODO: Separate computation of coarse vectors (for coarse condition) from minimization of coarse model
     //       CoarseDescent class?
     Vector<double>
     descent_coarse(const Vector<double>& y, DescentOptions options_gd_coarse)
     {
-        // TODO: use class preconditioner
-        //       set up inverse objects in constructor
-        InverseOpType M_coarse_inv(M_coarse, options_coarse.solver, dealii::PreconditionIdentity{},
-            options_coarse.max_inner, options_coarse.tol_inner);
-        InverseOpType M_fine_inv(M_fine, options.solver, dealii::PreconditionIdentity{},
-            options.max_inner, options.tol_inner);
-
         // Starting coarse point
         std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
         Vector<double> x(n_coarse);
@@ -567,7 +643,7 @@ private:
         Vector<double> zk(n_coarse);
 
         // Find zk such that qk(zk) < qk(x)
-        // TODO: variable descent method, or use cycle_fine() for consistency
+        // TODO: Use cycle_fine() for consistency
         std::cerr << "[" << timer.cpu_time() << "] coarse: gradient descent\n";
         zk = gradient_descent(qk, x, options_gd_coarse, std::cerr);
 

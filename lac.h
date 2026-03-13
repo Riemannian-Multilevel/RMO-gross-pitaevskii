@@ -29,7 +29,6 @@ using dealii::Point;
 using dealii::types::global_dof_index;
 using dealii::SolverControl;
 
-
 /**
  * @brief A lightweight alternative to dealii::LinearOperator.
  *
@@ -197,20 +196,16 @@ public:
      * @brief Constructor.
      * @param matrix The matrix to be inverted (solved).
      * @param method The iterative solver method to use (CG, GMRES, etc.).
-     * @param precond The preconditioner to apply.
-     * @param max_iter Maximum number of iterations allowed.
-     * @param reltol Relative tolerance for the solver.
+     * @param options Options for the iterative solver (preconditioner, iteration count, tolerance)
      */
     InverseMatrix(const OperatorType& matrix,
-                  const SolverMethod method,
-                  const PrecondType& precond = {},
-                  const unsigned max_iter = 1000,
-                  const double reltol = 1e-6)
+                  const SolverOptions options,
+                  const PrecondType&  precond)
         : m_matrix(matrix)
         , m_precond(precond)
-        , m_method(method)
-        , m_max_iter(max_iter)
-        , m_reltol(reltol)
+        , m_method(options.solver)
+        , m_max_iter(options.max_inner)
+        , m_reltol(options.tol_inner)
         , m_control(m_max_iter, SOLVER_MIN_TOL)
     {}
 
@@ -278,8 +273,8 @@ private:
     unsigned int m_max_iter;
     double m_reltol;
 
-    // Must be mutable because the deal.II solve() routine updates its
-    // internal state (iteration count, achieved residual) during a logically const vmult
+    // Mutable: relative tolerance changes depending on rhs
+    // in every (logically constant) vmult()
     mutable SolverControl m_control;
 };
 
@@ -311,22 +306,14 @@ public:
 
     /**
      * @brief Constructs the generic preconditioned solver.
-     * @param method The Krylov method to use (e.g., CG, MINRES, GMRES).
-     * @param max_iter Maximum number of inner iterations for the linear solver.
-     * @param reltol Target tolerance for the linear solver residual.
-     * @param precond_type The preconditioning strategy.
+     * @param options Options for the iterative solver (method, preconditioner, iteration count, tolerance)
      */
-    PreconditionInverse(const OperatorType& matrix,
-                        SolverMethod method,
-                        Precondition precond_type,
-                        unsigned int max_iter = 1000,
-                        double       reltol   = 1e-6)
+    PreconditionInverse(const OperatorType& matrix, SolverOptions options)
         : m_op(matrix)
-        , m_method(method)
-        , m_precond_type(precond_type)
-        , m_max_iter(max_iter)
-        , m_reltol(reltol)
-        , m_control(m_max_iter, SOLVER_MIN_TOL)
+        , m_method(options.solver)
+        , m_precond_type(options.precond)
+        , m_options(options)
+        , m_control(options.max_inner)
     {}
 
     /**
@@ -371,6 +358,7 @@ public:
     /** @brief Solves op * dst = src. */
     void vmult(VectorType& dst, const VectorType& src) const
     {
+        // Type erasure: select solve_with template argument, based on preconditioner argument
         switch (m_precond_type) {
             case Precondition::SPARSE_ILU:
                 solve_with(m_op, dst, src, ilu_precond);
@@ -394,22 +382,21 @@ private:
     void solve_with(const OperatorType& matrix, VectorType& dst, const VectorType& src,
                     const PrecondType& precond) const
     {
-        const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_method, precond, m_max_iter, m_reltol);
+        const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_options, precond);
 
         inv.vmult(dst, src);
         m_control = inv.control();
     }
 
     const OperatorType &m_op;
-    SolverMethod m_method;
-    Precondition m_precond_type;
-    unsigned int m_max_iter;
-    double       m_reltol;
+    SolverMethod  m_method;
+    Precondition  m_precond_type;
+    SolverOptions m_options;
 
     dealii::SparseILU<double> ilu_precond;
     dealii::DiagonalMatrix<VectorType> jacobi_precond;
 
-    // Stores the state of the most recent solve_internal call
+    // Stores the state of the most recent solve_with() call
     mutable SolverControl m_control;
 };
 
