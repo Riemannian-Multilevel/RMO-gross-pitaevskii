@@ -128,7 +128,9 @@ inline po::options_description descent_cli_options() {
         ("ls-beta", po::value<double>()->default_value(0.5),
             "beta for armijo line search")
         ("ls-sigma", po::value<double>()->default_value(0.4),
-            "sigma for armijo line search");
+            "sigma for armijo line search")
+        ("ls-min", po::value<double>()->default_value(1e-4),
+            "minimal step size for armijo line search");
     return d;
 }
 
@@ -142,6 +144,7 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.ls_alpha     = vm["ls-alpha"].as<double>();
     options_rgd.ls_beta      = vm["ls-beta"].as<double>();
     options_rgd.ls_sigma     = vm["ls-sigma"].as<double>();
+    options_rgd.ls_min       = vm["ls-min"].as<double>();
 }
 
 

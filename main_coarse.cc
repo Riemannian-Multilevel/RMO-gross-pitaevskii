@@ -25,6 +25,7 @@ int main()
     options_gd.ls_alpha      = 1.0;
     options_gd.ls_beta       = 0.6;
     options_gd.ls_sigma      = 0.2;
+    options_gd.ls_min        = 1e-4;   // threshold
     options_gd.max_search    = 5;
 
     SolverOptions options_slv_coarse = options_slv;

@@ -55,8 +55,7 @@ double armijo_line_search(OracleType& oracle,
                           const VectorType& eta,
                           const double fx,
                           const double dir_deriv,
-                          const DescentOptions& options,
-                          double threshold = 1e-4)
+                          const DescentOptions& options)
 {
     double alpha = options.ls_alpha;
     Vector<double> x_trial(x);
@@ -78,9 +77,9 @@ double armijo_line_search(OracleType& oracle,
             x = x_trial;    // step accepted, write x
             return alpha;
         }
-        if (alpha < threshold) {
+        if (alpha < options.ls_min) {
             x = x_trial;    // step accepted, write x
-            return threshold;
+            return options.ls_min;
         }
         oracle.update(x);   // step discarded, restore original state
 
@@ -89,7 +88,7 @@ double armijo_line_search(OracleType& oracle,
     }
     std::cerr << "Warning: Armijo line search hit max iterations ("
               << options.max_search << ")." << std::endl;
-    return threshold;
+    return options.ls_min;  // TODO: throw exception that can be caught
 }
 
 struct EmptyCheck

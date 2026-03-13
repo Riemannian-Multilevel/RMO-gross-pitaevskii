@@ -585,6 +585,8 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace energy
 
 
+// TODO: the coarse model is DEFINED in the M-metric (-> metric independence for certain vector transports.)
+//       it can be SOLVED in either the M- or the A-metric (as implemented by gradient() overloads.)
 namespace coarse
 {
 /**
@@ -626,8 +628,7 @@ double function_value(const Vector<double>& zeta,
 
 
 /**
- * Computes the coarse gradient update step in the mass-weighted metric:
- *
+ * Computes the coarse gradient update step in the mass-weighted metric.
  * @param M Mass matrix
  * @param M_inv Operator representing M^-1 (must support vmult)
  * @param A Operator representing A_zeta (must support vmult)

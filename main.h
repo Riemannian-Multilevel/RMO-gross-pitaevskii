@@ -160,12 +160,12 @@ public:
     double value(const Vector<double>& x) const override
     {
         return coarse::function_value(x, phi, w, this->problem.get_M(),
-                                      this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+            this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
     /**
-     * @brief Computes the coarse model gradient in the M-metric.
-     * $$ \nabla_M q_k(x) = \nabla_M E_H(x) - w $$
+     * @brief Computes the coarse model gradient in the A-metric.
+     * $$ \nabla_A q_k(x) = \nabla_A E_H(x) - w $$
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
@@ -313,24 +313,24 @@ private:
 template <typename MatrixType>
 double M_norm(const MatrixType& M, const Vector<double>& x)
 {
-    Vector<double> Ax(x.size());
-    M.vmult(Ax, x);
-    return std::sqrt(x*Ax);
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+    return std::sqrt(x*Mx);
 }
 
 struct CycleInfo
 {
     unsigned iter;
     unsigned lac_iter;
-    double step_size;
-    double elapsed;
-    bool coarse;
+    double   step_size;
+    double   elapsed;
+    bool     coarse;
 };
 
 template <typename Oracle>
 void cycle_eval(const Oracle& O, const Vector<double>& y,
                 dealii::ConvergenceTable& convergence_table,
-                CycleInfo info)
+                const CycleInfo info)
 {
     auto state   = O.residual(y);
     state.energy = O.value(y);
@@ -367,22 +367,39 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
     convergence_table.write_text(os, format);
 }
 
+
+template <typename OperatorType>
 struct CoarseStep
 {
-    CoarseStep(const Vector<double>& y, unsigned n_coarse, unsigned n_fine)
-        : y(y), x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
+    CoarseStep(const OperatorType& op, const Vector<double>& y, unsigned n_coarse, unsigned n_fine)
+        : op(op), y(y), x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
     {
         AssertDimension(y.size(),n_fine);
     }
 
+    // TODO: replace this with (level-aware?) Metric object later
+    const OperatorType& op;
     const Vector<double>& y;     // fine point (unchanged in coarse cycle)
     Vector<double> x;            // coarse point
     Vector<double> x_grad;       // (M-)coarse gradient
     Vector<double> y_grad;       // (M-)fine gradient
     Vector<double> y_grad_restr; // restricted gradient
+
+    // TODO: The metric in which the (fine/coarse) gradients are computed
+    double metric(const Vector<double>& a, const Vector<double>& b) const
+    {
+        AssertDimension(a.size(),b.size());
+        Vector<double> Mb(b.size());
+
+        op.vmult(Mb, b);
+        return a*Mb;
+    }
 };
 
 
+// TODO: CoarseModel decides which metric DEFINES the Nash model.
+//       CoarseOracle decides which metric SOLVES the Nash model.
+//       -> Do not hardcode the Oracle, but take a common interface.
 template <int dim>
 class CoarseModel
 {
@@ -416,11 +433,19 @@ public:
         , vector_transport(M_coarse, M_fine, transfer, point_transfer)
     {}
 
+    void set_timer(const dealii::Timer& timer_new)
+    {
+        timer = timer_new;
+    }
+
     // We separate the "setup" phase (fine/coarse vectors) from the "model" phase
     // so that a coarse criterion can be efficiently evaluated.
-    CoarseStep setup(const Vector<double>& y)
+    CoarseStep<OperatorType>     // TODO: unneeded template argument
+    setup(const Vector<double>& y)
     {
-        CoarseStep step(y, n_coarse, n_fine);
+        AssertDimension(y.size(),n_fine);
+        // TODO: y_fine -> M_fine, for metric computations
+        CoarseStep step(M_fine, y, n_coarse, n_fine);
 
         // Starting coarse point
         std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
@@ -447,6 +472,8 @@ public:
     // TODO: Use cycle_fine() for consistency instead of gradient_descent()
     void solve(const CoarseStep& step, DescentOptions options_gd, Vector<double>& dst)
     {
+        AssertDimension(dst.size(),n_coarse);
+
         Vector<double> w(n_coarse);
         w = step.x;
         w.add(-1.0, step.y_grad_restr);
@@ -469,8 +496,10 @@ public:
         vector_transport.vector_prolongation(step.y, {}, zk, dst);
     }
 
+    unsigned n_dofs() const { return n_coarse; }
+
 private:
-    dealii::Timer timer; // TODO: global timer?
+    dealii::Timer timer;
     SolverOptions options, options_coarse;
 
     // Function evaluation
@@ -490,7 +519,9 @@ private:
 };
 
 
-template <int dim>
+// TODO: factor out the cycle() / line_search() methods (consolidate with descent.h)
+//       convergence check (cf. EnergySimulator::run)
+template <int dim, typename Oracle>
 class FullApproximationScheme
 {
 public:
@@ -498,36 +529,18 @@ public:
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
-    // TODO: Only keep coarse step logic, to allow for different schemes (FAS, Gratton, ...)
     FullApproximationScheme(const GrossPitaevskiiProblem<dim>& problem_coarse,
                             const GrossPitaevskiiProblem<dim>& problem_fine,
                             const LinearTransferBase& transfer,
                             double beta, SolverOptions options, SolverOptions options_coarse)
-        // Function evaluation
-        : options(options), options_coarse(options_coarse)
-        , O_coarse(problem_coarse, beta, options_coarse)
-        , O_fine(problem_fine, beta, options)
-        , qk(problem_coarse, beta, {}, {}, options)
-
-        // Problem components
-        , n_coarse(problem_coarse.n_dofs())
-        , n_fine(problem_fine.n_dofs())
-        , M_coarse(problem_coarse.get_operator_M())
-        , M_fine(problem_fine.get_operator_M())
-        , A_coarse(problem_coarse.get_operator_A(beta))
-        , A_fine(problem_fine.get_operator_A(beta))
-        , M_coarse_inv(M_coarse, options_coarse)
-        , M_fine_inv(M_fine, options)
-
-        // Grid operators
-        , transfer(transfer)
-        , point_transfer(M_coarse, M_fine, transfer)
-        , vector_transport(M_coarse, M_fine, transfer, point_transfer)
-    {} // TODO: convergence check (cf. EnergySimulator::run)
+        : O_fine(problem_fine, beta, options)
+        , M_coarse(problem_coarse, problem_fine, transfer, beta, options, options_coarse)
+    {
+        M_coarse.set_timer(timer);
+    }
 
     void cycle(const Vector<double>& y0, std::ostream& os,
-               DescentOptions options_gd, DescentOptions options_gd_coarse,
-               unsigned n_pre = 1, unsigned n_post = 1)
+               DescentOptions options_gd, unsigned n_pre = 1, unsigned n_post = 1)
     {
         timer.reset();
 
@@ -539,14 +552,24 @@ public:
         while (true) {
             // 1. Pre-smoothing
             Vector<double> y_grad(O_fine.n_dofs());
+            Vector<double> dk(O_fine.n_dofs());
 
             for (unsigned pre = 0; pre < n_pre; pre++) {
                 std::cerr << "Pre-smoothing: " << pre << "\n";
                 if (i > options_gd.max_iter) break;
 
-                CycleInfo info = cycle_fine(y, y_grad, options_gd);
-                info.iter = i++;
-                info.coarse = false;
+                // Update gradient
+                std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
+                auto lac_iter = O_fine.gradient(y, y_grad);
+                dk  = y_grad;
+                dk *= -1.0;
+
+                // Apply step
+                auto dir_deriv = O_fine.metric(y_grad, dk);
+                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                info.iter      = i++;
+                info.coarse    = false;
+                info.lac_iter  = lac_iter;
 
                 cycle_eval(O_fine, y, convergence_table, info);
             }
@@ -555,9 +578,17 @@ public:
             {
                 if (i > options_gd.max_iter) break;
 
-                CycleInfo info = cycle_coarse(y, options_gd, options_gd_coarse);
-                info.iter = i++;
-                info.coarse = true;
+                // Update coarse direction
+                auto coarse_step = M_coarse.setup(y);
+                M_coarse.solve(coarse_step, options_gd, dk);
+
+                // Apply step
+                // Evaluate directional derivative in the M-norm
+                auto dir_deriv = coarse_step.metric(coarse_step.y_grad, dk);
+                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                info.iter      = i++;
+                info.coarse    = true;
+                info.lac_iter  = 0;
 
                 cycle_eval(O_fine, y, convergence_table, info);
             }
@@ -567,9 +598,18 @@ public:
                 std::cerr << "Post-smoothing: " << post << "\n";
                 if (i > options_gd.max_iter) break;
 
-                CycleInfo info = cycle_fine(y, y_grad, options_gd);
-                info.iter = i++;
-                info.coarse = false;
+                // Update gradient
+                std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
+                auto lac_iter = O_fine.gradient(y, y_grad);
+                dk  = y_grad;
+                dk *= -1.0;
+
+                // Apply step
+                auto dir_deriv = O_fine.metric(y_grad, dk);
+                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                info.iter      = i++;
+                info.coarse    = false;
+                info.lac_iter  = lac_iter;
 
                 cycle_eval(O_fine, y, convergence_table, info);
             }
@@ -580,142 +620,37 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    SolverOptions options, options_coarse;
+    Oracle O_fine;
+    CoarseModel<dim> M_coarse;  // encodes both the objective, and the method to solve it
 
-    // Function evaluation
-    EnergyOracle<dim> O_coarse, O_fine;
-    CoarseOracle<dim> qk;
-    unsigned n_coarse, n_fine;
-
-    OperatorType M_coarse, M_fine;
-    OperatorType A_coarse, A_fine;
-    InverseOpType M_coarse_inv, M_fine_inv;
-
-    // Grid operators
-    const LinearTransferBase& transfer;
-    ManifoldTransfer<dim, OperatorType> point_transfer;
-    //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
-    ProjectionTransport<dim, OperatorType> vector_transport;  // TODO select vector transport (enum)
-
-    // Methods
-    double line_search(Vector<double>& y, const Vector<double>& y_grad, const Vector<double>& eta,
-                       DescentOptions options_gd)
-    {
-        double threshold = 1e-4;
-        double Ex   = O_fine.value(y);
-        double dd   = O_fine.metric(y_grad, eta);
-        double step = armijo_line_search(O_fine, y, eta, Ex, dd, options_gd, threshold);
-
-        if (step < threshold) {
-            std::cerr << "  -> Coarse step rejected by line search." << std::endl;
-        }
-        return step;
-    }
-
-    // TODO: Separate computation of coarse vectors (for coarse condition) from minimization of coarse model
-    //       CoarseDescent class?
-    Vector<double>
-    descent_coarse(const Vector<double>& y, DescentOptions options_gd_coarse)
-    {
-        // Starting coarse point
-        std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
-        Vector<double> x(n_coarse);
-        point_transfer.restriction(y, x);
-        O_coarse.update(x);
-
-        // Compute coarse M-gradient
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-coarse gradient\n";
-        Vector<double> x_grad_m(n_coarse);
-        ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, x, x_grad_m);
-
-        // Compute fine M-gradient
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-fine gradient\n";
-        Vector<double> y_grad_m(n_fine);
-        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, y_grad_m);
-
-        // Compute coarse correction step
-        std::cerr << "[" << timer.cpu_time() << "] coarse: correction\n";
-        Vector<double> w(n_coarse);
-        coarse_correction(vector_transport, x_grad_m, y_grad_m, x, y, w);
-
-        // Set up coarse model
-        qk.update_parameters(w, x);
-        Vector<double> zk(n_coarse);
-
-        // Find zk such that qk(zk) < qk(x)
-        // TODO: Use cycle_fine() for consistency
-        std::cerr << "[" << timer.cpu_time() << "] coarse: gradient descent\n";
-        zk = gradient_descent(qk, x, options_gd_coarse, std::cerr);
-
-        // Compute the search direction, zk <- L_x(zk)
-        std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
-        ellipsoid::retract_inv_by_norm(M_coarse, zk, x);
-        Vector<double> dk(n_fine);
-
-        // Coarse base point not required for ProjectionTransport
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector prolongation\n";
-        vector_transport.vector_prolongation(y, {}, zk, dk);
-        return dk;
-    }
-
-    // Implementation of fine and coarse cycles
-    // TODO: refactor to cycle_smoother()
-    CycleInfo cycle_fine(Vector<double>& y, Vector<double>& y_grad, DescentOptions options_gd)
+    // Implementation of smoothing steps
+    CycleInfo cycle_smooth(Vector<double>& y, const double dir_deriv,
+                           const Vector<double>& eta, DescentOptions options_gd)
     {
         timer.start();
-
-        // Update gradient
-        std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
-        auto lac_iter = O_fine.gradient(y, y_grad);
         double step_size = options_gd.step_size;
 
         // Update point (fixed step or line search)
         if (options_gd.line_search) {
-            Vector<double> eta(y_grad);
-            eta *= -1.0;
+            std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
+            double Ex = O_fine.value(y);
 
-            step_size = line_search(y, y_grad, eta, options_gd);
+            step_size = armijo_line_search(O_fine, y, eta, Ex, dir_deriv, options_gd);
+
+            if (step_size <= options_gd.ls_min) {
+                std::cerr << "  -> Coarse step rejected by line search." << std::endl;
+            }
         }
         else {
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
-            O_fine.retract(y_grad, y, -options_gd.step_size);  // update y
+            O_fine.retract(eta, y, options_gd.step_size);  // update y
+
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
             O_fine.update(y);
         }
 
         timer.stop();
-        return {.lac_iter = lac_iter, .step_size = step_size, .elapsed = timer.cpu_time()};
-    }
-
-    // TODO: refactor to cycle_smoother()
-    CycleInfo cycle_coarse(Vector<double>& y, DescentOptions options_gd, DescentOptions options_gd_coarse)
-    {
-        timer.start();
-
-        // Coarse descent direction
-        Vector<double> dk = descent_coarse(y, options_gd_coarse);
-        double step_size = options_gd.step_size;
-
-        // Update point (fixed step or line search)
-        if (options_gd.line_search) {
-            // TODO: dk is computed in the A-metric, but the coarse model is formulated in the M-metric.
-            //       This means that we need to compute both the M and the A-gradient, former for the coarse model,
-            //       and later for evaluating the Armijo condition on dk.
-            //       Just computed both in either the A- or M-metric?
-            Vector<double> y_grad(n_fine);
-            auto lac_iter = O_fine.gradient(y, y_grad);
-
-            step_size = line_search(y, y_grad, dk, options_gd);
-        }
-        else {
-            std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
-            O_fine.retract(dk, y, options_gd.step_size);
-            std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
-            O_fine.update(y);
-        }
-
-        timer.stop();
-        return {.lac_iter = 0, .step_size = step_size, .elapsed = timer.cpu_time()};
+        return {.step_size = step_size, .elapsed = timer.cpu_time()};
     }
 };
 
