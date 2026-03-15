@@ -72,7 +72,7 @@ public:
     }
 
     // Accessors
-    const auto& get_M() const { return problem.get_M(); }
+    auto get_M() const { return problem.get_operator_M(); }
     const auto& get_A() const { return A; }
     double get_beta() const { return beta; }
     unsigned n_dofs() const { return problem.n_dofs(); }
@@ -407,11 +407,12 @@ public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
+    using CoarseStep    = CoarseStep<OperatorType>;
 
     CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
                 const GrossPitaevskiiProblem<dim>& problem_fine,
-                const LinearTransferBase& transfer,
-                double beta, SolverOptions options, SolverOptions options_coarse)
+                const LinearTransferBase& transfer, double beta,
+                SolverOptions options, SolverOptions options_coarse)
         // Function evaluation
         : options(options), options_coarse(options_coarse)
         , O_coarse(problem_coarse, beta, options_coarse)
@@ -424,6 +425,7 @@ public:
         , M_fine(problem_fine.get_operator_M())
         , A_coarse(problem_coarse.get_operator_A(beta))
         , A_fine(problem_fine.get_operator_A(beta))  // only needed for A-gradient
+        // TODO: separate preconditioners for gradient descent (qk), and inverse of M (coarse gradients)
         , M_coarse_inv(M_coarse, options_coarse)
         , M_fine_inv(M_fine, options)
 
@@ -440,7 +442,7 @@ public:
 
     // We separate the "setup" phase (fine/coarse vectors) from the "model" phase
     // so that a coarse criterion can be efficiently evaluated.
-    CoarseStep<OperatorType>     // TODO: unneeded template argument
+    CoarseStep
     setup(const Vector<double>& y)
     {
         AssertDimension(y.size(),n_fine);
@@ -472,10 +474,10 @@ public:
     // TODO: Use cycle_fine() for consistency instead of gradient_descent()
     void solve(const CoarseStep& step, DescentOptions options_gd, Vector<double>& dst)
     {
-        AssertDimension(dst.size(),n_coarse);
+        AssertDimension(dst.size(),n_fine);
 
         Vector<double> w(n_coarse);
-        w = step.x;
+        w = step.x_grad;
         w.add(-1.0, step.y_grad_restr);
 
         // Set up coarse model
@@ -483,13 +485,14 @@ public:
         Vector<double> zk(n_coarse);
 
         // Find zk such that qk(zk) < qk(x)
+        // TODO: variable method
         std::cerr << "[" << timer.cpu_time() << "] coarse: gradient descent\n";
         zk = gradient_descent(qk, step.x, options_gd, std::cerr);
 
         // Compute the search direction, zk <- L_x(zk)
+        // FIXME? use separate variable to hold ambient tangent vector L_x(zk)
         std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
         ellipsoid::retract_inv_by_norm(M_coarse, zk, step.x);
-        Vector<double> dk(n_fine);
 
         // Coarse base point not required for ProjectionTransport
         std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector prolongation\n";
@@ -515,11 +518,12 @@ private:
     const LinearTransferBase& transfer;
     ManifoldTransfer<dim, OperatorType> point_transfer;
     //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
-    ProjectionTransport<dim, OperatorType> vector_transport;  // TODO select vector transport (enum)
+    // TODO select vector transport (template parameter)
+    ProjectionTransport<dim, OperatorType> vector_transport;
 };
 
 
-// TODO: factor out the cycle() / line_search() methods (consolidate with descent.h)
+// TODO: factor out the cycle_smooth() methods (consolidate with descent.h)
 //       convergence check (cf. EnergySimulator::run)
 template <int dim, typename Oracle>
 class FullApproximationScheme
@@ -528,19 +532,101 @@ public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
+    using CoarseStep    = CoarseStep<OperatorType>;
 
     FullApproximationScheme(const GrossPitaevskiiProblem<dim>& problem_coarse,
                             const GrossPitaevskiiProblem<dim>& problem_fine,
-                            const LinearTransferBase& transfer,
-                            double beta, SolverOptions options, SolverOptions options_coarse)
+                            const LinearTransferBase& transfer, double beta,
+                            SolverOptions options, SolverOptions options_coarse)
         : O_fine(problem_fine, beta, options)
-        , M_coarse(problem_coarse, problem_fine, transfer, beta, options, options_coarse)
+        // TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
+        , O_coarse(problem_coarse, problem_fine, transfer, beta, options, options_coarse)
+        , problem_coarse(problem_coarse)
+        , problem_fine(problem_fine)
     {
-        M_coarse.set_timer(timer);
+        O_coarse.set_timer(timer);
     }
 
+    void cycle_condition(const Vector<double>& y0, std::ostream& os,
+                         DescentOptions options_gd, DescentOptions options_gd_coarse,
+                         double kappa, double eps, unsigned coarse_every = 1)
+    {
+        timer.reset();
+
+        // 0. Initialize oracle and coarse model
+        Vector<double> y(y0);
+        O_fine.update(y);
+        Vector<double> y_grad(y.size());
+        Vector<double> dk(y.size());
+
+        const auto& M_fine = problem_fine.get_M();
+        const auto& M_coarse = problem_coarse.get_M();
+        bool check_coarse_cond = true;
+
+        for (unsigned i = 0; i < options_gd.max_iter; i++) {
+            // Compute coarse condition
+            if (check_coarse_cond && (i == 0 || i % coarse_every == 0)) {
+                // TODO: If the coarse model is evaluated in the A-gradient (or the fine objected solved
+                //       in the M-metric), this step results in negligible additional effort.
+                //       Metric-free formulation of the coarse condition?
+                auto coarse_step = O_coarse.setup(y);
+                // Norm of fine (M-)gradient
+                double y_grad_norm = M_norm(M_fine, coarse_step.y_grad);
+                // Norm of restricted (M-)gradient
+                double y_grad_restr_norm = M_norm(M_coarse, coarse_step.y_grad_restr);
+                convergence_table.add_value("grad_restr_norm", y_grad_restr_norm);
+                convergence_table.add_value("grad_norm", y_grad_norm);
+
+                if (y_grad_restr_norm <= eps) {
+                    check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
+                }
+                if (y_grad_restr_norm >= kappa*y_grad_norm && y_grad_restr_norm > eps) {
+                    // Coarse step
+                    O_coarse.solve(coarse_step, options_gd_coarse, dk);
+
+                    // Evaluate directional derivative in M-norm
+                    auto dir_deriv = coarse_step.metric(coarse_step.y_grad, dk);
+                    CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                    info.iter      = i;
+                    info.coarse    = true;
+                    info.lac_iter  = 0;
+
+                    cycle_eval(O_fine, y, convergence_table, info);
+                } else {
+                    goto fine_step;
+                }
+            } else {
+                convergence_table.add_value("grad_restr_norm", 0);
+                convergence_table.add_value("grad_norm", 0);
+fine_step:
+                // Update gradient
+                std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
+                auto lac_iter = O_fine.gradient(y, y_grad);
+                dk  = y_grad;
+                dk *= -1.0;
+
+                // Evaluate directional derivative in A-norm
+                auto dir_deriv = O_fine.metric(y_grad, dk);
+                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                info.iter      = i;
+                info.coarse    = false;
+                info.lac_iter  = lac_iter;
+
+                cycle_eval(O_fine, y, convergence_table, info);
+            }
+        }
+        convergence_table.set_precision("grad_restr_norm", 4);
+        convergence_table.set_precision("grad_norm", 4);
+        convergence_table.set_scientific("grad_restr_norm", true);
+        convergence_table.set_scientific("grad_norm", true);
+
+        cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
+    }
+
+    // TODO: move loop to caller or separate method
     void cycle(const Vector<double>& y0, std::ostream& os,
-               DescentOptions options_gd, unsigned n_pre = 1, unsigned n_post = 1)
+               DescentOptions options_gd, DescentOptions options_gd_coarse,
+               unsigned n_pre = 1, unsigned n_post = 1)
     {
         timer.reset();
 
@@ -556,7 +642,7 @@ public:
 
             for (unsigned pre = 0; pre < n_pre; pre++) {
                 std::cerr << "Pre-smoothing: " << pre << "\n";
-                if (i > options_gd.max_iter) break;
+                if (i > options_gd.max_iter) goto finalize;
 
                 // Update gradient
                 std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
@@ -576,11 +662,11 @@ public:
 
             // 2. Coarse step
             {
-                if (i > options_gd.max_iter) break;
+                if (i > options_gd.max_iter) goto finalize;
 
                 // Update coarse direction
-                auto coarse_step = M_coarse.setup(y);
-                M_coarse.solve(coarse_step, options_gd, dk);
+                auto coarse_step = O_coarse.setup(y);
+                O_coarse.solve(coarse_step, options_gd_coarse, dk);
 
                 // Apply step
                 // Evaluate directional derivative in the M-norm
@@ -596,7 +682,7 @@ public:
             // 3. Post-smoothing
             for (unsigned post = 0; post < n_post; ++post) {
                 std::cerr << "Post-smoothing: " << post << "\n";
-                if (i > options_gd.max_iter) break;
+                if (i > options_gd.max_iter) goto finalize;
 
                 // Update gradient
                 std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
@@ -614,6 +700,7 @@ public:
                 cycle_eval(O_fine, y, convergence_table, info);
             }
         }
+finalize:
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
@@ -621,7 +708,9 @@ private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
     Oracle O_fine;
-    CoarseModel<dim> M_coarse;  // encodes both the objective, and the method to solve it
+    CoarseModel<dim> O_coarse;  // encodes both the objective, and the method to solve it
+    const GrossPitaevskiiProblem<dim>& problem_coarse;
+    const GrossPitaevskiiProblem<dim>& problem_fine;
 
     // Implementation of smoothing steps
     CycleInfo cycle_smooth(Vector<double>& y, const double dir_deriv,

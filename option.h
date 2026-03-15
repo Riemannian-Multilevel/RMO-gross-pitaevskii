@@ -113,8 +113,6 @@ inline po::options_description descent_cli_options() {
     d.add_options()
         ("max-iter", po::value<int>()->default_value(25),
             "maximum number of iterations")
-        ("max-search", po::value<int>()->default_value(20),
-            "maximum number of iterations for line search")
         ("tol-residual", po::value<double>()->default_value(1e-4),
             "tolerance for M-residual")
         ("tol-lambda", po::value<double>()->default_value(1e-8),
@@ -123,6 +121,8 @@ inline po::options_description descent_cli_options() {
             "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
             "use armijo line search")
+        ("ls-max-iter", po::value<int>()->default_value(5),
+            "maximum number of iterations for line search")
         ("ls-alpha", po::value<double>()->default_value(1.0),
             "alpha for armijo line search")
         ("ls-beta", po::value<double>()->default_value(0.5),
@@ -137,10 +137,10 @@ inline po::options_description descent_cli_options() {
 inline void apply_descent_options(const po::variables_map& vm, DescentOptions& options_rgd) {
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
-    options_rgd.max_search   = vm["max-search"].as<int>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.line_search  = vm["line-search"].as<bool>();
+    options_rgd.ls_max_iter   = vm["ls-max-iter"].as<int>();
     options_rgd.ls_alpha     = vm["ls-alpha"].as<double>();
     options_rgd.ls_beta      = vm["ls-beta"].as<double>();
     options_rgd.ls_sigma     = vm["ls-sigma"].as<double>();

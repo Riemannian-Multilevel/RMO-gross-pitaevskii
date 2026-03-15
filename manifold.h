@@ -13,6 +13,18 @@
 namespace gpe
 {
 
+// TODO
+struct TangentVector
+{
+    Vector<double> data;
+};
+
+// TODO
+struct ManifoldPoint
+{
+    Vector<double> data;
+};
+
 namespace iteration
 {
 // Termination criteria for energy function minimization

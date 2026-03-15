@@ -60,7 +60,7 @@ double armijo_line_search(OracleType& oracle,
     double alpha = options.ls_alpha;
     Vector<double> x_trial(x);
 
-    for (unsigned int ls_iter = 0; ls_iter < options.max_search; ++ls_iter) {
+    for (unsigned int ls_iter = 0; ls_iter < options.ls_max_iter; ++ls_iter) {
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
         step *= alpha;
@@ -87,7 +87,7 @@ double armijo_line_search(OracleType& oracle,
         alpha *= options.ls_beta;
     }
     std::cerr << "Warning: Armijo line search hit max iterations ("
-              << options.max_search << ")." << std::endl;
+              << options.ls_max_iter << ")." << std::endl;
     return options.ls_min;  // TODO: throw exception that can be caught
 }
 
@@ -173,7 +173,7 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
             eta *= -1.0;
             double dd = oracle.metric(g, eta); // <grad f(x), -grad f(x)>_x
             // runs O.retract(), O.update()
-            double h = armijo_line_search(oracle, x, eta, Ex, dd, options, 1e-4);
+            double h = armijo_line_search(oracle, x, eta, Ex, dd, options);
             //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
             step_size = h;

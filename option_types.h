@@ -62,7 +62,7 @@ struct DescentOptions
     bool line_search;           // determine step-size by line search
 
     // TODO: move to separate struct
-    unsigned int max_search;    // maximum line search iterations
+    unsigned int ls_max_iter;    // maximum line search iterations
     double ls_alpha;
     double ls_beta;
     double ls_sigma;
