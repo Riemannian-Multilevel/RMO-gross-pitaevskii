@@ -393,6 +393,7 @@ template <int dim>
 class VectorTransportBase
 {
 public:
+    static constexpr std::string id = "";
     virtual ~VectorTransportBase() = default;
 
     /**
@@ -472,10 +473,12 @@ void coarse_correction(const VectorTransportBase<dim>& transport,
  * @tparam MatrixType The matrix type defining the ambient space metric (typically the Mass matrix).
  */
 template <int dim, typename MatrixType>
-class ProjectionTransport : public VectorTransportBase<dim>
+class MassProjectionTransport : public VectorTransportBase<dim>
 {
 public:
-    ProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
+    static constexpr std::string id = "M";
+
+    MassProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
                         const LinearTransferBase& I,
                         const ManifoldTransfer<dim, MatrixType>& pt)
         : M_coarse(M_c), M_fine(M_f)
@@ -496,7 +499,7 @@ public:
         transfer.to_fine_mesh(v_coarse, Iv);
 
         // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
-        ellipsoid::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
+        ellipsoid::mass::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
     }
 
     /**
@@ -513,7 +516,7 @@ public:
         transfer.to_coarse_mesh(v_fine, Iv);
 
         // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
-        ellipsoid::project_onto_tangent_space(x_coarse, M_coarse, Iv, dst);
+        ellipsoid::mass::project_onto_tangent_space(x_coarse, M_coarse, Iv, dst);
     }
 
 private:
@@ -529,6 +532,8 @@ template <int dim, typename MatrixType, typename InverseMatrixType>
 class EnergyProjectionTransport : public VectorTransportBase<dim>
 {
 public:
+    static constexpr std::string id = "A";
+
     EnergyProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
                               const InverseMatrixType& A_inv_c, const InverseMatrixType& A_inv_f,
                               const LinearTransferBase& I,
@@ -546,7 +551,7 @@ public:
         transfer.to_fine_mesh(v_coarse, Iv);
 
         // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in A-metric
-        ellipsoid::project_onto_tangent_space(A_inv_fine, y_fine, M_fine, Iv, dst);
+        ellipsoid::energy::project_onto_tangent_space(A_inv_fine, y_fine, M_fine, Iv, dst);
     }
 
     void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
@@ -557,7 +562,7 @@ public:
         transfer.to_coarse_mesh(v_fine, Iv);
 
         // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H in A-metric
-        ellipsoid::project_onto_tangent_space(A_inv_coarse, x_coarse, M_coarse, Iv, dst);
+        ellipsoid::energy::project_onto_tangent_space(A_inv_coarse, x_coarse, M_coarse, Iv, dst);
     }
 
 private:
@@ -566,6 +571,50 @@ private:
 
     const LinearTransferBase& transfer;
     const ManifoldTransfer<dim, MatrixType>& point_transfer;
+};
+
+
+template <int dim, typename MatrixType>
+class FrobeniusProjectionTransport : public VectorTransportBase<dim>
+{
+public:
+    static constexpr std::string id = "F";
+
+    FrobeniusProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
+                                 const LinearTransferBase& I,
+                                 const ManifoldTransfer<dim, MatrixType>& pt)
+        : M_coarse(M_c), M_fine(M_f)
+        , transfer(I), point_transfer(pt)
+    {}
+
+    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
+                         const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Tangent vector interpolated to fine ambient space
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v_coarse, Iv);
+
+        // F-orthogonal projection on the fine grid
+        ellipsoid::frobenius::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
+    }
+
+    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
+                        const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Tangent vector restricted to coarse ambient space
+        Vector<double> Iv(transfer.n_coarse());
+        transfer.to_coarse_mesh(v_fine, Iv);
+
+        // F-Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
+        ellipsoid::frobenius::project_onto_tangent_space(x_coarse, M_coarse, Iv, dst);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+
+    const MatrixType& M_fine;
+    const MatrixType& M_coarse;
 };
 
 
@@ -614,7 +663,8 @@ public:
         vector_prolongation(x_coarse, v_coarse, D_px);
 
         // Vector transport T_p(x) S_h -> T_y S_h
-        ellipsoid::project_onto_tangent_space(y_fine, M_fine, D_px, dst);
+        // TODO: which metric to choose for orthogonal projection?
+        ellipsoid::mass::project_onto_tangent_space(y_fine, M_fine, D_px, dst);
     }
 
     void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v_fine,
@@ -638,7 +688,8 @@ public:
         vector_restriction(y_fine, v_fine, D_ry);
 
         // Vector transport T_r(y) S_H -> T_x S_H
-        ellipsoid::project_onto_tangent_space(x_coarse, M_coarse, D_ry, dst);
+        // TODO: which metric to choose for orthogonal projection?
+        ellipsoid::mass::project_onto_tangent_space(x_coarse, M_coarse, D_ry, dst);
     }
 
 private:

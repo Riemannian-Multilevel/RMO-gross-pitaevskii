@@ -26,6 +26,7 @@ class OracleBase
 {
 public:
     static constexpr int dimension = dim;
+    static constexpr std::string id = "";
     using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
@@ -38,7 +39,9 @@ public:
         , beta(beta_)
         , options(options_)
         , A(problem.get_operator_A(beta))
+        , M(problem.get_operator_M())
         , A_inv(A, options_)
+        , M_inv(M, options_)
     {
         A_inv.update_static(problem.get_A0());
     }
@@ -52,6 +55,7 @@ public:
     void update(const Vector<double>& x)
     {
         problem.assemble_nonlinear_term(x);
+
         A_inv.update_dynamic(A.diagonal());
     }
 
@@ -61,7 +65,7 @@ public:
      */
     void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const
     {
-        ellipsoid::retract_by_norm(problem.get_M(), z, x, factor);
+        ellipsoid::retract_by_norm(M, z, x, factor);
     }
 
     void retract(const Vector<double>& z, const Vector<double>& x,
@@ -72,7 +76,7 @@ public:
     }
 
     // Accessors
-    auto get_M() const { return problem.get_operator_M(); }
+    const auto& get_M() const { return M; }
     const auto& get_A() const { return A; }
     double get_beta() const { return beta; }
     unsigned n_dofs() const { return problem.n_dofs(); }
@@ -81,20 +85,64 @@ public:
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_assembly`
     virtual double value(const Vector<double>&) const = 0;
+    virtual double directional_derivative(const Vector<double>& x, const Vector<double>& z) const = 0;
 
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
-
-    virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
+    // virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
     virtual iteration::State residual(const Vector<double>&) const = 0;
 
 protected:
     const GrossPitaevskiiProblem<dim>& problem;
     double beta;
     SolverOptions options;
-    OperatorType A;
-    InverseOpType A_inv;
+    OperatorType A, M;
+    InverseOpType A_inv, M_inv;
+};
+
+
+template <int dim>
+class MassOracle : public OracleBase<dim>
+{
+    static constexpr std::string id = "M";
+    using OracleBase<dim>::OracleBase;
+
+    /**
+      * @brief Computes the Gross-Pitaevskii energy functional value.
+      * $$ E(\phi) = \langle \phi, A_0 \phi \rangle + \frac{\beta}{2} \langle \phi, M_{pp}(\phi) \phi \rangle $$
+    */
+    double value(const Vector<double>& x) const override
+    {
+        return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return ellipsoid::directional_derivative(x, z, this->A);
+    }
+
+    /**
+     * @brief Computes the Riemannian gradient in the M-metric.
+     */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        ellipsoid::mass::gradient(this->M_inv, this->A, this->problem.get_M(), x, output);
+        return this->A_inv.control().last_step();
+    }
+
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return iteration::residual(x, this->A, this->problem.get_operator_M());
+    }
+
+    // double metric(const Vector<double>& y, const Vector<double>& z) const override
+    // {
+    //     AssertDimension(y.size(), z.size());
+    //     Vector<double> Mz(z.size());
+    //     this->M.vmult(Mz, y);
+    //     return y * Mz;
+    // }
 };
 
 
@@ -102,6 +150,7 @@ template <int dim>
 class EnergyOracle : public OracleBase<dim>
 {
 public:
+    static constexpr std::string id = "A";
     // Inherit constructors from OracleBase
     using OracleBase<dim>::OracleBase;
 
@@ -114,13 +163,18 @@ public:
         return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return ellipsoid::directional_derivative(x, z, this->A);
+    }
+
     /**
      * @brief Computes the Riemannian gradient in the A-metric.
      * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        ellipsoid::gradient(this->A_inv, this->problem.get_M(), x, output);
+        ellipsoid::energy::gradient(this->A_inv, this->problem.get_M(), x, output);
         return this->A_inv.control().last_step();
     }
 
@@ -129,22 +183,71 @@ public:
         return iteration::residual(x, this->A, this->problem.get_operator_M());
     }
 
-    double metric(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        AssertDimension(y.size(), z.size());
-        Vector<double> Az(z.size());
-        this->A.vmult(Az, y);
-        return y * Az;
-    }
+    // double metric(const Vector<double>& y, const Vector<double>& z) const override
+    // {
+    //     AssertDimension(y.size(), z.size());
+    //     Vector<double> Az(z.size());
+    //     this->A.vmult(Az, y);
+    //     return y * Az;
+    // }
 };
 
 
 template <int dim>
-class CoarseOracle : public OracleBase<dim>
+class FrobeniusOracle : public OracleBase<dim>
 {
 public:
+    static constexpr std::string id = "F";
+    using OracleBase<dim>::OracleBase;
+
+    /**
+     * @brief Computes the Gross-Pitaevskii energy functional value.
+     */
+    double value(const Vector<double>& x) const override
+    {
+        return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return ellipsoid::directional_derivative(x, z, this->A);
+    }
+
+    /**
+     * @brief Computes the Riemannian gradient in the F-metric.
+     * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
+     */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        ellipsoid::frobenius::gradient(this->A, this->M, x, output);
+
+        // F-gradient evaluation does not involve a linear solver.
+        return 0;
+    }
+
+    /**
+     * @brief Evaluates the current optimization state.
+     */
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return iteration::residual(x, this->A, this->problem.get_operator_M(), false);
+    }
+
+    // double metric(const dealii::Vector<double>& y, const dealii::Vector<double>& z) const override
+    // {
+    //     return y * z; // Standard L2 dot product
+    // }
+};
+
+
+// TODO: use tag dispatch for gradient metric
+template <int dim>
+class MassCoarseOracle : public OracleBase<dim>
+{
+public:
+    static constexpr std::string id = "MC";
     // Explicit constructor to initialize the correction parameters
-    CoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
+    MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
                  const Vector<double>& w_, const Vector<double>& phi_,
                  SolverOptions options_)
         : OracleBase<dim>(problem_, beta_, options_)
@@ -159,7 +262,63 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::function_value(x, phi, w, this->problem.get_M(),
+        return coarse::mass::function_value(x, phi, w, this->problem.get_M(),
+            this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+    }
+
+    /**
+     * @brief Computes the coarse model gradient in the M-metric.
+     */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        coarse::mass::gradient(this->problem.get_M(), x, phi, w, output);
+        return 0; // No linear solver needed for pure M-gradient
+    }
+
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy=value(x)};
+    }
+
+    // double metric(const Vector<double>& y, const Vector<double>& z) const override
+    // {
+    //     // Metric for line search evaluation on the coarse grid
+    //     AssertDimension(y.size(), z.size());
+    //     Vector<double> Mz(z.size());
+    //     this->M.vmult(Mz, y);
+    //     return y * Mz;
+    // }
+
+private:
+    Vector<double> w;
+    Vector<double> phi;
+};
+
+
+// TODO: use tag dispatch for gradient metric
+template <int dim>
+class MassCoarseOracleEnergyAdaptive : public OracleBase<dim>
+{
+public:
+    static constexpr std::string id = "MCA";
+
+    // Explicit constructor to initialize the correction parameters
+    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
+                 const Vector<double>& w_, const Vector<double>& phi_,
+                 SolverOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , w(w_), phi(phi_)
+    {}
+
+    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    {
+        w = w_new;
+        phi = phi_new;
+    }
+
+    double value(const Vector<double>& x) const override
+    {
+        return coarse::mass::function_value(x, phi, w, this->problem.get_M(),
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
@@ -169,24 +328,149 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::gradient(this->problem.get_M(), this->A_inv, x, phi, w, output);
+        coarse::mass::energy_adaptive_gradient(this->problem.get_M(), this->A_inv, x, phi, w, output);
         //coarse::gradient(this->problem.get_M(), x, phi, w, output);
         return 0; // No linear solver needed for pure M-gradient
-    }
-
-    double metric(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        // Metric for line search evaluation on the coarse grid
-        AssertDimension(y.size(), z.size());
-        Vector<double> Az(z.size());
-        this->A.vmult(Az, y);
-        return y * Az;
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
         return {.energy=value(x)};
     }
+
+    // double metric(const Vector<double>& y, const Vector<double>& z) const override
+    // {
+    //     // Metric for line search evaluation on the coarse grid
+    //     AssertDimension(y.size(), z.size());
+    //     Vector<double> Az(z.size());
+    //     this->A.vmult(Az, y);
+    //     return y * Az;
+    // }
+
+private:
+    Vector<double> w;
+    Vector<double> phi;
+};
+
+
+// TODO: use tag dispatch for gradient metric
+template <int dim>
+class FrobeniusCoarseOracle : public OracleBase<dim>
+{
+public:
+    static constexpr std::string id = "FC";
+
+    FrobeniusCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
+                          const Vector<double>& w_, const Vector<double>& phi_,
+                          SolverOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , w(w_)
+        , phi(phi_)
+    {}
+
+    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    {
+        w = w_new;
+        phi = phi_new;
+    }
+
+    double value(const Vector<double>& x) const override
+    {
+        return coarse::frobenius::function_value(x, phi, w,
+            this->problem.get_M(), this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+    }
+
+    /**
+     * @brief Computes the coarse model gradient in the F-metric.
+     * $$ \nabla_F q_k(\zeta) = \Pi_{\zeta, F}\left(A_\zeta \zeta - \frac{1}{\phi^\top M\zeta}w\right) $$
+     */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        // Compute the pure Frobenius gradient
+        coarse::frobenius::gradient(this->problem.get_M(), this->A, x, phi, w, output);
+
+        // Energy-adaptive gradient
+        // coarse_frobenius::energy_adaptive_gradient(this->problem.get_M(), this->A_inv, this->A, x, phi, w, output);.
+        return 0; // 0 iterations, as no Krylov solver is used
+    }
+
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy = value(x)};
+    }
+
+    // double metric(const Vector<double>& y, const Vector<double>& z) const override
+    // {
+    //     // AssertDimension(y.size(), z.size());
+    //     // Vector<double> Az(z.size());
+    //     // this->A.vmult(Az, y);
+    //     // return y * Az;
+    //     return y * z;
+    // }
+
+
+private:
+    Vector<double> w;
+    Vector<double> phi;
+};
+
+
+// TODO: use tag dispatch for gradient metric
+template <int dim>
+class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase<dim>
+{
+public:
+    static constexpr std::string id = "FCA";
+
+    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
+                                        const dealii::Vector<double>& w_, const dealii::Vector<double>& phi_,
+                                        SolverOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , w(w_)
+        , phi(phi_)
+    {}
+
+    void update_parameters(const dealii::Vector<double>& w_new, const dealii::Vector<double>& phi_new)
+    {
+        w = w_new;
+        phi = phi_new;
+    }
+
+    double value(const Vector<double>& x) const override
+    {
+        return coarse::frobenius::function_value(x, phi, w,
+            this->problem.get_M(), this->problem.get_A0(),
+            this->problem.get_Mpp(), this->beta);
+    }
+
+    /**
+     * @brief Computes the coarse model gradient in the energy-adaptive metric.
+     * $$ \nabla_A q_k(\zeta) = \tilde{A}_\zeta^{-1} \left( \nabla_F q_k(\zeta) \right) $$
+     */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        // Computes the F-gradient and applies the A_inv preconditioner
+        coarse::frobenius::energy_adaptive_gradient(this->problem.get_M(), this->A_inv,
+            this->A, x, phi, w, output);
+
+        // Return the number of Krylov iterations used by A_inv
+        return this->A_inv.control().last_step();
+    }
+
+    /**
+     * @brief Evaluates the convergence of the coarse model.
+     */
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy = value(x)};
+    }
+
+    // double metric(const Vector<double>& y, const Vector<double>& z) const override
+    // {
+    //     Vector<double> Az(z.size());
+    //     this->A.vmult(Az, y);
+    //     return y * Az;
+    // }
 
 private:
     Vector<double> w;
@@ -198,14 +482,16 @@ private:
  * @brief Orchestrator for Gross-Pitaevskii simulations.
  * The @ref EnergySimulator manages the persistent @ref GrossPitaevskiiPackage
  * (discretization) and coordinates the execution of the energy minimization
- * using the @ref EnergyOracle.
+ * using a given @ref Oracle.
  *
  * @tparam dim The spatial dimension.
  */
-template <int dim>
-class EnergySimulator
+template <int dim, typename Oracle>
+class GrossPitaevskiiSimulator
 {
 public:
+    static_assert(Oracle::dimension == dim);
+
     /**
      * @brief Constructor.
      * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
@@ -214,7 +500,7 @@ public:
      * @param n_levels Number of global mesh refinements.
      */
     template <typename Potential>
-    EnergySimulator(Potential&& V, const GPE_Options& options, unsigned int n_levels)
+    GrossPitaevskiiSimulator(Potential&& V, const GPE_Options& options, unsigned int n_levels)
         : package(options, n_levels)
         , problem(package.problem(std::forward<Potential>(V)))
         , options(options)
@@ -247,7 +533,7 @@ public:
     {
         Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
         // Create the oracle (light-weight object, references problem matrices)
-        EnergyOracle<dim> oracle(problem, beta, options_inner);
+        Oracle oracle(problem, beta, options_inner);
 
         // Termination criterium
         auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
@@ -275,9 +561,9 @@ public:
     const dealii::AffineConstraints<double>&
     get_constraints() const { return package.get_constraints(); }
 
-    EnergyOracle<dim> get_oracle(double beta, SolverOptions options_gd) const
+    Oracle get_oracle(double beta, SolverOptions options_gd) const
     {
-        return EnergyOracle<dim>(problem, beta, options_gd);
+        return Oracle(problem, beta, options_gd);
     }
 
     auto get_M() const { return problem.get_operator_M(); }
@@ -368,46 +654,32 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
 }
 
 
-template <typename OperatorType>
 struct CoarseStep
 {
-    CoarseStep(const OperatorType& op, const Vector<double>& y, unsigned n_coarse, unsigned n_fine)
-        : op(op), y(y), x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
+    CoarseStep(const Vector<double>& y, const unsigned n_coarse, const unsigned n_fine)
+        : y(y), x(n_coarse), x_grad(n_coarse), y_grad(n_fine), y_grad_restr(n_coarse)
     {
         AssertDimension(y.size(),n_fine);
     }
 
-    // TODO: replace this with (level-aware?) Metric object later
-    const OperatorType& op;
     const Vector<double>& y;     // fine point (unchanged in coarse cycle)
     Vector<double> x;            // coarse point
     Vector<double> x_grad;       // (M-)coarse gradient
     Vector<double> y_grad;       // (M-)fine gradient
     Vector<double> y_grad_restr; // restricted gradient
-
-    // TODO: The metric in which the (fine/coarse) gradients are computed
-    double metric(const Vector<double>& a, const Vector<double>& b) const
-    {
-        AssertDimension(a.size(),b.size());
-        Vector<double> Mb(b.size());
-
-        op.vmult(Mb, b);
-        return a*Mb;
-    }
 };
 
 
 // TODO: CoarseModel decides which metric DEFINES the Nash model.
 //       CoarseOracle decides which metric SOLVES the Nash model.
 //       -> Do not hardcode the Oracle, but take a common interface.
-template <int dim>
+template <int dim, typename Oracle, typename CoarseOracle, typename VectorTransport>
 class CoarseModel
 {
 public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
-    using CoarseStep    = CoarseStep<OperatorType>;
 
     CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
                 const GrossPitaevskiiProblem<dim>& problem_fine,
@@ -416,6 +688,7 @@ public:
         // Function evaluation
         : options(options), options_coarse(options_coarse)
         , O_coarse(problem_coarse, beta, options_coarse)
+        , O_fine(problem_fine, beta, options)
         , qk(problem_coarse, beta, {}, {}, options)
 
         // Problem components
@@ -446,8 +719,7 @@ public:
     setup(const Vector<double>& y)
     {
         AssertDimension(y.size(),n_fine);
-        // TODO: y_fine -> M_fine, for metric computations
-        CoarseStep step(M_fine, y, n_coarse, n_fine);
+        CoarseStep step(y, n_coarse, n_fine);
 
         // Starting coarse point
         std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
@@ -457,15 +729,15 @@ public:
         O_coarse.update(step.x);
 
         // Compute coarse M-gradient
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-coarse gradient\n";
-        ellipsoid::gradient(M_coarse_inv, A_coarse, M_coarse, step.x, step.x_grad);
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " + O_coarse.id + "-coarse gradient\n";
+        O_coarse.gradient(step.x, step.x_grad);
 
         // Compute fine M-gradient
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-fine gradient\n";
-        ellipsoid::gradient(M_fine_inv, A_fine, M_fine, y, step.y_grad);
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " + O_fine.id + "-fine gradient\n";
+        O_fine.gradient(y, step.y_grad);
 
         // Compute coarse correction step
-        std::cerr << "[" << timer.cpu_time() << "] coarse: vector transfer\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector restriction\n";
         vector_transport.vector_restriction(step.x, y, step.y_grad, step.y_grad_restr);
 
         return step;
@@ -486,7 +758,7 @@ public:
 
         // Find zk such that qk(zk) < qk(x)
         // TODO: variable method
-        std::cerr << "[" << timer.cpu_time() << "] coarse: gradient descent\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " + qk.id + "-gradient descent\n";
         zk = gradient_descent(qk, step.x, options_gd, std::cerr);
 
         // Compute the search direction, zk <- L_x(zk)
@@ -494,9 +766,8 @@ public:
         std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
         ellipsoid::retract_inv_by_norm(M_coarse, zk, step.x);
 
-        // Coarse base point not required for ProjectionTransport
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector prolongation\n";
-        vector_transport.vector_prolongation(step.y, {}, zk, dst);
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " + vector_transport.id + "-vector prolongation\n";
+        vector_transport.vector_prolongation(step.y, step.x, zk, dst);
     }
 
     unsigned n_dofs() const { return n_coarse; }
@@ -506,8 +777,8 @@ private:
     SolverOptions options, options_coarse;
 
     // Function evaluation
-    EnergyOracle<dim> O_coarse;
-    CoarseOracle<dim> qk;
+    Oracle O_coarse, O_fine;
+    CoarseOracle qk;
     unsigned n_coarse, n_fine;
 
     OperatorType M_coarse, M_fine;
@@ -517,22 +788,19 @@ private:
     // Grid operators
     const LinearTransferBase& transfer;
     ManifoldTransfer<dim, OperatorType> point_transfer;
-    //EnergyProjectionTransport<dim, MatrixType, InverseOpType> vector_transport;
-    // TODO select vector transport (template parameter)
-    ProjectionTransport<dim, OperatorType> vector_transport;
+    VectorTransport vector_transport;
 };
 
 
 // TODO: factor out the cycle_smooth() methods (consolidate with descent.h)
 //       convergence check (cf. EnergySimulator::run)
-template <int dim, typename Oracle>
+template <int dim, typename Oracle, typename CoarseModel>
 class FullApproximationScheme
 {
 public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
-    using CoarseStep    = CoarseStep<OperatorType>;
 
     FullApproximationScheme(const GrossPitaevskiiProblem<dim>& problem_coarse,
                             const GrossPitaevskiiProblem<dim>& problem_fine,
@@ -708,7 +976,7 @@ private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
     Oracle O_fine;
-    CoarseModel<dim> O_coarse;  // encodes both the objective, and the method to solve it
+    CoarseModel O_coarse;  // encodes both the objective, and the method to solve it
     const GrossPitaevskiiProblem<dim>& problem_coarse;
     const GrossPitaevskiiProblem<dim>& problem_fine;
 

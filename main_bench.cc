@@ -13,10 +13,10 @@ using namespace gpe;
 
 // TODO: use multigrid transfer/matrices
 //       multiple runs with average time/stddev
-template <int dim>
+template <typename Simulator>
 static void
-prolongate_between_meshes(const EnergySimulator<dim> &coarse, const Vector<double> &x_coarse,
-                          const EnergySimulator<dim> &fine, Vector<double> &y0_fine)
+prolongate_between_meshes(const Simulator& coarse, const Vector<double> &x_coarse,
+                          const Simulator& fine, Vector<double> &y0_fine)
 {
     y0_fine.reinit(fine.n_dofs());
     y0_fine = 0.0;
@@ -77,7 +77,7 @@ int main()
     }
 
     // 1) One solver per refinement count
-    MGLevelObject<std::unique_ptr<EnergySimulator<dim>>> solver(ref_min, ref_max);
+    MGLevelObject<std::unique_ptr<GrossPitaevskiiSimulator<dim, EnergyOracle<dim>>>> solver(ref_min, ref_max);
 
     // for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
     //     solver[ref - ref_min] = std::make_unique<GPE<dim>>(options, ref);
@@ -88,7 +88,7 @@ int main()
         std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
         TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
 
-        solver[ref] = std::make_unique<EnergySimulator<dim>>(V, options, ref);
+        solver[ref] = std::make_unique<GrossPitaevskiiSimulator<dim, EnergyOracle<dim>>>(V, options, ref);
     }
 
     // 3) Hierarchy of starting vectors (indexed by refinement count!)
@@ -131,7 +131,7 @@ int main()
 
             if (ref < ref_max)
             {
-                prolongate_between_meshes<dim>(*solver[ref], x[ref],
+                prolongate_between_meshes(*solver[ref], x[ref],
                     *solver[ref + 1], y0[ref + 1]);
             }
         }

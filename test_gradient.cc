@@ -67,7 +67,7 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
     normrnd(mean, stddev, tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the mass metric
-    ellipsoid::project_onto_tangent_space(x, M, tmp, v);
+    ellipsoid::mass::project_onto_tangent_space(x, M, tmp, v);
 }
 
 template <typename MatrixType, typename InverseMatrixType>
@@ -80,7 +80,7 @@ void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>&
     normrnd(mean, stddev, tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
-    ellipsoid::project_onto_tangent_space(A_inv, x, M, tmp, v);
+    ellipsoid::energy::project_onto_tangent_space(A_inv, x, M, tmp, v);
 }
 
 }
@@ -178,7 +178,7 @@ public:
     Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::gradient(this->A_inv, this->M, x, x_grad);
+        ellipsoid::energy::gradient(this->A_inv, this->M, x, x_grad);
         return x_grad;
     }
 
@@ -201,7 +201,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
+        ellipsoid::energy::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
     }
 };
 
@@ -224,7 +224,7 @@ public:
     Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::gradient(this->M_inv, this->A, this->M, x, x_grad);
+        ellipsoid::mass::gradient(this->M_inv, this->A, this->M, x, x_grad);
         return x_grad;
     }
 
@@ -247,7 +247,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::project_onto_tangent_space(x, this->M, v, v_proj);
+        ellipsoid::mass::project_onto_tangent_space(x, this->M, v, v_proj);
     }
 };
 
@@ -286,13 +286,13 @@ public:
         const auto& M   = this->m_problem.get_M();
 
         // Both energy-based and mass-weighed gradients use the mass-weighed coarse model
-        return coarse::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
+        return coarse::mass::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
     }
 
     Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> q_grad(x.size());
-        coarse::gradient(this->M, this->A_inv, x, m_phi, m_w, q_grad);
+        coarse::mass::energy_adaptive_gradient(this->M, this->A_inv, x, m_phi, m_w, q_grad);
         return q_grad;
     }
 
@@ -322,7 +322,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
+        ellipsoid::energy::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
     }
 
 private:
@@ -360,13 +360,13 @@ public:
         const auto& Mpp = this->m_problem.get_Mpp();
         const auto& M   = this->m_problem.get_M();
 
-        return coarse::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
+        return coarse::mass::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
     }
 
     Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> q_grad(x.size());
-        coarse::gradient(this->M, this->M_inv, this->A, x, m_phi, m_w, q_grad);
+        coarse::mass::gradient(this->M, this->M_inv, this->A, x, m_phi, m_w, q_grad);
         return q_grad;
     }
 
@@ -396,7 +396,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::project_onto_tangent_space(x, this->M, v, v_proj);
+        ellipsoid::mass::project_onto_tangent_space(x, this->M, v, v_proj);
     }
 
 private:
@@ -585,7 +585,7 @@ int main()
             test_mass.random_point(phi);
 
             Vector<double> w_proj(n_dofs);
-            ellipsoid::project_onto_tangent_space(test_mass.get_A_inv(), phi, test_mass.get_M(), w, w_proj);
+            ellipsoid::mass::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
 
             test_coarse_mass.update_parameters(phi, w_proj);
         };
@@ -608,7 +608,7 @@ int main()
             test_energy.random_point(phi);
 
             Vector<double> w_proj(n_dofs);
-            ellipsoid::project_onto_tangent_space(phi, test_energy.get_M(), w, w_proj);
+            ellipsoid::energy::project_onto_tangent_space(test_energy.get_A_inv(), phi, test_energy.get_M(), w, w_proj);
 
             test_coarse_energy.update_parameters(phi, w_proj);
         };

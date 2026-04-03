@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
             for (unsigned int level = min_level; level < max_level; ++level) {
                 // Initialize the orchestrator (Simulator)
                 // This sets up the mesh (Package) and Finite Element space
-                EnergySimulator<dim> simulator(Square<dim>(), options, level + 1);
+                GrossPitaevskiiSimulator<dim, EnergyOracle<dim>> simulator(Square<dim>(), options, level + 1);
 
                 // Set starting value, sufficiently far from an optimal solution
                 Vector<double> x0(simulator.n_dofs());

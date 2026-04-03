@@ -1,8 +1,5 @@
 #ifndef GPE_FUNCTIONS_H
 #define GPE_FUNCTIONS_H
-#ifndef M_NORM_RESIDUAL
-#define M_NORM_RESIDUAL 1
-#endif
 #ifndef ZERO_ROUNDOFF
 #define ZERO_ROUNDOFF 1e-15
 #endif
@@ -37,9 +34,11 @@ struct State
     double residual{0};
 };
 
+
 // TODO: x*Mx is only for debugging/diagnostic purposes
 template <typename MatrixType>
-State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M)
+State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M,
+               bool use_m_norm = true)
 {
     State prop;
     Vector<double> Mx(x.size());
@@ -55,7 +54,7 @@ State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M
 
     // TODO: use enum for setting norm at runtime
     prop.residual = 0.0;
-    if constexpr (M_NORM_RESIDUAL) {
+    if (use_m_norm) {
         Vector<double> Mr(r.size());
         M.vmult(Mr, r);
         prop.residual = std::sqrt(r * Mr);
@@ -71,9 +70,17 @@ State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M
 
 // Functions for GPE minimization
 // Note: due to compartmentalizing as functions, some values are necessarily computed anew.
-// TODO: restructure by gpe { metric { }, manifold { } } ... to clarify metric dependence?
 namespace ellipsoid
 {
+
+// Directional derivative of the GP functional
+template <typename MatrixType>
+double directional_derivative(const Vector<double>& x, const Vector<double>& z, const MatrixType& A)
+{
+    Vector<double> Ax(x.size());
+    A.vmult(Ax, x);
+    return Ax * z;
+}
 
 /**
  * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
@@ -104,6 +111,9 @@ double function_value(const Vector<double>& x, const MatrixType& A0, const Matri
     return x * Bx;
 }
 
+
+namespace energy
+{
 /**
  * @brief Projects a vector @p v onto the tangent space at @p x using an energy-based metric.
  *
@@ -152,6 +162,7 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv,
     output.add(-nom / denom, Ainv_Mx);
 }
 
+
 /**
  * @brief Projects the base point @p x onto its own tangent space using an energy-based metric.
  *
@@ -195,6 +206,36 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv, const Vector<dou
 
 
 /**
+ * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
+ *
+ * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
+ * restricted to the sphere $S^{n-1}$ with an energy-adaptive metric $A_\phi$. The mathematical
+ * formulation for the Riemannian gradient is:
+ * $$ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi $$
+ *
+ * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
+ * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
+ *
+ * @param A_inv The inverse linear operator ($A_\phi^{-1}$).
+ * @param M The mass matrix ($M$).
+ * @param x The current state vector ($\phi$).
+ * @param output The vector where the computed Riemannian gradient will be stored.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+void gradient(const InverseMatrixType& A_inv, const MatrixType& M,
+              const Vector<double>& x, Vector<double>& output)
+{
+    // \Pi_x(x): R^n -> T_x S^{n-1}
+    project_onto_tangent_space(A_inv, x, M, output);
+}
+
+} // namespace energy
+
+
+namespace mass
+{
+
+/**
  * @brief Projects a vector @p v onto the tangent space at @p x with respect to the
  * mass-weighted inner product.
  *
@@ -224,29 +265,6 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-xMv, x);
 }
 
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
- * restricted to the sphere $S^{n-1}$ with an energy-adaptive metric $A_\phi$. The mathematical
- * formulation for the Riemannian gradient is:
- * $$ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi $$
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param A_inv The inverse linear operator ($A_\phi^{-1}$).
- * @param M The mass matrix ($M$).
- * @param x The current state vector ($\phi$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
-template <typename MatrixType, typename InverseMatrixType>
-void gradient(const InverseMatrixType& A_inv, const MatrixType& M,
-              const Vector<double>& x, Vector<double>& output)
-{
-    // \Pi_x(x): R^n -> T_x S^{n-1}
-    project_onto_tangent_space(A_inv, x, M, output);
-}
 
 /**
  * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
@@ -278,6 +296,63 @@ void gradient(const InverseMatrixType& Minv, const MatrixType& A, const MatrixTy
     Ax.add(-(x*Ax), Mx);
     Minv.vmult(output, Ax);
 }
+
+} // namespace mass
+
+
+namespace frobenius
+{
+
+template <typename MatrixType>
+void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
+                                Vector<double>& output)
+{
+    AssertDimension(x.size(), v.size());
+
+    // Compute M * phi
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+
+    // Denominator: phi^T M^2 phi = (M * phi)^T (M * phi) by symmetry of M
+    const double denom = Mx * Mx;
+
+    AssertThrow(denom > 0.0, dealii::ExcInternalError("x' M^2 x <= 0"));
+
+    // Numerator: phi^T M xi = (M * phi)^T xi by symmetry of M
+    const double nom = Mx * v;
+
+    // Output: xi - (nom / denom) * (M * phi)
+    output = v;
+    output.add(-nom / denom, Mx);
+}
+
+
+/**
+ * @brief Computes the Riemannian gradient in the F-metric.
+ * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
+*/
+template <typename MatrixType>
+void gradient(const MatrixType& A, const MatrixType& M,
+              const Vector<double>& x, Vector<double>& output)
+{
+
+    const unsigned int n_dofs = x.size();
+
+    Vector<double> Ax(n_dofs);
+    A.vmult(Ax, x);
+
+    Vector<double> Mx(n_dofs);
+    M.vmult(Mx, x);
+
+    const double Mx_sq = Mx * Mx;     // x^T M^2 x
+    const double num   = Mx * Ax;     // x^T M A x
+
+    output = Ax;
+    output.add(-num / Mx_sq, Mx);
+}
+
+} // namespace frobenius
+
 
 /**
  * @brief Computes the retraction by normalization.
@@ -316,6 +391,7 @@ void retract_by_norm(const MatrixType& M, Vector<double>& x)
     x /= std::sqrt(x * Mx);
 }
 
+
 /**
  * @brief Computes the inverse retraction by normalization.
  *
@@ -346,6 +422,7 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
     v /= xMv;
     v.add(-1.0, x);
 }
+
 
 // TODO: use x as output vector as with other functions
 /**
@@ -398,6 +475,7 @@ void retract_diff_by_norm(const MatrixType& M,
     dst.add(-alpha, y); // dst <- dst - alpha * y
     dst /= norm;
 }
+
 
 /**
  * @brief Computes the differentiated inverse retraction by normalization.
@@ -457,6 +535,7 @@ void retract_inv_diff_by_norm_adjoint()
     throw dealii::ExcNotImplemented("retract_inv_diff_by_norm_adjoint");
 }
 
+
 /**
  * @brief Computes the orthographic retraction.
  *
@@ -491,6 +570,7 @@ void retract_by_ortho(const MatrixType& M, const Vector<double>& v,
     x.add(factor, v);
 }
 
+
 /**
  * @brief Computes the inverse orthographic retraction.
  *
@@ -518,6 +598,7 @@ void retract_inv_by_ortho(const MatrixType& M, Vector<double>& v, const Vector<d
     const double xMv = x*Mv;
     v.add(-xMv, x);
 }
+
 
 /**
  * @brief Computes the exponential map retraction on the sphere.
@@ -558,6 +639,7 @@ void retract_by_exp(const MatrixType& M, const Vector<double>& v, Vector<double>
     x.add(std::sin(factor*v_Mnorm) / v_Mnorm, v);
 }
 
+
 /**
  * @brief Computes the inverse exponential map (logarithmic map) on the sphere.
  *
@@ -597,10 +679,20 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace energy
 
 
-// TODO: the coarse model is DEFINED in the M-metric (-> metric independence for certain vector transports.)
-//       it can be SOLVED in either the M- or the A-metric (as implemented by gradient() overloads.)
 namespace coarse
 {
+double first_order_coherence()  // TODO
+{
+    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+}
+
+} // namespace coarse
+
+// TODO: the coarse model is DEFINED in the M-metric (-> metric independence for certain vector transports.)
+//       it can be SOLVED in either the M- or the A-metric (as implemented by gradient() overloads.)
+namespace coarse::mass
+{
+
 /**
  * @brief Computes the coarse model function value using the mass-weighted metric.
  *
@@ -672,6 +764,7 @@ void gradient(const MatrixType& M,
     dst.add(-1.0, invRet);
 }
 
+
 /**
  * Computes the coarse gradient update step in the energy metric.
  * @param M Mass matrix (M_coarse)
@@ -681,13 +774,12 @@ void gradient(const MatrixType& M,
  * @param w The restricted residual/gradient
  * @param dst Output vector
  */
-template <typename MatrixType, typename InverseOperatorType>
-void gradient(const MatrixType& M,
-              const InverseOperatorType& A_inv,
-              const Vector<double>& zeta,
-              const Vector<double>& phi,
-              const Vector<double>& w,
-              Vector<double>& dst)
+// TODO: distinction by tag or class
+template <typename MatrixType, typename InverseMatrixType>
+void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_inv,
+                              const Vector<double>& zeta, const Vector<double>& phi,
+                              const Vector<double>& w,
+                              Vector<double>& dst)
 {
     Vector<double> invRet(zeta.size());
     ellipsoid::retract_inv_diff_by_norm_adjoint(M, phi, zeta, w, invRet);
@@ -698,15 +790,91 @@ void gradient(const MatrixType& M,
     invAz *= -1.0;
     invAz.add(1.0, zeta);
 
-    ellipsoid::project_onto_tangent_space(A_inv, zeta, M, invAz, dst);
+    ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, invAz, dst);
 }
 
-double first_order_coherence()  // TODO
+} // namespace coarse::mass
+
+
+namespace coarse::frobenius
 {
-    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+
+// Function value of the Frobenius coarse model
+template <typename MatrixType>
+double function_value(const Vector<double>& zeta, const Vector<double>& phi,
+                      const Vector<double>& w,
+                      const MatrixType& M, const MatrixType& A0, const MatrixType& Mpp,
+                      double beta)
+{
+    // 1. Compute the standard Gross-Pitaevskii energy on the coarse grid: E_H(zeta)
+    double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
+
+    // 2. Compute the inverse retraction: invRet_phi(zeta)
+    Vector<double> inv_ret(zeta);
+    ellipsoid::retract_inv_by_norm(M, inv_ret, phi);
+
+    // 3. Subtract the linear tilt: <w, invRet_phi(zeta)>_F
+    const double tilt = w * inv_ret;
+
+    return energy - tilt;
 }
 
-} // namespace coarse
+// Frobenius gradient of the Frobenius coarse model
+template <typename MatrixType>
+void gradient(const MatrixType& M, const MatrixType& A,
+              const Vector<double>& zeta, const Vector<double>& phi,
+              const Vector<double>& w,
+              Vector<double>& dst)
+{
+    const unsigned int n_dofs = zeta.size();
+
+    // 1. Compute phi^T M zeta for the tilt scaling
+    Vector<double> M_zeta(n_dofs);
+    M.vmult(M_zeta, zeta);
+    const double phi_M_zeta = phi * M_zeta;
+
+    // 2. Compute the unprojected vector: v = A * zeta - (1 / phi^T M zeta) * w
+    Vector<double> v(n_dofs);
+    A.vmult(v, zeta);
+    v.add(-1.0 / phi_M_zeta, w);
+
+    // 3. Apply the F-orthogonal projection reusing the geometry namespace
+    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, v, dst);
+}
+
+
+// Energy-adaptive gradient of the Frobenius coarse model
+template <typename MatrixType, typename InverseMatrixType>
+void energy_adaptive_gradient(const MatrixType& M,
+                              const InverseMatrixType& A_inv,
+                              const MatrixType& A,
+                              const Vector<double>& zeta,
+                              const Vector<double>& phi,
+                              const Vector<double>& w,
+                              Vector<double>& dst)
+{
+    const unsigned int n_dofs = zeta.size();
+
+    // 1. Compute the standard F-gradient
+    Vector<double> grad_F(zeta.size());
+    gradient(M, A, zeta, phi, w, grad_F);
+
+    // 2. Apply the restricted Hamiltonian inverse: grad_A = A_inv * grad_F
+    Vector<double> v(n_dofs);
+    A_inv.vmult(v, grad_F);
+
+    // Note: If A_inv strictly represents \tilde{A}^{-1} (projected),
+    // the output should naturally lie in the tangent space.
+    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, v, dst);
+}
+
+} // namespace coarse::frobenius
+
+
+namespace box
+{
+
+} // namespace box
 
 } // namespace gpe
 
