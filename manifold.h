@@ -812,6 +812,24 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
 } // namespace coarse::mass
 
 
+namespace coarse::energy
+{
+
+template <typename MatrixType>
+double function_value()
+{
+    throw dealii::ExcNotImplemented();
+}
+
+template <typename MatrixType, typename InverseMatrixType>
+void gradient()
+{
+    throw dealii::ExcNotImplemented();
+}
+
+} // namespace coarse::energy
+
+
 namespace coarse::frobenius
 {
 

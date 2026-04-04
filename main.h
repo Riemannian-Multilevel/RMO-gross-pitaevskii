@@ -131,15 +131,6 @@ public:
         return ellipsoid::directional_derivative(x, z, this->A);
     }
 
-    // Metric implementation (must match metric of Riemannian gradient)
-    double directional_derivative(const Vector<double>&, const Vector<double>& z, const Vector<double>& g) const override
-    {
-        AssertDimension(g.size(), z.size());
-        Vector<double> Mz(z.size());
-        this->M.vmult(Mz, z);
-        return g * Mz;
-    }
-
     /**
      * @brief Computes the Riemannian gradient in the M-metric.
      */
@@ -177,15 +168,6 @@ public:
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
         return ellipsoid::directional_derivative(x, z, this->A);
-    }
-
-    // Metric implementation (must match metric of Riemannian gradient)
-    double directional_derivative(const Vector<double>&, const Vector<double>& z, const Vector<double>& g) const override
-    {
-        AssertDimension(g.size(), z.size());
-        Vector<double> Az(z.size());
-        this->A.vmult(Az, z);
-        return g * Az;
     }
 
     /**
@@ -226,13 +208,6 @@ public:
         return ellipsoid::directional_derivative(x, z, this->A);
     }
 
-    // Metric implementation (must match metric of Riemannian gradient)
-    double directional_derivative(const Vector<double>&, const Vector<double>& z, const Vector<double>& g) const override
-    {
-        AssertDimension(g.size(), z.size());
-        return g * z;
-    }
-
     /**
      * @brief Computes the Riemannian gradient in the F-metric.
      * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
@@ -252,6 +227,53 @@ public:
     {
         return iteration::residual(x, this->A, this->M, false);
     }
+};
+
+
+template <int dim>
+class EnergyCoarseOracle : public OracleBase<dim>
+{
+public:
+    static constexpr const char* id = "MC";
+    // Explicit constructor to initialize the correction parameters
+    EnergyCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
+                       const Vector<double>& w_, const Vector<double>& phi_,
+                       SolverOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , w(w_), phi(phi_)
+    {}
+
+    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    {
+        w = w_new;
+        phi = phi_new;
+    }
+
+    double value(const Vector<double>& x) const override
+    {
+        throw dealii::ExcNotImplemented();
+        // return coarse::energy::function_value(x, phi, w, this->problem.get_M(),
+        //     this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+    }
+
+    /**
+     * @brief Computes the coarse model gradient in the M-metric.
+     */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        throw dealii::ExcNotImplemented();
+        // coarse::energy::gradient(this->M, x, phi, w, output);
+        // return 0; // No linear solver needed for pure M-gradient
+    }
+
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy=value(x)};
+    }
+
+private:
+    Vector<double> w;
+    Vector<double> phi;
 };
 
 

@@ -25,7 +25,7 @@ int main()
     SolverOptions  options_slv{};  // inner solver options
     options_slv.max_inner    = 500;
     options_slv.solver       = SolverMethod::MINRES;
-    //options_slv.precond      = Precondition::SPARSE_ILU;
+    options_slv.precond      = Precondition::NONE;
     options_slv.tol_inner    = 1e-6;
 
     SolverOptions options_slv_coarse = options_slv;
@@ -66,12 +66,12 @@ int main()
     // TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
     using OperatorType    = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
-    //using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
-    using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
-    //using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
-    using TiltOracle      = FrobeniusOracle<dim>;
-    //using VectorTransport = MassProjectionTransport<dim, OperatorType>; // for transferring coarse directions
-    using VectorTransport = FrobeniusProjectionTransport<dim, OperatorType>;
+    using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
+    //using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
+    using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
+    //using TiltOracle      = FrobeniusOracle<dim>;
+    using VectorTransport = MassProjectionTransport<dim, OperatorType>; // for transferring coarse directions
+    //using VectorTransport = FrobeniusProjectionTransport<dim, OperatorType>;
     using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
     FullApproximationScheme<dim, SmoothOracle, CoarseModel> FAS(
