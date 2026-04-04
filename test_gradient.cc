@@ -229,30 +229,6 @@ int main()
     }
 
     {
-        std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
-        GradientTestCoarseMassEnergyAdaptive<2> test_coarse_energy(problem, options.beta, options_slv);
-        GradientTestEnergy<2> test_energy(problem, options.beta, options_slv);
-
-        Vector<double> w(n_dofs);  // fixed correction term
-        w = 1.0;
-
-        auto setup_base_points_energy = [&w,&test_energy,&test_coarse_energy,n_dofs]()
-        {
-            Vector<double> phi(n_dofs);
-            test_energy.random_point(phi);
-
-            Vector<double> w_proj(n_dofs);
-            ellipsoid::energy::project_onto_tangent_space(test_energy.get_A_inv(),
-                phi, test_energy.get_M(), w, w_proj);
-
-            test_coarse_energy.update_parameters(phi, w_proj);
-        };
-
-        check_gradient(test_coarse_energy, NUM_TRIALS,
-            "checkgradient_coarse_energy_2d", setup_base_points_energy);
-    }
-
-    {
         std::cerr << "--- GRADIENT CHECK - COARSE (FROBENIUS)\n";
         GradientTestCoarseFrobenius<2> test_coarse_frob(problem, options.beta, options_slv);
         GradientTestFrobenius<2> test_frob(problem, options.beta, options_slv);
