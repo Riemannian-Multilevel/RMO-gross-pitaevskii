@@ -745,6 +745,32 @@ double function_value(const Vector<double>& zeta,
     return energy - correction_term;
 }
 
+template <typename MatrixTypeA, typename MatrixTypeM>
+double directional_derivative(const dealii::Vector<double>& zeta,
+                              const dealii::Vector<double>& phi,
+                              const dealii::Vector<double>& w,
+                              const dealii::Vector<double>& z,
+                              const MatrixTypeM& M,
+                              const MatrixTypeA& A)
+{
+    // Differential of the standard GP energy: (A * zeta)^T z
+    dealii::Vector<double> Az(zeta.size());
+    A.vmult(Az, zeta);
+
+    // Adjoint pullback of the correction vector w: u = (D_invRet_phi)^*[w]
+    dealii::Vector<double> u(zeta.size());
+    ellipsoid::retract_inv_diff_by_norm_adjoint(M, phi, zeta, w, u);
+
+    dealii::Vector<double> Mu(zeta.size());
+    M.vmult(Mu, u);
+
+    dealii::Vector<double> dual(Az);
+    dual.add(-1.0, Mu);
+
+    return dual * z;
+}
+
+
 /**
  * Computes the coarse gradient update step in the mass-weighted metric.
  * @param M Mass matrix
@@ -806,7 +832,8 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
     invAz *= -1.0;
     invAz.add(1.0, zeta);
 
-    ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, invAz, dst);
+    // TODO: does <grad_A f(x), v>_A = Df(x)[v] hold after F-projection?
+    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, invAz, dst);
 }
 
 } // namespace coarse::mass
@@ -851,6 +878,39 @@ double function_value(const Vector<double>& zeta, const Vector<double>& phi,
     const double tilt = w * inv_ret;
 
     return energy - tilt;
+}
+
+
+template <typename MatrixTypeA, typename MatrixTypeM>
+double directional_derivative(const dealii::Vector<double>& zeta,
+                              const dealii::Vector<double>& phi,
+                              const dealii::Vector<double>& w,
+                              const dealii::Vector<double>& z,
+                              const MatrixTypeM& M,
+                              const MatrixTypeA& A)
+{
+    const unsigned int n_dofs = zeta.size();
+
+    // Differential of the standard GP energy: (A * zeta)^T z
+    dealii::Vector<double> Az(n_dofs);
+    A.vmult(Az, zeta);
+
+    dealii::Vector<double> M_zeta(n_dofs);
+    M.vmult(M_zeta, zeta);
+    const double phi_M_zeta = phi * M_zeta;
+    const double w_zeta     = w * zeta;
+
+    // Differential of the F-tilt
+    // D T(zeta)[z] = (w^T z) / (phi^T M zeta) - (w^T zeta * phi^T M z) / (phi^T M zeta)^2
+    dealii::Vector<double> M_phi(n_dofs);
+    M.vmult(M_phi, phi);
+
+    dealii::Vector<double> dual(Az);
+    dual.add(-1.0 / phi_M_zeta, w);
+    dual.add(w_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
+
+    // Natural pairing with the tangent vector z
+    return dual * z;
 }
 
 

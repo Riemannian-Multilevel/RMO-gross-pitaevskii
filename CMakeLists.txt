@@ -56,6 +56,6 @@ target_link_libraries(main_coarse fmt::fmt)
 # Verification of gradients
 # TODO: register cmake test
 add_executable(test_gradient test_gradient.cc)
-target_sources(test_gradient PRIVATE ${COMMON_HEADERS})
+target_sources(test_gradient PRIVATE test_gradient.h ${COMMON_HEADERS})
 deal_ii_setup_target(test_gradient)
 target_link_libraries(test_gradient fmt::fmt)

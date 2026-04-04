@@ -610,8 +610,8 @@ public:
     }
 
 private:
-    const MatrixType& M_fine;
     const MatrixType& M_coarse;
+    const MatrixType& M_fine;
 
     const LinearTransferBase& transfer;
     const ManifoldTransfer<dim, MatrixType>& point_transfer;

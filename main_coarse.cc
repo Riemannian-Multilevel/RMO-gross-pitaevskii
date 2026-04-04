@@ -13,7 +13,7 @@ int main()
     options_gd.step_size     = 1.0;
     options_gd.tol_lambda    = 1e-8;
     options_gd.tol_residual  = 1e-4;
-    options_gd.max_iter      = 20;
+    options_gd.max_iter      = 30;
     options_gd.line_search   = true;
 
     options_gd.ls_alpha      = 1.0;
@@ -66,12 +66,12 @@ int main()
     // TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
     using OperatorType    = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
-    using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
-    //using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
-    using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
-    //using TiltOracle      = FrobeniusOracle<dim>;
-    using VectorTransport = MassProjectionTransport<dim, OperatorType>; // for transferring coarse directions
-    //using VectorTransport = FrobeniusProjectionTransport<dim, OperatorType>;
+    // using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
+    using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
+    //using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
+    using TiltOracle      = FrobeniusOracle<dim>;
+    //using VectorTransport = MassProjectionTransport<dim, OperatorType>; // for transferring coarse directions
+    using VectorTransport = FrobeniusProjectionTransport<dim, OperatorType>;
     using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
     FullApproximationScheme<dim, SmoothOracle, CoarseModel> FAS(
