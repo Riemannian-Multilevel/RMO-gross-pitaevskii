@@ -1,5 +1,5 @@
 #include "manifold.h"
-#include "function.h"
+#include "oracle.h"
 #include "main.h"
 
 using namespace dealii;

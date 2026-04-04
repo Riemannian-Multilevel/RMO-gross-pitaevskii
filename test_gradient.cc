@@ -3,7 +3,7 @@
 //
 #include "test_gradient.h"
 
-#include "function.h"
+#include "oracle.h"
 #include <fstream>
 #include <fmt/format.h>
 
@@ -23,6 +23,7 @@ long double finite_difference(const FuncType& F, const Vector<double>& x,
     const long double F_tmp = F(tmp);
     return (F_tmp - Fx) / h;
 }
+
 
 std::vector<double>
 logspace(double start_exp, double end_exp, int num) {
@@ -44,6 +45,7 @@ struct EmptyStrategy
 {
     void operator()() {};
 };
+
 
 // Test correctness of gradients for random samples
 // TODO: additional data (h=1-8, n_trial_points=100, start_exp=-8)
@@ -118,6 +120,7 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
     return check;
 }
 
+
 template <int dim, typename Strategy = EmptyStrategy>
 void check_gradient(const GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix,
                     Strategy&& setup_trial = {})
@@ -162,6 +165,7 @@ void check_gradient(const GradientTestBase<dim>& test_grad, unsigned n_trials, s
     convergence_table.write_text(std::cout, dealii::TableHandler::TextOutputFormat::table_with_headers);
 }
 
+
 int main()
 {
     GPE_Options options{};
@@ -203,6 +207,11 @@ int main()
         GradientTestFrobenius<2> test_frob(problem, options.beta, options_slv);
         check_gradient(test_frob, NUM_TRIALS, "checkgradient_frob_2d");
         std::cerr << "\n";
+    }
+
+    {
+        //std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
+        // TODO
     }
 
     {

@@ -4,14 +4,13 @@
 #ifndef GPE_MAIN_H
 #define GPE_MAIN_H
 
-#include "manifold.h"
-#include "function.h"
 #include "lac.h"
-#include "gpe.h"
+#include "oracle.h"
 #include "grid_operators.h"
 
 namespace gpe
 {
+
 
 // TODO: refactor into UnitMassSphere (<- Manifold) and Oracle
 /**
@@ -229,51 +228,60 @@ public:
     }
 };
 
+// template <int dim>
+// class CoarseOracleBase : public OracleBase<dim>
+// {
+// public:
+//     using OracleBase<dim>::OracleBase;
+//
+// protected:
+//
+// };
+
 
 template <int dim>
 class EnergyCoarseOracle : public OracleBase<dim>
 {
 public:
-    static constexpr const char* id = "MC";
-    // Explicit constructor to initialize the correction parameters
-    EnergyCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-                       const Vector<double>& w_, const Vector<double>& phi_,
-                       SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , w(w_), phi(phi_)
-    {}
+    static constexpr const char* id = "E_C";
+    using OracleBase<dim>::OracleBase;
+    using OperatorType = OracleBase<dim>::OperatorType;
+
 
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
-        w = w_new;
-        phi = phi_new;
+        m_phi = phi_new;
+        m_w = w_new;
+
+        // Safely cache the vector using the provided, mathematically guaranteed operator
+        A_phi_w.reinit(m_w.size());
+        this->A.vmult(A_phi_w, m_w);
     }
 
     double value(const Vector<double>& x) const override
     {
-        throw dealii::ExcNotImplemented();
-        // return coarse::energy::function_value(x, phi, w, this->problem.get_M(),
-        //     this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        return coarse::energy::function_value(x, m_phi, A_phi_w,
+            this->M, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
-    /**
-     * @brief Computes the coarse model gradient in the M-metric.
-     */
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return coarse::energy::directional_derivative(x, m_phi, A_phi_w,
+            z, this->M, this->A);
+    }
+
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        throw dealii::ExcNotImplemented();
-        // coarse::energy::gradient(this->M, x, phi, w, output);
-        // return 0; // No linear solver needed for pure M-gradient
-    }
-
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        return {.energy=value(x)};
+        coarse::energy::gradient(this->M, this->A_inv, this->A,
+            x, m_phi, A_phi_w, output);
+        return this->A_inv.control().last_step();
     }
 
 private:
-    Vector<double> w;
-    Vector<double> phi;
+    Vector<double> m_phi, m_w;
+    const OperatorType& A_phi;
+
+    Vector<double> A_phi_w; // Cached A_{zeta_k} * w_k
 };
 
 
@@ -283,23 +291,17 @@ class MassCoarseOracle : public OracleBase<dim>
 {
 public:
     static constexpr const char* id = "MC";
-    // Explicit constructor to initialize the correction parameters
-    MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-                 const Vector<double>& w_, const Vector<double>& phi_,
-                 SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , w(w_), phi(phi_)
-    {}
+    using OracleBase<dim>::OracleBase;
 
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
-        w = w_new;
-        phi = phi_new;
+        m_w = w_new;
+        m_phi = phi_new;
     }
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::mass::function_value(x, phi, w, this->problem.get_M(),
+        return coarse::mass::function_value(x, m_phi, m_w, this->problem.get_M(),
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
@@ -308,7 +310,7 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::gradient(this->M, x, phi, w, output);
+        coarse::mass::gradient(this->M, x, m_phi, m_w, output);
         return 0; // No linear solver needed for pure M-gradient
     }
 
@@ -318,8 +320,8 @@ public:
     }
 
 private:
-    Vector<double> w;
-    Vector<double> phi;
+    Vector<double> m_w;
+    Vector<double> m_phi;
 };
 
 
@@ -329,24 +331,17 @@ class MassCoarseOracleEnergyAdaptive : public OracleBase<dim>
 {
 public:
     static constexpr const char* id = "MCA";
-
-    // Explicit constructor to initialize the correction parameters
-    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-                 const Vector<double>& w_, const Vector<double>& phi_,
-                 SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , w(w_), phi(phi_)
-    {}
+    using OracleBase<dim>::OracleBase;
 
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
-        w = w_new;
-        phi = phi_new;
+        m_w = w_new;
+        m_phi = phi_new;
     }
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::mass::function_value(x, phi, w, this->problem.get_M(),
+        return coarse::mass::function_value(x, m_phi, m_w, this->problem.get_M(),
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
@@ -356,7 +351,7 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::energy_adaptive_gradient(this->M, this->A_inv, x, phi, w, output);
+        coarse::mass::energy_adaptive_gradient(this->M, this->A_inv, x, m_phi, m_w, output);
         return 0; // No linear solver needed for pure M-gradient
     }
 
@@ -366,8 +361,8 @@ public:
     }
 
 private:
-    Vector<double> w;
-    Vector<double> phi;
+    Vector<double> m_w;
+    Vector<double> m_phi;
 };
 
 
@@ -377,24 +372,17 @@ class FrobeniusCoarseOracle : public OracleBase<dim>
 {
 public:
     static constexpr const char* id = "FC";
-
-    FrobeniusCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-                          const Vector<double>& w_, const Vector<double>& phi_,
-                          SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , w(w_)
-        , phi(phi_)
-    {}
+    using OracleBase<dim>::OracleBase;
 
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
-        w = w_new;
-        phi = phi_new;
+        m_w = w_new;
+        m_phi = phi_new;
     }
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::frobenius::function_value(x, phi, w,
+        return coarse::frobenius::function_value(x, m_phi, m_w,
             this->problem.get_M(), this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
@@ -405,7 +393,7 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // Compute the pure Frobenius gradient
-        coarse::frobenius::gradient(this->problem.get_M(), this->A, x, phi, w, output);
+        coarse::frobenius::gradient(this->problem.get_M(), this->A, x, m_phi, m_w, output);
 
         // Energy-adaptive gradient
         // coarse_frobenius::energy_adaptive_gradient(this->problem.get_M(), this->A_inv, this->A, x, phi, w, output);.
@@ -418,8 +406,8 @@ public:
     }
 
 private:
-    Vector<double> w;
-    Vector<double> phi;
+    Vector<double> m_w;
+    Vector<double> m_phi;
 };
 
 
@@ -429,24 +417,17 @@ class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase<dim>
 {
 public:
     static constexpr const char* id = "FCA";
+    using OracleBase<dim>::OracleBase;
 
-    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
-                                        const dealii::Vector<double>& w_, const dealii::Vector<double>& phi_,
-                                        SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , w(w_)
-        , phi(phi_)
-    {}
-
-    void update_parameters(const dealii::Vector<double>& w_new, const dealii::Vector<double>& phi_new)
+    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
-        w = w_new;
-        phi = phi_new;
+        m_w = w_new;
+        m_phi = phi_new;
     }
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::frobenius::function_value(x, phi, w,
+        return coarse::frobenius::function_value(x, m_phi, m_w,
             this->problem.get_M(), this->problem.get_A0(),
             this->problem.get_Mpp(), this->beta);
     }
@@ -458,7 +439,7 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // Computes the F-gradient and applies the A_inv preconditioner
-        coarse::frobenius::energy_adaptive_gradient(this->M, this->A_inv,this->A, x, phi, w, output);
+        coarse::frobenius::energy_adaptive_gradient(this->M, this->A_inv,this->A, x, m_phi, m_w, output);
 
         // Return the number of Krylov iterations used by A_inv
         return this->A_inv.control().last_step();
@@ -473,10 +454,9 @@ public:
     }
 
 private:
-    Vector<double> w;
-    Vector<double> phi;
+    Vector<double> m_w;
+    Vector<double> m_phi;
 };
-
 
 /**
  * @brief Orchestrator for Gross-Pitaevskii simulations.
@@ -689,7 +669,7 @@ public:
         : options(options), options_coarse(options_coarse)
         , O_coarse(problem_coarse, beta, options_coarse)
         , O_fine(problem_fine, beta, options)
-        , qk(problem_coarse, beta, Vector<double>(), Vector<double>(), options)
+        , qk(problem_coarse, beta, options)
 
         // Problem components
         , n_coarse(problem_coarse.n_dofs())

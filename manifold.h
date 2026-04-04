@@ -746,10 +746,10 @@ double function_value(const Vector<double>& zeta,
 }
 
 template <typename MatrixTypeA, typename MatrixTypeM>
-double directional_derivative(const dealii::Vector<double>& zeta,
-                              const dealii::Vector<double>& phi,
-                              const dealii::Vector<double>& w,
-                              const dealii::Vector<double>& z,
+double directional_derivative(const Vector<double>& zeta,
+                              const Vector<double>& phi,
+                              const Vector<double>& w,
+                              const Vector<double>& z,
                               const MatrixTypeM& M,
                               const MatrixTypeA& A)
 {
@@ -842,16 +842,85 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
 namespace coarse::energy
 {
 
-template <typename MatrixType>
-double function_value()
+template <typename MatrixTypeM, typename MatrixTypeA0, typename MatrixTypeMpp>
+double function_value(const Vector<double>& zeta,
+                      const Vector<double>& phi,
+                      const Vector<double>& A_phi_w,
+                      const MatrixTypeM& M,
+                      const MatrixTypeA0& A0,
+                      const MatrixTypeMpp& Mpp,
+                      double beta)
 {
-    throw dealii::ExcNotImplemented();
+    const double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
+
+    Vector<double> v(zeta);
+    ellipsoid::retract_inv_by_norm(M, v, phi);
+
+    const double correction_term = A_phi_w * v;
+    return energy - correction_term;
 }
 
-template <typename MatrixType, typename InverseMatrixType>
-void gradient()
+
+template <typename MatrixTypeA, typename MatrixTypeM>
+double directional_derivative(const Vector<double>& zeta,
+                              const Vector<double>& phi,
+                              const Vector<double>& A_phi_w,
+                              const Vector<double>& z,
+                              const MatrixTypeM& M,
+                              const MatrixTypeA& A_zeta)
 {
-    throw dealii::ExcNotImplemented();
+    const unsigned int n_dofs = zeta.size();
+    Vector<double> Az(n_dofs);
+    A_zeta.vmult(Az, zeta);
+
+    Vector<double> M_zeta(n_dofs);
+    M.vmult(M_zeta, zeta);
+    const double phi_M_zeta = phi * M_zeta;
+
+    Vector<double> M_phi(n_dofs);
+    M.vmult(M_phi, phi);
+
+    const double w_A_zeta = A_phi_w * zeta;
+
+    Vector<double> dual(Az);
+    dual.add(-1.0 / phi_M_zeta, A_phi_w);
+    dual.add(w_A_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
+
+    return dual * z;
+}
+
+
+template <typename MatrixType, typename InverseMatrixType>
+void gradient(const MatrixType& M,
+              const InverseMatrixType& A_zeta_inv,
+              const MatrixType& A_zeta,
+              const Vector<double>& zeta,
+              const Vector<double>& phi,
+              const Vector<double>& A_phi_w,
+              Vector<double>& dst)
+{
+    const unsigned int n_dofs = zeta.size();
+
+    Vector<double> Az(n_dofs);
+    A_zeta.vmult(Az, zeta);
+
+    Vector<double> M_zeta(n_dofs);
+    M.vmult(M_zeta, zeta);
+    const double phi_M_zeta = phi * M_zeta;
+
+    Vector<double> M_phi(n_dofs);
+    M.vmult(M_phi, phi);
+
+    const double w_A_zeta = A_phi_w * zeta;
+
+    Vector<double> dual(Az);
+    dual.add(-1.0 / phi_M_zeta, A_phi_w);
+    dual.add(w_A_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
+
+    Vector<double> Ainv_dual(n_dofs);
+    A_zeta_inv.vmult(Ainv_dual, dual);
+
+    ellipsoid::energy::project_onto_tangent_space(A_zeta_inv,zeta, M, Ainv_dual, dst);
 }
 
 } // namespace coarse::energy
@@ -875,42 +944,41 @@ double function_value(const Vector<double>& zeta, const Vector<double>& phi,
     ellipsoid::retract_inv_by_norm(M, inv_ret, phi);
 
     // 3. Subtract the linear tilt: <w, invRet_phi(zeta)>_F
-    const double tilt = w * inv_ret;
-
-    return energy - tilt;
+    const double correction_term = w * inv_ret;
+    return energy - correction_term;
 }
 
 
 template <typename MatrixTypeA, typename MatrixTypeM>
-double directional_derivative(const dealii::Vector<double>& zeta,
-                              const dealii::Vector<double>& phi,
-                              const dealii::Vector<double>& w,
-                              const dealii::Vector<double>& z,
+double directional_derivative(const Vector<double>& zeta,
+                              const Vector<double>& phi,
+                              const Vector<double>& w,
+                              const Vector<double>& z,
                               const MatrixTypeM& M,
                               const MatrixTypeA& A)
 {
     const unsigned int n_dofs = zeta.size();
 
     // Differential of the standard GP energy: (A * zeta)^T z
-    dealii::Vector<double> Az(n_dofs);
+    Vector<double> Az(n_dofs);
     A.vmult(Az, zeta);
 
-    dealii::Vector<double> M_zeta(n_dofs);
+    Vector<double> M_zeta(n_dofs);
     M.vmult(M_zeta, zeta);
     const double phi_M_zeta = phi * M_zeta;
     const double w_zeta     = w * zeta;
 
     // Differential of the F-tilt
     // D T(zeta)[z] = (w^T z) / (phi^T M zeta) - (w^T zeta * phi^T M z) / (phi^T M zeta)^2
-    dealii::Vector<double> M_phi(n_dofs);
+    Vector<double> M_phi(n_dofs);
     M.vmult(M_phi, phi);
 
-    dealii::Vector<double> dual(Az);
-    dual.add(-1.0 / phi_M_zeta, w);
-    dual.add(w_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
+    Vector<double> grad(Az);
+    grad.add(-1.0 / phi_M_zeta, w);
+    grad.add(w_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
 
     // Natural pairing with the tangent vector z
-    return dual * z;
+    return grad * z;
 }
 
 
