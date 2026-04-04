@@ -65,12 +65,13 @@ int main()
 
     // TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
     using OperatorType    = LinearCombination<SparseMatrix<double>, Vector<double>>;
-    using Oracle          = EnergyOracle<dim>;
-    using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;
-    using VectorTransport = MassProjectionTransport<dim, OperatorType>;
-    using CoarseModel     = CoarseModel<dim, Oracle, CoarseOracle, VectorTransport>;
+    using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
+    using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
+    using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
+    using VectorTransport = MassProjectionTransport<dim, OperatorType>; // for transferring coarse directions
+    using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
-    FullApproximationScheme<dim, Oracle, CoarseModel> FAS(
+    FullApproximationScheme<dim, SmoothOracle, CoarseModel> FAS(
         problem_coarse,
         problem_fine,
         transfer,

@@ -105,6 +105,7 @@ protected:
 template <int dim>
 class MassOracle : public OracleBase<dim>
 {
+public:
     static constexpr const char* id = "M";
     using OracleBase<dim>::OracleBase;
 
@@ -131,13 +132,13 @@ class MassOracle : public OracleBase<dim>
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        ellipsoid::mass::gradient(this->M_inv, this->A, this->problem.get_M(), x, output);
-        return this->A_inv.control().last_step();
+        ellipsoid::mass::gradient(this->M_inv, this->A, this->M, x, output);
+        return this->M_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->problem.get_operator_M());
+        return iteration::residual(x, this->A, this->M);
     }
 };
 
@@ -174,13 +175,13 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        ellipsoid::energy::gradient(this->A_inv, this->problem.get_M(), x, output);
+        ellipsoid::energy::gradient(this->A_inv, this->M, x, output);
         return this->A_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->problem.get_operator_M());
+        return iteration::residual(x, this->A, this->M);
     }
 };
 
@@ -223,7 +224,7 @@ public:
      */
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->problem.get_operator_M(), false);
+        return iteration::residual(x, this->A, this->M, false);
     }
 };
 
@@ -264,7 +265,7 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::gradient(this->problem.get_M(), x, phi, w, output);
+        coarse::mass::gradient(this->M, x, phi, w, output);
         return 0; // No linear solver needed for pure M-gradient
     }
 
@@ -317,8 +318,7 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::energy_adaptive_gradient(this->problem.get_M(), this->A_inv,
-            x, phi, w, output);
+        coarse::mass::energy_adaptive_gradient(this->M, this->A_inv, x, phi, w, output);
         return 0; // No linear solver needed for pure M-gradient
     }
 
@@ -430,8 +430,7 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // Computes the F-gradient and applies the A_inv preconditioner
-        coarse::frobenius::energy_adaptive_gradient(this->problem.get_M(), this->A_inv,
-            this->A, x, phi, w, output);
+        coarse::frobenius::energy_adaptive_gradient(this->M, this->A_inv,this->A, x, phi, w, output);
 
         // Return the number of Krylov iterations used by A_inv
         return this->A_inv.control().last_step();
@@ -767,7 +766,7 @@ private:
 
 // TODO: factor out the cycle_smooth() methods (consolidate with descent.h)
 //       convergence check (cf. EnergySimulator::run)
-template <int dim, typename Oracle, typename CoarseModel>
+template <int dim, typename SmoothOracle, typename CoarseModel>
 class FullApproximationScheme
 {
 public:
@@ -953,7 +952,7 @@ finalize:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    Oracle O_fine;
+    SmoothOracle O_fine;
     CoarseModel O_coarse;  // encodes both the objective, and the method to solve it
     const GrossPitaevskiiProblem<dim>& problem_coarse;
     const GrossPitaevskiiProblem<dim>& problem_fine;
