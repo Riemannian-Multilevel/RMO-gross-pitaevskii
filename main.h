@@ -12,6 +12,43 @@ namespace gpe
 {
 
 /**
+ * @brief Computes the coarse grid correction term for a multilevel cycle.
+ *
+ * In Riemannian multilevel optimization, the coarse grid problem is modified so that
+ * its initial gradient matches the restricted fine grid gradient (first-order coherence.)
+ * This function computes the correction vector $w_k$, which acts as a tilt to the coarse
+ * energy landscape.
+ *
+ * Mathematically, the correction term is defined as the difference between the actual
+ * coarse gradient and the restricted fine gradient:
+ * $$w_k = \nabla_M E_H(x_H) - \mathcal{T}_{h \to H}(\nabla_M E_h(y_h))$$
+ *
+ * @tparam dim The spatial dimension of the problem.
+ * @param transport The vector transport strategy used to move tangent vectors between grids.
+ * @param x_grad_coarse The gradient of the coarse energy evaluated at the coarse base point, $\nabla_M E_H(x_H)$.
+ * @param y_grad_fine The gradient of the fine energy evaluated at the fine base point, $\nabla_M E_h(y_h)$.
+ * @param x_coarse The target coarse base point $x_H \in \mathcal{S}_H$.
+ * @param y_fine The source fine base point $y_h \in \mathcal{S}_h$.
+ * @param dst [out] The computed correction vector $w_k \in T_{x_H} \mathcal{S}_H$.
+ */
+template <int dim>
+void coarse_correction(const VectorTransportBase<dim>& transport,
+                       const Vector<double>& x_grad_coarse,
+                       const Vector<double>& y_grad_fine,
+                       const Vector<double>& x_coarse,
+                       const Vector<double>& y_fine,
+                       Vector<double>& dst)
+{
+    Vector<double> y_grad_restr(x_grad_coarse.size());
+    // 3-input interface for projection + differentiation transports
+    transport.vector_restriction(x_coarse, y_fine, y_grad_fine, y_grad_restr);
+
+    dst = x_grad_coarse;
+    dst.add(-1.0, y_grad_restr);
+}
+
+
+/**
  * @brief Orchestrator for Gross-Pitaevskii simulations.
  * The @ref EnergySimulator manages the persistent @ref GrossPitaevskiiPackage
  * (discretization) and coordinates the execution of the energy minimization
