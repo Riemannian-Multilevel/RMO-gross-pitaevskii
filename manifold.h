@@ -427,17 +427,18 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
 // TODO: use x as output vector as with other functions
 /**
  * @brief Computes the differentiated retraction by normalization.
- * Formula:
- * \f[
- * D_Ret_phi(v)[w] = (1 / ||phi+v||_M) * (I - ( (phi+v) v^T M ) / ||phi+v||_M^2 ) * w
- * \f]
+ * * Evaluates the differential of the retraction map at $v$ in the direction $w$:
+ * $$ \mathrm{D} R_\phi(v)[w] = \frac{1}{\|\phi+v\|_M} \left( I - \frac{(\phi+v)(\phi+v)^\top M}{\|\phi+v\|_M^2} \right) w $$
  *
- * @tparam MatrixType
- * @param M Mass matrix
- * @param x Base point
- * @param v Tangent vector (argument of the retraction)
- * @param w Direction of differentiation (argument of the differential)
- * @param dst Resulting vector (resized if necessary)
+ * @note Because $w \in T_\phi \mathcal{M}$, we have $\phi^\top M w = 0$.
+ * Thus, the numerator $(\phi+v)^\top M w$ simplifies exactly to $v^\top M w$.
+ *
+ * @tparam MatrixType A matrix class type providing a `vmult` method.
+ * @param[in] M Mass matrix defining the metric.
+ * @param[in] x Base point $\phi$ on the manifold.
+ * @param[in] v Tangent vector (argument of the retraction).
+ * @param[in] w Direction of differentiation.
+ * @param[out] dst Resulting vector.
 */
 template <typename MatrixType>
 void retract_diff_by_norm(const MatrixType& M,
@@ -517,7 +518,14 @@ void retract_inv_diff_by_norm(const MatrixType& M,
 }
 
 // TODO: verify adjoint property
-// Adjoint for M-metric
+/**
+ * @brief Computes the adjoint of the differentiated inverse retraction.
+ * In the mass-weighted metric on the sphere, the adjoint of the differential of
+ * the inverse retraction evaluates exactly to the forward differential with the
+ * base point and the target point swapped.
+ *
+ * @tparam MatrixType A matrix class type providing a `vmult` method.
+ */
 template <typename MatrixType>
 void retract_inv_diff_by_norm_adjoint(const MatrixType& M,
                                       const Vector<double>& x,
@@ -666,14 +674,21 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
     Vector<double> Mv(v.size());
     M.vmult(Mv, v);
 
-    const double xMv = x*Mv;
-    v.add(-xMv, x);
+    // Clamp to [-1.0, 1.0] to prevent NaN in acos due to floating-point drift
+    double xMv = std::clamp(x * Mv, -1.0, 1.0);
 
+    v.add(-xMv, x); // v <- Pi_x(v)
+
+    // Handle the limit case where x and v are identical (xMv -> 1.0)
+    // The limit of arccos(z)/sqrt(1-z^2) as z->1 is 1.0.
+    if (std::abs(1.0 - xMv) < 1e-14) {
+        // v is already Pi_x(v), and the scalar multiplier is 1.0.
+        return;
+    }
     const double nom   = std::acos(xMv);
-    const double denom = std::sin(nom);
+    const double denom = std::sin(nom); // sin(arccos(x)) = sqrt(1-x^2)
 
-    AssertThrow(std::abs(denom) > 0, dealii::ExcInternalError("sin(arccos(x' M v)) must be non-zero"));
-    v *= (nom/denom);
+    v *= (nom / denom);
 }
 
 } // namespace energy
@@ -730,7 +745,6 @@ double function_value(const Vector<double>& zeta,
     return energy - correction_term;
 }
 
-
 /**
  * Computes the coarse gradient update step in the mass-weighted metric.
  * @param M Mass matrix
@@ -741,6 +755,7 @@ double function_value(const Vector<double>& zeta,
  * @param w Restricted residual
  * @param dst Output vector
  */
+// TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
 template <typename MatrixType, typename InverseMatrixType>
 void gradient(const MatrixType& M,
               const InverseMatrixType& M_inv,
@@ -774,7 +789,8 @@ void gradient(const MatrixType& M,
  * @param w The restricted residual/gradient
  * @param dst Output vector
  */
-// TODO: distinction by tag or class
+// TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
+//       tag- or class-based metric selection
 template <typename MatrixType, typename InverseMatrixType>
 void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_inv,
                               const Vector<double>& zeta, const Vector<double>& phi,
@@ -819,7 +835,9 @@ double function_value(const Vector<double>& zeta, const Vector<double>& phi,
     return energy - tilt;
 }
 
+
 // Frobenius gradient of the Frobenius coarse model
+// TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
 template <typename MatrixType>
 void gradient(const MatrixType& M, const MatrixType& A,
               const Vector<double>& zeta, const Vector<double>& phi,
@@ -844,6 +862,8 @@ void gradient(const MatrixType& M, const MatrixType& A,
 
 
 // Energy-adaptive gradient of the Frobenius coarse model
+// TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
+//       tag- or class-based metric selection
 template <typename MatrixType, typename InverseMatrixType>
 void energy_adaptive_gradient(const MatrixType& M,
                               const InverseMatrixType& A_inv,

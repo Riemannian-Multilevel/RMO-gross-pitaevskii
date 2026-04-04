@@ -171,7 +171,8 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
             // TODO: support other descent directions (i.e. coarse descent)
             Vector eta(g);  // search direction
             eta *= -1.0;
-            double dd = oracle.metric(g, eta); // <grad f(x), -grad f(x)>_x
+            //double dd = oracle.metric(g, eta);
+            double dd = oracle.directional_derivative(x, eta);  // <grad f(x), eta>_x = Df(x)[eta]
             // runs O.retract(), O.update()
             double h = armijo_line_search(oracle, x, eta, Ex, dd, options);
             //if (h > 0) x = x_new;

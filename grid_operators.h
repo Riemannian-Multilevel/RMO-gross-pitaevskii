@@ -393,7 +393,7 @@ template <int dim>
 class VectorTransportBase
 {
 public:
-    static constexpr std::string id = "";
+    static constexpr const char* id = "";
     virtual ~VectorTransportBase() = default;
 
     /**
@@ -476,7 +476,7 @@ template <int dim, typename MatrixType>
 class MassProjectionTransport : public VectorTransportBase<dim>
 {
 public:
-    static constexpr std::string id = "M";
+    static constexpr const char* id = "M";
 
     MassProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
                         const LinearTransferBase& I,
@@ -532,7 +532,7 @@ template <int dim, typename MatrixType, typename InverseMatrixType>
 class EnergyProjectionTransport : public VectorTransportBase<dim>
 {
 public:
-    static constexpr std::string id = "A";
+    static constexpr const char* id = "A";
 
     EnergyProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
                               const InverseMatrixType& A_inv_c, const InverseMatrixType& A_inv_f,
@@ -578,7 +578,7 @@ template <int dim, typename MatrixType>
 class FrobeniusProjectionTransport : public VectorTransportBase<dim>
 {
 public:
-    static constexpr std::string id = "F";
+    static constexpr const char* id = "F";
 
     FrobeniusProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
                                  const LinearTransferBase& I,

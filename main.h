@@ -26,7 +26,7 @@ class OracleBase
 {
 public:
     static constexpr int dimension = dim;
-    static constexpr std::string id = "";
+    static constexpr const char* id = "";
     using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
@@ -55,7 +55,6 @@ public:
     void update(const Vector<double>& x)
     {
         problem.assemble_nonlinear_term(x);
-
         A_inv.update_dynamic(A.diagonal());
     }
 
@@ -85,12 +84,13 @@ public:
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_assembly`
     virtual double value(const Vector<double>&) const = 0;
+
+    // Compute directional derivative and Riemannian gradient successively
     virtual double directional_derivative(const Vector<double>& x, const Vector<double>& z) const = 0;
 
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
-    // virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
     virtual iteration::State residual(const Vector<double>&) const = 0;
 
 protected:
@@ -105,7 +105,7 @@ protected:
 template <int dim>
 class MassOracle : public OracleBase<dim>
 {
-    static constexpr std::string id = "M";
+    static constexpr const char* id = "M";
     using OracleBase<dim>::OracleBase;
 
     /**
@@ -119,6 +119,10 @@ class MassOracle : public OracleBase<dim>
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
+        // AssertDimension(g.size(), z.size());
+        // Vector<double> Mz(z.size());
+        // this->M.vmult(Mz, z);
+        // return g * Mz;
         return ellipsoid::directional_derivative(x, z, this->A);
     }
 
@@ -135,14 +139,6 @@ class MassOracle : public OracleBase<dim>
     {
         return iteration::residual(x, this->A, this->problem.get_operator_M());
     }
-
-    // double metric(const Vector<double>& y, const Vector<double>& z) const override
-    // {
-    //     AssertDimension(y.size(), z.size());
-    //     Vector<double> Mz(z.size());
-    //     this->M.vmult(Mz, y);
-    //     return y * Mz;
-    // }
 };
 
 
@@ -150,7 +146,7 @@ template <int dim>
 class EnergyOracle : public OracleBase<dim>
 {
 public:
-    static constexpr std::string id = "A";
+    static constexpr const char* id = "A";
     // Inherit constructors from OracleBase
     using OracleBase<dim>::OracleBase;
 
@@ -165,6 +161,10 @@ public:
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
+        // AssertDimension(g.size(), g.size());
+        // Vector<double> Az(z.size());
+        // this->A.vmult(Az, z);
+        // return g * Az;
         return ellipsoid::directional_derivative(x, z, this->A);
     }
 
@@ -182,14 +182,6 @@ public:
     {
         return iteration::residual(x, this->A, this->problem.get_operator_M());
     }
-
-    // double metric(const Vector<double>& y, const Vector<double>& z) const override
-    // {
-    //     AssertDimension(y.size(), z.size());
-    //     Vector<double> Az(z.size());
-    //     this->A.vmult(Az, y);
-    //     return y * Az;
-    // }
 };
 
 
@@ -197,7 +189,7 @@ template <int dim>
 class FrobeniusOracle : public OracleBase<dim>
 {
 public:
-    static constexpr std::string id = "F";
+    static constexpr const char* id = "F";
     using OracleBase<dim>::OracleBase;
 
     /**
@@ -210,6 +202,7 @@ public:
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
+        // return g * z
         return ellipsoid::directional_derivative(x, z, this->A);
     }
 
@@ -232,11 +225,6 @@ public:
     {
         return iteration::residual(x, this->A, this->problem.get_operator_M(), false);
     }
-
-    // double metric(const dealii::Vector<double>& y, const dealii::Vector<double>& z) const override
-    // {
-    //     return y * z; // Standard L2 dot product
-    // }
 };
 
 
@@ -245,7 +233,7 @@ template <int dim>
 class MassCoarseOracle : public OracleBase<dim>
 {
 public:
-    static constexpr std::string id = "MC";
+    static constexpr const char* id = "MC";
     // Explicit constructor to initialize the correction parameters
     MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
                  const Vector<double>& w_, const Vector<double>& phi_,
@@ -266,6 +254,11 @@ public:
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        throw dealii::ExcNotImplemented();
+    }
+
     /**
      * @brief Computes the coarse model gradient in the M-metric.
      */
@@ -280,15 +273,6 @@ public:
         return {.energy=value(x)};
     }
 
-    // double metric(const Vector<double>& y, const Vector<double>& z) const override
-    // {
-    //     // Metric for line search evaluation on the coarse grid
-    //     AssertDimension(y.size(), z.size());
-    //     Vector<double> Mz(z.size());
-    //     this->M.vmult(Mz, y);
-    //     return y * Mz;
-    // }
-
 private:
     Vector<double> w;
     Vector<double> phi;
@@ -300,7 +284,7 @@ template <int dim>
 class MassCoarseOracleEnergyAdaptive : public OracleBase<dim>
 {
 public:
-    static constexpr std::string id = "MCA";
+    static constexpr const char* id = "MCA";
 
     // Explicit constructor to initialize the correction parameters
     MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
@@ -322,14 +306,19 @@ public:
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        throw dealii::ExcNotImplemented();
+    }
+
     /**
      * @brief Computes the coarse model gradient in the A-metric.
      * $$ \nabla_A q_k(x) = \nabla_A E_H(x) - w $$
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::energy_adaptive_gradient(this->problem.get_M(), this->A_inv, x, phi, w, output);
-        //coarse::gradient(this->problem.get_M(), x, phi, w, output);
+        coarse::mass::energy_adaptive_gradient(this->problem.get_M(), this->A_inv,
+            x, phi, w, output);
         return 0; // No linear solver needed for pure M-gradient
     }
 
@@ -337,15 +326,6 @@ public:
     {
         return {.energy=value(x)};
     }
-
-    // double metric(const Vector<double>& y, const Vector<double>& z) const override
-    // {
-    //     // Metric for line search evaluation on the coarse grid
-    //     AssertDimension(y.size(), z.size());
-    //     Vector<double> Az(z.size());
-    //     this->A.vmult(Az, y);
-    //     return y * Az;
-    // }
 
 private:
     Vector<double> w;
@@ -358,7 +338,7 @@ template <int dim>
 class FrobeniusCoarseOracle : public OracleBase<dim>
 {
 public:
-    static constexpr std::string id = "FC";
+    static constexpr const char* id = "FC";
 
     FrobeniusCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
                           const Vector<double>& w_, const Vector<double>& phi_,
@@ -380,6 +360,11 @@ public:
             this->problem.get_M(), this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        throw dealii::ExcNotImplemented();
+    }
+
     /**
      * @brief Computes the coarse model gradient in the F-metric.
      * $$ \nabla_F q_k(\zeta) = \Pi_{\zeta, F}\left(A_\zeta \zeta - \frac{1}{\phi^\top M\zeta}w\right) $$
@@ -399,16 +384,6 @@ public:
         return {.energy = value(x)};
     }
 
-    // double metric(const Vector<double>& y, const Vector<double>& z) const override
-    // {
-    //     // AssertDimension(y.size(), z.size());
-    //     // Vector<double> Az(z.size());
-    //     // this->A.vmult(Az, y);
-    //     // return y * Az;
-    //     return y * z;
-    // }
-
-
 private:
     Vector<double> w;
     Vector<double> phi;
@@ -420,7 +395,7 @@ template <int dim>
 class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase<dim>
 {
 public:
-    static constexpr std::string id = "FCA";
+    static constexpr const char* id = "FCA";
 
     FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_,
                                         const dealii::Vector<double>& w_, const dealii::Vector<double>& phi_,
@@ -441,6 +416,11 @@ public:
         return coarse::frobenius::function_value(x, phi, w,
             this->problem.get_M(), this->problem.get_A0(),
             this->problem.get_Mpp(), this->beta);
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        throw dealii::ExcNotImplemented();
     }
 
     /**
@@ -464,13 +444,6 @@ public:
     {
         return {.energy = value(x)};
     }
-
-    // double metric(const Vector<double>& y, const Vector<double>& z) const override
-    // {
-    //     Vector<double> Az(z.size());
-    //     this->A.vmult(Az, y);
-    //     return y * Az;
-    // }
 
 private:
     Vector<double> w;
@@ -689,7 +662,7 @@ public:
         : options(options), options_coarse(options_coarse)
         , O_coarse(problem_coarse, beta, options_coarse)
         , O_fine(problem_fine, beta, options)
-        , qk(problem_coarse, beta, {}, {}, options)
+        , qk(problem_coarse, beta, Vector<double>(), Vector<double>(), options)
 
         // Problem components
         , n_coarse(problem_coarse.n_dofs())
@@ -729,11 +702,11 @@ public:
         O_coarse.update(step.x);
 
         // Compute coarse M-gradient
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " + O_coarse.id + "-coarse gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id << "-coarse gradient\n";
         O_coarse.gradient(step.x, step.x_grad);
 
         // Compute fine M-gradient
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " + O_fine.id + "-fine gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
         O_fine.gradient(y, step.y_grad);
 
         // Compute coarse correction step
@@ -758,7 +731,7 @@ public:
 
         // Find zk such that qk(zk) < qk(x)
         // TODO: variable method
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " + qk.id + "-gradient descent\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << qk.id << "-gradient descent\n";
         zk = gradient_descent(qk, step.x, options_gd, std::cerr);
 
         // Compute the search direction, zk <- L_x(zk)
@@ -766,7 +739,7 @@ public:
         std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
         ellipsoid::retract_inv_by_norm(M_coarse, zk, step.x);
 
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " + vector_transport.id + "-vector prolongation\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << vector_transport.id << "-vector prolongation\n";
         vector_transport.vector_prolongation(step.y, step.x, zk, dst);
     }
 
@@ -853,7 +826,8 @@ public:
                     O_coarse.solve(coarse_step, options_gd_coarse, dk);
 
                     // Evaluate directional derivative in M-norm
-                    auto dir_deriv = coarse_step.metric(coarse_step.y_grad, dk);
+                    //auto dir_deriv = O_fine.metric(y_grad, dk);
+                    auto dir_deriv = O_fine.directional_derivative(y, dk);
                     CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                     info.iter      = i;
                     info.coarse    = true;
@@ -874,7 +848,8 @@ fine_step:
                 dk *= -1.0;
 
                 // Evaluate directional derivative in A-norm
-                auto dir_deriv = O_fine.metric(y_grad, dk);
+                //auto dir_deriv = O_fine.metric(y_grad, dk);
+                auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i;
                 info.coarse    = false;
@@ -919,7 +894,8 @@ fine_step:
                 dk *= -1.0;
 
                 // Apply step
-                auto dir_deriv = O_fine.metric(y_grad, dk);
+                //auto dir_deriv = O_fine.metric(y_grad, dk);
+                auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i++;
                 info.coarse    = false;
@@ -938,7 +914,8 @@ fine_step:
 
                 // Apply step
                 // Evaluate directional derivative in the M-norm
-                auto dir_deriv = coarse_step.metric(coarse_step.y_grad, dk);
+                // auto dir_deriv = coarse_step.metric(coarse_step.y_grad, dk);
+                auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i++;
                 info.coarse    = true;
@@ -959,7 +936,8 @@ fine_step:
                 dk *= -1.0;
 
                 // Apply step
-                auto dir_deriv = O_fine.metric(y_grad, dk);
+                //auto dir_deriv = O_fine.metric(y_grad, dk);
+                auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i++;
                 info.coarse    = false;
