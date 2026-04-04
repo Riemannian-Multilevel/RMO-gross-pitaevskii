@@ -251,6 +251,64 @@ public:
     }
 };
 
+
+template <int dim>
+class GradientTestFrobenius : public GradientTestBase<dim>
+{
+public:
+    using GradientTestBase<dim>::GradientTestBase;
+
+    double value(const Vector<double>& x) const override
+    {
+        return ellipsoid::function_value(x, this->m_problem.get_A0(), this->m_problem.get_Mpp(), this->m_beta);
+    }
+
+    Vector<double> gradient(const Vector<double>& x) const override
+    {
+        Vector<double> x_grad(x.size());
+        ellipsoid::frobenius::gradient(this->A, this->M, x, x_grad);
+        return x_grad;
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        // The Frobenius metric is exactly the standard Euclidean L2 inner product
+        AssertDimension(y.size(), z.size());
+        return y * z;
+    }
+
+    void random_point(Vector<double>& x) const override
+    {
+        ellipsoid::random_point(x, this->M);
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
+    {
+        // 1. generate random vector in ambient space
+        Vector<double> tmp(v.size());
+        normrnd(this->mean, this->stddev, tmp);
+        // 2. project orthogonally onto tangent space at x, wrt. the F-metric
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, tmp, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
+    {
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, v, v_proj);
+    }
+};
+
+struct CheckGradInfo
+{
+    double x_constr;            // constraint
+    double grad_xv;             // <grad x, v>_x
+    double dir_xv;              // DE(x)[v]
+    double grad_res;            // |v-Proj(v)|_x
+
+    std::vector<double> ts;
+    std::vector<double> Ets;
+};
+
+
 // This would usually be implemented on a coarser grid than the original problem,
 // and an available restriction operator for computing `w`.
 // For testing gradients, it suffices to consider some level of discretization,
@@ -403,16 +461,81 @@ private:
     Vector<double> m_phi, m_w;  // copy stored for flipping sign
 };
 
-struct CheckGradInfo
-{
-    double x_constr;            // constraint
-    double grad_xv;             // <grad x, v>_x
-    double dir_xv;              // DE(x)[v]
-    double grad_res;            // |v-Proj(v)|_x
 
-    std::vector<double> ts;
-    std::vector<double> Ets;
+template <int dim>
+class GradientTestCoarseFrobenius : public GradientTestBase<dim>
+{
+public:
+    GradientTestCoarseFrobenius(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options,
+                                const Vector<double>& phi,
+                                const Vector<double>& w)
+        : GradientTestBase<dim>(problem, beta, options)
+        , m_phi(phi)
+        , m_w(w)
+    {}
+
+    GradientTestCoarseFrobenius(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GradientTestBase<dim>(problem, beta, options)
+        , m_phi(problem.n_dofs())
+        , m_w(problem.n_dofs())
+    {}
+
+    void update_parameters(const Vector<double>& phi, const Vector<double>& w)
+    {
+        m_phi = phi;
+        m_w = w;
+    }
+
+    double value(const Vector<double>& x) const override
+    {
+        const auto& A0  = this->m_problem.get_A0();
+        const auto& Mpp = this->m_problem.get_Mpp();
+        const auto& M   = this->m_problem.get_M();
+
+        return coarse::frobenius::function_value(x, m_phi, m_w, M, A0, Mpp, this->m_beta);
+    }
+
+    Vector<double> gradient(const Vector<double>& x) const override
+    {
+        Vector<double> q_grad(x.size());
+        // Pure F-metric gradient of the coarse model
+        coarse::frobenius::gradient(this->M, this->A, x, m_phi, m_w, q_grad);
+        return q_grad;
+    }
+
+    double metric(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        AssertDimension(y.size(), z.size());
+        return y * z; // F-metric inner product
+    }
+
+    void random_point(Vector<double>& x) const override
+    {
+        // Generate a random tangent vector at phi
+        Vector<double> v(x.size());
+        this->random_tangent_vector(m_phi, v);
+        v /= std::sqrt(this->metric(v, v));
+
+        // Retract to find an x that is safely near phi
+        this->retract(m_phi, v, x);
+    }
+
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
+    {
+        Vector<double> tmp(v.size());
+        normrnd(this->mean, this->stddev, tmp);
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, tmp, v);
+    }
+
+    void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
+    {
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, v, v_proj);
+    }
+
+private:
+    Vector<double> m_phi, m_w;
 };
+
 
 struct EmptyStrategy
 {
@@ -572,6 +695,13 @@ int main()
     }
 
     {
+        std::cerr << "--- GRADIENT CHECK - FROBENIUS\n";
+        GradientTestFrobenius<2> test_frob(problem, options.beta, options_slv);
+        check_gradient(test_frob, NUM_TRIALS, "checkgradient_frob_2d");
+        std::cerr << "\n";
+    }
+
+    {
         std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
         GradientTestCoarseMass<2> test_coarse_mass(problem, options.beta, options_slv);
         GradientTestMass<2> test_mass(problem, options.beta, options_slv);
@@ -608,12 +738,37 @@ int main()
             test_energy.random_point(phi);
 
             Vector<double> w_proj(n_dofs);
-            ellipsoid::energy::project_onto_tangent_space(test_energy.get_A_inv(), phi, test_energy.get_M(), w, w_proj);
+            ellipsoid::energy::project_onto_tangent_space(test_energy.get_A_inv(),
+                phi, test_energy.get_M(), w, w_proj);
 
             test_coarse_energy.update_parameters(phi, w_proj);
         };
 
         check_gradient(test_coarse_energy, NUM_TRIALS,
             "checkgradient_coarse_energy_2d", setup_base_points_energy);
+    }
+
+    {
+        std::cerr << "--- GRADIENT CHECK - COARSE (FROBENIUS)\n";
+        GradientTestCoarseFrobenius<2> test_coarse_frob(problem, options.beta, options_slv);
+        GradientTestFrobenius<2> test_frob(problem, options.beta, options_slv);
+
+        Vector<double> w(n_dofs);  // fixed correction term
+        w = 1.0;
+
+        auto setup_base_points_frob = [&w, &test_frob, &test_coarse_frob, n_dofs]()
+        {
+            Vector<double> phi(n_dofs);
+            test_frob.random_point(phi);
+
+            // Project the ambient tilt vector w onto the F-metric tangent space
+            Vector<double> w_proj(n_dofs);
+            ellipsoid::frobenius::project_onto_tangent_space(phi, test_frob.get_M(), w, w_proj);
+
+            test_coarse_frob.update_parameters(phi, w_proj);
+        };
+
+        check_gradient(test_coarse_frob, NUM_TRIALS,
+            "checkgradient_coarse_frob_2d", setup_base_points_frob);
     }
 }

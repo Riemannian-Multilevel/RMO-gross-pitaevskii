@@ -85,8 +85,15 @@ public:
     //       check marker `needs_assembly`
     virtual double value(const Vector<double>&) const = 0;
 
-    // Compute directional derivative and Riemannian gradient successively
-    virtual double directional_derivative(const Vector<double>& x, const Vector<double>& z) const = 0;
+    // TODO: Compute directional derivative and Riemannian gradient successively
+    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const
+    {
+        throw dealii::ExcNotImplemented();
+    }
+    virtual double directional_derivative(const Vector<double>&, const Vector<double>&, const Vector<double>&) const
+    {
+        throw dealii::ExcNotImplemented();
+    }
 
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
@@ -118,13 +125,19 @@ public:
         return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        // AssertDimension(g.size(), z.size());
-        // Vector<double> Mz(z.size());
-        // this->M.vmult(Mz, z);
-        // return g * Mz;
         return ellipsoid::directional_derivative(x, z, this->A);
+    }
+
+    // Metric implementation (must match metric of Riemannian gradient)
+    double directional_derivative(const Vector<double>&, const Vector<double>& z, const Vector<double>& g) const override
+    {
+        AssertDimension(g.size(), z.size());
+        Vector<double> Mz(z.size());
+        this->M.vmult(Mz, z);
+        return g * Mz;
     }
 
     /**
@@ -160,13 +173,19 @@ public:
         return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        // AssertDimension(g.size(), g.size());
-        // Vector<double> Az(z.size());
-        // this->A.vmult(Az, z);
-        // return g * Az;
         return ellipsoid::directional_derivative(x, z, this->A);
+    }
+
+    // Metric implementation (must match metric of Riemannian gradient)
+    double directional_derivative(const Vector<double>&, const Vector<double>& z, const Vector<double>& g) const override
+    {
+        AssertDimension(g.size(), z.size());
+        Vector<double> Az(z.size());
+        this->A.vmult(Az, z);
+        return g * Az;
     }
 
     /**
@@ -201,10 +220,17 @@ public:
         return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
+    // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        // return g * z
         return ellipsoid::directional_derivative(x, z, this->A);
+    }
+
+    // Metric implementation (must match metric of Riemannian gradient)
+    double directional_derivative(const Vector<double>&, const Vector<double>& z, const Vector<double>& g) const override
+    {
+        AssertDimension(g.size(), z.size());
+        return g * z;
     }
 
     /**
@@ -255,11 +281,6 @@ public:
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
     }
 
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        throw dealii::ExcNotImplemented();
-    }
-
     /**
      * @brief Computes the coarse model gradient in the M-metric.
      */
@@ -305,11 +326,6 @@ public:
     {
         return coarse::mass::function_value(x, phi, w, this->problem.get_M(),
             this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
-    }
-
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        throw dealii::ExcNotImplemented();
     }
 
     /**
@@ -358,11 +374,6 @@ public:
     {
         return coarse::frobenius::function_value(x, phi, w,
             this->problem.get_M(), this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
-    }
-
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        throw dealii::ExcNotImplemented();
     }
 
     /**
@@ -416,11 +427,6 @@ public:
         return coarse::frobenius::function_value(x, phi, w,
             this->problem.get_M(), this->problem.get_A0(),
             this->problem.get_Mpp(), this->beta);
-    }
-
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        throw dealii::ExcNotImplemented();
     }
 
     /**
@@ -825,7 +831,6 @@ public:
                     O_coarse.solve(coarse_step, options_gd_coarse, dk);
 
                     // Evaluate directional derivative in M-norm
-                    //auto dir_deriv = O_fine.metric(y_grad, dk);
                     auto dir_deriv = O_fine.directional_derivative(y, dk);
                     CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                     info.iter      = i;
@@ -847,7 +852,6 @@ fine_step:
                 dk *= -1.0;
 
                 // Evaluate directional derivative in A-norm
-                //auto dir_deriv = O_fine.metric(y_grad, dk);
                 auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i;
@@ -893,7 +897,6 @@ fine_step:
                 dk *= -1.0;
 
                 // Apply step
-                //auto dir_deriv = O_fine.metric(y_grad, dk);
                 auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i++;
@@ -913,7 +916,6 @@ fine_step:
 
                 // Apply step
                 // Evaluate directional derivative in the M-norm
-                // auto dir_deriv = coarse_step.metric(coarse_step.y_grad, dk);
                 auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i++;
@@ -935,7 +937,6 @@ fine_step:
                 dk *= -1.0;
 
                 // Apply step
-                //auto dir_deriv = O_fine.metric(y_grad, dk);
                 auto dir_deriv = O_fine.directional_derivative(y, dk);
                 CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
                 info.iter      = i++;
