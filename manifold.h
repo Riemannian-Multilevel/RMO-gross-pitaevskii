@@ -913,14 +913,15 @@ void gradient(const MatrixType& M,
 
     const double w_A_zeta = A_phi_w * zeta;
 
-    Vector<double> dual(Az);
-    dual.add(-1.0 / phi_M_zeta, A_phi_w);
-    dual.add(w_A_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
+    Vector<double> grad(Az);
+    grad.add(-1.0 / phi_M_zeta, A_phi_w);
+    grad.add(w_A_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
 
-    Vector<double> Ainv_dual(n_dofs);
-    A_zeta_inv.vmult(Ainv_dual, dual);
+    Vector<double> Ainv_grad(n_dofs);
+    A_zeta_inv.vmult(Ainv_grad, grad);
 
-    ellipsoid::energy::project_onto_tangent_space(A_zeta_inv,zeta, M, Ainv_dual, dst);
+    //ellipsoid::frobenius::project_onto_tangent_space(zeta, M, Ainv_grad, dst);
+    ellipsoid::energy::project_onto_tangent_space(A_zeta_inv,zeta, M, Ainv_grad, dst);
 }
 
 } // namespace coarse::energy

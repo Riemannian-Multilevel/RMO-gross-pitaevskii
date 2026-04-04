@@ -294,10 +294,13 @@ public:
         return this->A_inv.control().last_step();
     }
 
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy=value(x)};
+    }
+
 private:
     Vector<double> m_phi, m_w;
-    const OperatorType& A_phi;
-
     Vector<double> A_phi_w; // Cached A_{zeta_k} * w_k
 };
 
