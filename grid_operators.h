@@ -8,7 +8,6 @@
 namespace gpe
 {
 
-// TODO: using M for the standard context, and A^-1 for the inverse context, seems overly specialized
 template <typename MatrixType>
 struct MatrixContext
 {
@@ -24,12 +23,6 @@ struct MatrixContext
 // {
 //     const InverseMatrixType& A_inv_c;
 //     const InverseMatrixType& A_inv_f;
-//
-//     InverseMatrixContext(const MatrixType& M_c, const MatrixType& M_f,
-//                          const InverseMatrixType& A_inv_c,
-//                          const InverseMatrixType& A_inv_f)
-//         : MatrixContext<MatrixType>(M_c, M_f)
-//         , A_inv_c(A_inv_c), A_inv_f(A_inv_f) {}
 // };
 
 // Metric-independent transfers for the fine/coarse manifolds S_h/S_H

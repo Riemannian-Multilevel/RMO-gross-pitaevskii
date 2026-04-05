@@ -249,6 +249,7 @@ class CoarseModel
 public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
+    using InverseOpType  = PreconditionInverse<OperatorType, SparseMatrix<double>>;
     using Context       = MatrixContext<OperatorType>;
 
     CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
