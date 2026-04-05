@@ -256,55 +256,6 @@ public:
 // };
 
 
-// TODO: fails to converge - check for correctness
-template <int dim>
-class EnergyCoarseOracle : public OracleBase<dim>
-{
-public:
-    static constexpr const char* id = "E_C";
-    using OracleBase<dim>::OracleBase;
-    using OperatorType = OracleBase<dim>::OperatorType;
-
-
-    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
-    {
-        m_phi = phi_new;
-        m_w = w_new;
-
-        A_phi_w.reinit(m_w.size());
-        this->A.vmult(A_phi_w, m_w);
-    }
-
-    double value(const Vector<double>& x) const override
-    {
-        return coarse::energy::function_value(x, m_phi, A_phi_w,
-            this->M, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
-    }
-
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return coarse::energy::directional_derivative(x, m_phi, A_phi_w,
-            z, this->M, this->A);
-    }
-
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
-    {
-        coarse::energy::gradient(this->M, this->A_inv, this->A,
-            x, m_phi, A_phi_w, output);
-        return this->A_inv.control().last_step();
-    }
-
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        return {.energy=value(x)};
-    }
-
-private:
-    Vector<double> m_phi, m_w;
-    Vector<double> A_phi_w; // Cached A_{zeta_k} * w_k
-};
-
-
 // TODO: use tag dispatch for gradient metric
 template <int dim>
 class MassCoarseOracle : public OracleBase<dim>

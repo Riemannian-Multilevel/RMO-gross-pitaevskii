@@ -249,8 +249,7 @@ class CoarseModel
 public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
-    using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
-    using Context       = InverseMatrixContext<OperatorType, InverseOpType>;
+    using Context       = MatrixContext<OperatorType>;
 
     CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
                 const GrossPitaevskiiProblem<dim>& problem_fine,
@@ -277,7 +276,7 @@ public:
 
         // Grid operators
         , transfer(transfer)
-        , context(M_coarse, M_fine, A_coarse_inv, A_fine_inv)
+        , context(M_coarse, M_fine)
         , point_transfer(context, transfer)
         , vector_transport(context, transfer, point_transfer)
     {}

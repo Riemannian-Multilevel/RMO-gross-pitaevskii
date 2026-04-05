@@ -19,19 +19,18 @@ struct MatrixContext
         : M_c(M_c), M_f(M_f) {}
 };
 
-template <typename MatrixType, typename InverseMatrixType>
-struct InverseMatrixContext : MatrixContext<MatrixType>
-{
-    const InverseMatrixType& A_inv_c;
-    const InverseMatrixType& A_inv_f;
-
-    InverseMatrixContext(const MatrixType& M_c, const MatrixType& M_f,
-                         const InverseMatrixType& A_inv_c,
-                         const InverseMatrixType& A_inv_f)
-        : MatrixContext<MatrixType>(M_c, M_f)
-        , A_inv_c(A_inv_c), A_inv_f(A_inv_f) {}
-};
-
+// template <typename MatrixType, typename InverseMatrixType>
+// struct InverseMatrixContext : MatrixContext<MatrixType>
+// {
+//     const InverseMatrixType& A_inv_c;
+//     const InverseMatrixType& A_inv_f;
+//
+//     InverseMatrixContext(const MatrixType& M_c, const MatrixType& M_f,
+//                          const InverseMatrixType& A_inv_c,
+//                          const InverseMatrixType& A_inv_f)
+//         : MatrixContext<MatrixType>(M_c, M_f)
+//         , A_inv_c(A_inv_c), A_inv_f(A_inv_f) {}
+// };
 
 // Metric-independent transfers for the fine/coarse manifolds S_h/S_H
 template <typename MatrixType>
@@ -276,53 +275,6 @@ public:
 private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
-
-    const LinearTransferBase& transfer;
-    const ManifoldTransfer<MatrixType>& point_transfer;
-};
-
-
-template <typename MatrixType, typename InverseMatrixType>
-class EnergyProjectionTransport : public VectorTransportBase
-{
-public:
-    static constexpr const char* id = "A";
-    using Context = InverseMatrixContext<MatrixType, InverseMatrixType>;
-
-    EnergyProjectionTransport(const Context& mtx,
-                              const LinearTransferBase& I,
-                              const ManifoldTransfer<MatrixType>& pt)
-        : M_coarse(mtx.M_c), M_fine(mtx.M_f)
-        , A_inv_coarse(mtx.A_inv_c)
-        , A_inv_fine(mtx.A_inv_f)
-        , transfer(I), point_transfer(pt)
-    {}
-
-    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
-    {
-        // Tangent vector interpolated to fine ambient space
-        Vector<double> Iv(transfer.n_fine());
-        transfer.to_fine_mesh(v_coarse, Iv);
-
-        // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in A-metric
-        ellipsoid::energy::project_onto_tangent_space(A_inv_fine, y_fine, M_fine, Iv, dst);
-    }
-
-    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
-                            const Vector<double>& v_fine, Vector<double>& dst) const override
-    {
-        // Tangent vector restricted to coarse ambient space
-        Vector<double> Iv(transfer.n_coarse());
-        transfer.to_coarse_mesh(v_fine, Iv);
-
-        // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H in A-metric
-        ellipsoid::energy::project_onto_tangent_space(A_inv_coarse, x_coarse, M_coarse, Iv, dst);
-    }
-
-private:
-    const MatrixType& M_coarse, M_fine;
-    const InverseMatrixType& A_inv_coarse, A_inv_fine;
 
     const LinearTransferBase& transfer;
     const ManifoldTransfer<MatrixType>& point_transfer;
