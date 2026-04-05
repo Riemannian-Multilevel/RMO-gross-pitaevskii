@@ -256,6 +256,7 @@ public:
 // };
 
 
+// TODO: fails to converge - check for correctness
 template <int dim>
 class EnergyCoarseOracle : public OracleBase<dim>
 {
@@ -270,7 +271,6 @@ public:
         m_phi = phi_new;
         m_w = w_new;
 
-        // Safely cache the vector using the provided, mathematically guaranteed operator
         A_phi_w.reinit(m_w.size());
         this->A.vmult(A_phi_w, m_w);
     }

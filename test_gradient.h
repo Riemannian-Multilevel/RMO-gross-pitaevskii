@@ -312,7 +312,7 @@ public:
         , m_w(problem.n_dofs())
     {}
 
-    void update_parameters(const Vector<double>& phi, const Vector<double>& w)
+    void update_parameters(const Vector<double>& w, const Vector<double>& phi)
     {
         m_phi = phi;
         m_w = w;

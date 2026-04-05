@@ -754,20 +754,20 @@ double directional_derivative(const Vector<double>& zeta,
                               const MatrixTypeA& A)
 {
     // Differential of the standard GP energy: (A * zeta)^T z
-    dealii::Vector<double> Az(zeta.size());
+    Vector<double> Az(zeta.size());
     A.vmult(Az, zeta);
 
     // Adjoint pullback of the correction vector w: u = (D_invRet_phi)^*[w]
-    dealii::Vector<double> u(zeta.size());
+    Vector<double> u(zeta.size());
     ellipsoid::retract_inv_diff_by_norm_adjoint(M, phi, zeta, w, u);
 
-    dealii::Vector<double> Mu(zeta.size());
+    Vector<double> Mu(zeta.size());
     M.vmult(Mu, u);
 
-    dealii::Vector<double> dual(Az);
-    dual.add(-1.0, Mu);
+    Vector<double> grad(Az);
+    grad.add(-1.0, Mu);
 
-    return dual * z;
+    return grad * z;
 }
 
 
@@ -838,6 +838,7 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
 } // namespace coarse::mass
 
 
+// TODO: fail to converge - check for correctness
 namespace coarse::energy
 {
 
@@ -881,11 +882,11 @@ double directional_derivative(const Vector<double>& zeta,
 
     const double w_A_zeta = A_phi_w * zeta;
 
-    Vector<double> dual(Az);
-    dual.add(-1.0 / phi_M_zeta, A_phi_w);
-    dual.add(w_A_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
+    Vector<double> grad(Az);
+    grad.add(-1.0 / phi_M_zeta, A_phi_w);
+    grad.add(w_A_zeta / (phi_M_zeta * phi_M_zeta), M_phi);
 
-    return dual * z;
+    return grad * z;
 }
 
 
