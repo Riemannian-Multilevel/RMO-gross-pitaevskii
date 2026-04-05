@@ -832,8 +832,7 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
     invAz *= -1.0;
     invAz.add(1.0, zeta);
 
-    // TODO: does <grad_A f(x), v>_A = Df(x)[v] hold after F-projection?
-    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, invAz, dst);
+    ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, invAz, dst);
 }
 
 } // namespace coarse::mass
