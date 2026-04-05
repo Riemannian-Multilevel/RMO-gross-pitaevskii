@@ -12,6 +12,7 @@ find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 
 set(COMMON_HEADERS
         fe_space.h
+        fe_interpolate.h
         grid.h
         assemble.h
         manifold.h

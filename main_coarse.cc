@@ -67,15 +67,19 @@ int main()
     using OperatorType    = LinearCombination<SparseMatrix<double>, Vector<double>>;
     using InverseOpType   = PreconditionInverse<OperatorType, SparseMatrix<double>>;
     using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
-    // using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
-    //using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
-    using CoarseOracle    = EnergyCoarseOracle<dim>;
+
+    //using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
+    using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
+    //using CoarseOracle    = EnergyCoarseOracle<dim>;
+
     //using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
-    //using TiltOracle      = FrobeniusOracle<dim>;
-    using TiltOracle      = EnergyOracle<dim>;
-    //using VectorTransport = MassProjectionTransport<dim, OperatorType>; // for transferring coarse directions
-    //using VectorTransport = FrobeniusProjectionTransport<dim, OperatorType>;
-    using VectorTransport = EnergyProjectionTransport<dim, OperatorType, InverseOpType>;
+    using TiltOracle      = FrobeniusOracle<dim>;
+    //using TiltOracle      = EnergyOracle<dim>;
+
+    //using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
+    using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
+    //using VectorTransport = EnergyProjectionTransport<OperatorType, InverseOpType>;
+
     using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
     FullApproximationScheme<dim, SmoothOracle, CoarseModel> FAS(

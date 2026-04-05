@@ -45,3 +45,8 @@ void check_adaptive_descent_condition(const GrossPitaevskiiProblem<dim>& problem
         std::cerr << "PASS: Energy-adaptive gradient points downhill.\n";
     }
 }
+
+int main()
+{
+    return 0;
+}

@@ -196,7 +196,6 @@ public:
     /**
      * @brief Constructor.
      * @param matrix The matrix to be inverted (solved).
-     * @param method The iterative solver method to use (CG, GMRES, etc.).
      * @param options Options for the iterative solver (preconditioner, iteration count, tolerance)
      */
     InverseMatrix(const OperatorType& matrix,

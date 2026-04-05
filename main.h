@@ -32,7 +32,7 @@ namespace gpe
  * @param dst [out] The computed correction vector $w_k \in T_{x_H} \mathcal{S}_H$.
  */
 template <int dim>
-void coarse_correction(const VectorTransportBase<dim>& transport,
+void coarse_correction(const VectorTransportBase& transport,
                        const Vector<double>& x_grad_coarse,
                        const Vector<double>& y_grad_fine,
                        const Vector<double>& x_coarse,
@@ -250,6 +250,7 @@ public:
     using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
     using MatrixType    = SparseMatrix<double>;
     using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
+    using Context       = InverseMatrixContext<OperatorType, InverseOpType>;
 
     CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
                 const GrossPitaevskiiProblem<dim>& problem_fine,
@@ -271,11 +272,14 @@ public:
         // TODO: separate preconditioners for gradient descent (qk), and inverse of M (coarse gradients)
         , M_coarse_inv(M_coarse, options_coarse)
         , M_fine_inv(M_fine, options)
+        , A_coarse_inv(A_coarse, options_coarse)
+        , A_fine_inv(A_fine, options)
 
         // Grid operators
         , transfer(transfer)
-        , point_transfer(M_coarse, M_fine, transfer)
-        , vector_transport(M_coarse, M_fine, transfer, point_transfer)
+        , context(M_coarse, M_fine, A_coarse_inv, A_fine_inv)
+        , point_transfer(context, transfer)
+        , vector_transport(context, transfer, point_transfer)
     {}
 
     void set_timer(const dealii::Timer& timer_new)
@@ -354,10 +358,12 @@ private:
     OperatorType M_coarse, M_fine;
     OperatorType A_coarse, A_fine;
     InverseOpType M_coarse_inv, M_fine_inv;
+    InverseOpType A_coarse_inv, A_fine_inv;
 
     // Grid operators
     const LinearTransferBase& transfer;
-    ManifoldTransfer<dim, OperatorType> point_transfer;
+    Context context;  // TODO: redundant
+    ManifoldTransfer<OperatorType> point_transfer;
     VectorTransport vector_transport;
 };
 

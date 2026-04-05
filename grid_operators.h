@@ -1,256 +1,47 @@
 #ifndef GPE_GRID_OPERATORS_H
 #define GPE_GRID_OPERATORS_H
+
 #include "option_types.h"
 #include "manifold.h"
-
-#include <deal.II/numerics/vector_tools.h>
-#include <deal.II/fe/mapping_q.h>
-#include <deal.II/fe/fe_values.h>
-#include <deal.II/grid/grid_tools.h>
+#include "fe_interpolate.h"
 
 namespace gpe
 {
 
-class LinearTransferBase
+// TODO: using M for the standard context, and A^-1 for the inverse context, seems overly specialized
+template <typename MatrixType>
+struct MatrixContext
 {
-public:
-    virtual ~LinearTransferBase() = default;
+    const MatrixType& M_c;
+    const MatrixType& M_f;
 
-    virtual void to_coarse_mesh(const Vector<double>&, Vector<double>&) const = 0;
-
-    virtual void to_fine_mesh(const Vector<double>&, Vector<double>&) const = 0;
-
-    virtual unsigned n_coarse() const = 0;
-    virtual unsigned n_fine() const = 0;
+    MatrixContext(const MatrixType& M_c, const MatrixType& M_f)
+        : M_c(M_c), M_f(M_f) {}
 };
 
-
-// Linear interpolation using deal.ii mesh interpolation
-template <int dim>
-class LinearTransfer : public LinearTransferBase
+template <typename MatrixType, typename InverseMatrixType>
+struct InverseMatrixContext : MatrixContext<MatrixType>
 {
-public:
-    LinearTransfer(const dealii::DoFHandler<dim>& dof_c,
-                   const dealii::DoFHandler<dim>& dof_f,
-                   const dealii::AffineConstraints<double>& aff_c,
-                   const dealii::AffineConstraints<double>& aff_f)
-        : dof_coarse(dof_c), dof_fine(dof_f), aff_coarse(aff_c), aff_fine(aff_f)
-    {}
+    const InverseMatrixType& A_inv_c;
+    const InverseMatrixType& A_inv_f;
 
-    void to_coarse_mesh(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
-    {
-        dst_coarse.reinit(dof_coarse.n_dofs());
-        dst_coarse = 0.0;
-
-        dealii::VectorTools::interpolate_to_coarser_mesh(dof_fine,
-            src_fine, dof_coarse, aff_coarse, dst_coarse);
-    }
-
-    void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
-    {
-        dst_fine.reinit(dof_fine.n_dofs());
-        dst_fine = 0.0;
-
-        dealii::VectorTools::interpolate_to_finer_mesh(dof_coarse,
-            src_coarse, dof_fine, aff_fine, dst_fine);
-    }
-
-    unsigned n_coarse() const override { return dof_coarse.n_dofs(); }
-    unsigned n_fine() const override { return dof_fine.n_dofs(); }
-
-private:
-    const dealii::DoFHandler<dim>& dof_coarse;
-    const dealii::DoFHandler<dim>& dof_fine;
-    const dealii::AffineConstraints<double>& aff_coarse;
-    const dealii::AffineConstraints<double>& aff_fine;
+    InverseMatrixContext(const MatrixType& M_c, const MatrixType& M_f,
+                         const InverseMatrixType& A_inv_c,
+                         const InverseMatrixType& A_inv_f)
+        : MatrixContext<MatrixType>(M_c, M_f)
+        , A_inv_c(A_inv_c), A_inv_f(A_inv_f) {}
 };
 
-template <int dim>
-class LinearTransferMatrix : public LinearTransferBase
-{
-public:
-    /**
-     * @brief Constructs the transfer operators between two given DoF handlers.
-     * @param dof_coarse The DoFHandler for the coarse grid.
-     * @param dof_fine The DoFHandler for the fine grid.
-     * @param constraints_coarse
-     * @param constraints_fine
-     */
-    LinearTransferMatrix(const dealii::DoFHandler<dim>& dof_coarse,
-                         const dealii::DoFHandler<dim>& dof_fine,
-                         const dealii::AffineConstraints<double>& constraints_coarse,
-                         const dealii::AffineConstraints<double>& constraints_fine)
-        : n_c(dof_coarse.n_dofs())
-        , n_f(dof_fine.n_dofs())
-        , constraints_c(constraints_coarse) // Store references
-        , constraints_f(constraints_fine)
-    {
-        // Prolongation P: Maps Coarse -> Fine
-        //build_interpolation_matrix(dof_coarse, dof_fine, sparsity_pattern_P, P);
-
-        // Restriction R: Maps Fine -> Coarse
-        //build_interpolation_matrix(dof_fine, dof_coarse, sparsity_pattern_R, R);
-
-        // Create unique filenames based on the grid sizes to prevent mismatched loads
-        const std::string p_filename = "P_matrix_" + std::to_string(n_c) + "_to_" + std::to_string(n_f) + ".bin";
-        const std::string r_filename = "R_matrix_" + std::to_string(n_f) + "_to_" + std::to_string(n_c) + ".bin";
-
-        // Prolongation P: Maps Coarse -> Fine
-        load_or_build_matrix(p_filename, dof_coarse, dof_fine, sparsity_pattern_P, P);
-
-        // Restriction R: Maps Fine -> Coarse
-        load_or_build_matrix(r_filename, dof_fine, dof_coarse, sparsity_pattern_R, R);
-    }
-
-    /**
-     * @brief Prolongates a vector from the coarse mesh to the fine mesh.
-     * Evaluates $v_{fine} = P \cdot v_{coarse}$.
-     * * @param src_coarse The input vector on the coarse grid.
-     * @param dst_fine [out] The interpolated vector on the fine grid.
-     */
-    void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
-    {
-        P.vmult(dst_fine, src_coarse);
-
-        constraints_f.distribute(dst_fine);
-    }
-
-    /**
-     * @brief Restricts a vector from the fine mesh to the coarse mesh via point interpolation.
-     * Evaluates $v_{coarse} = R \cdot v_{fine}$.
-     * * @param src_fine The input vector on the fine grid.
-     * @param dst_coarse [out] The restricted vector on the coarse grid.
-     */
-    void to_coarse_mesh(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
-    {
-        R.vmult(dst_coarse, src_fine);
-
-        constraints_c.distribute(dst_coarse);
-    }
-
-    /** @brief Returns the number of degrees of freedom on the coarse grid. */
-    unsigned int n_coarse() const override { return n_c; }
-
-    /** @brief Returns the number of degrees of freedom on the fine grid. */
-    unsigned int n_fine() const override { return n_f; }
-
-private:
-    unsigned int n_c;
-    unsigned int n_f;
-    dealii::AffineConstraints<double> constraints_c, constraints_f;
-
-    SparsityPattern sparsity_pattern_P;
-    SparseMatrix<double> P;
-
-    SparsityPattern sparsity_pattern_R;
-    SparseMatrix<double> R;
-
-    void build_interpolation_matrix(const dealii::DoFHandler<dim>& dof_src,
-                                    const dealii::DoFHandler<dim>& dof_dst,
-                                    dealii::SparsityPattern& sparsity_pattern,
-                                    dealii::SparseMatrix<double>& interpolation_matrix)
-    {
-        const unsigned int n_src = dof_src.n_dofs();
-        const unsigned int n_dst = dof_dst.n_dofs();
-
-        // Matrix maps from src -> dst, so dimensions are (n_dst) x (n_src)
-        dealii::DynamicSparsityPattern dsp(n_dst, n_src);
-
-        struct MatrixEntry {
-            global_dof_index row;
-            global_dof_index col;
-            double value;
-        };
-        std::vector<MatrixEntry> cached_entries;
-
-        // Estimate ~9-27 non-zeros per column depending on dimension
-        cached_entries.reserve(n_src * dof_dst.get_fe().dofs_per_cell);
-
-        Vector<double> unit_src(n_src);
-        Vector<double> column_dst(n_dst);
-
-        // --- THE PROBING LOOP ---
-        // We push a 1.0 through each source DoF. The resulting interpolated
-        // destination vector is exactly one column of the transfer matrix.
-        for (unsigned int j = 0; j < n_src; ++j) {
-            if (j % 1000 == 0) std::cerr << j << "..";
-
-            // 1. Create the unit vector
-            unit_src = 0.0;
-            unit_src[j] = 1.0;
-
-            // 2. Let deal.II handle all the nasty constraint/boundary math!
-            dealii::VectorTools::interpolate_to_different_mesh(
-            dof_src, unit_src, dof_dst, column_dst);
-
-            // 3. Record the non-zero entries for this column
-            for (unsigned int i = 0; i < n_dst; ++i) {
-                if (std::abs(column_dst[i]) > 1e-14) {
-                    dsp.add(i, j);
-                    cached_entries.push_back({i, j, column_dst[i]});
-                }
-            }
-        }
-        std::cerr << std::endl;
-        // 4. Initialize and fill the sparse matrix
-        sparsity_pattern.copy_from(dsp);
-        interpolation_matrix.reinit(sparsity_pattern);
-
-        for (const auto& entry : cached_entries) {
-            interpolation_matrix.set(entry.row, entry.col, entry.value);
-        }
-    }
-
-    void load_or_build_matrix(const std::string& filename,
-                              const dealii::DoFHandler<dim>& dof_src,
-                              const dealii::DoFHandler<dim>& dof_dst,
-                              dealii::SparsityPattern& sparsity_pattern,
-                              dealii::SparseMatrix<double>& matrix)
-    {
-        // Try to open the file in binary mode
-        std::ifstream in_file(filename, std::ios::binary);
-
-        if (in_file.is_open()) {
-            std::cerr << "  -> Loading transfer matrix from disk: " << filename << std::endl;
-
-            // 1. Read and finalize the SparsityPattern first
-            sparsity_pattern.block_read(in_file);
-
-            // 2. Initialize the empty matrix with the loaded pattern
-            matrix.reinit(sparsity_pattern);
-
-            // 3. Read the actual matrix values (the float data)
-            matrix.block_read(in_file);
-
-        } else {
-            std::cerr << "  -> Building transfer matrix from scratch..." << std::endl;
-
-            // 1. Call expensive probing/geometric setup function
-            build_interpolation_matrix(dof_src, dof_dst, sparsity_pattern, matrix);
-
-            // 2. Open file for writing in binary mode
-            std::ofstream out_file(filename, std::ios::binary);
-
-            if (out_file.is_open()) {
-                // Write the pattern first, then the matrix
-                sparsity_pattern.block_write(out_file);
-                matrix.block_write(out_file);
-                std::cerr << "  -> Saved transfer matrix to: " << filename << std::endl;
-            } else {
-                std::cerr << "  -> Warning: Could not open file to save matrix: " << filename << std::endl;
-            }
-        }
-    }
-};
 
 // Metric-independent transfers for the fine/coarse manifolds S_h/S_H
-template <int dim, typename MatrixType>
+template <typename MatrixType>
 class ManifoldTransfer
 {
 public:
-    ManifoldTransfer(const MatrixType& M_c, const MatrixType& M_f,
-                     const LinearTransferBase& I)
-        : M_coarse(M_c), M_fine(M_f), transfer(I)
+    using Context = MatrixContext<MatrixType>;
+
+    ManifoldTransfer(const Context& mtx, const LinearTransferBase& I)
+        : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I)
     {}
 
     /**
@@ -389,7 +180,6 @@ private:
 };
 
 
-template <int dim>
 class VectorTransportBase
 {
 public:
@@ -422,23 +212,6 @@ public:
 };
 
 
-template <int dim, typename MatrixType, typename InverseMatrixType>
-struct TransportContext
-{
-    // Mandatory components (References)
-    // TODO: M_c/M_f might not be required for some transports
-    const MatrixType& M_c;
-    const MatrixType& M_f;
-    const LinearTransferBase& I;
-    const ManifoldTransfer<dim, MatrixType>& pt;
-
-    // Optional components (Pointers)
-    const InverseMatrixType* A_inv_c = nullptr;
-    const InverseMatrixType* A_inv_f = nullptr;
-    const InverseMatrixType* M_inv_c = nullptr; // In case Mass needs its inverse later
-};
-
-
 /**
  * @brief Strategy for vector transport via ambient space transfer and orthogonal projection.
  * This class implements the `VectorTransportBase` interface using the standard projection
@@ -453,17 +226,17 @@ struct TransportContext
  * @tparam dim The spatial dimension of the problem.
  * @tparam MatrixType The matrix type defining the ambient space metric (typically the Mass matrix).
  */
-template <int dim, typename MatrixType>
-class MassProjectionTransport : public VectorTransportBase<dim>
+template <typename MatrixType>
+class MassProjectionTransport : public VectorTransportBase
 {
 public:
     static constexpr const char* id = "M";
+    using Context = MatrixContext<MatrixType>;
 
-    MassProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
-                        const LinearTransferBase& I,
-                        const ManifoldTransfer<dim, MatrixType>& pt)
-        : M_coarse(M_c), M_fine(M_f)
-        , transfer(I), point_transfer(pt)
+    MassProjectionTransport(const Context& mtx,
+                            const LinearTransferBase& I,
+                            const ManifoldTransfer<MatrixType>& pt)
+        : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I), point_transfer(pt)
     {}
 
     /**
@@ -505,27 +278,27 @@ private:
     const MatrixType& M_fine;
 
     const LinearTransferBase& transfer;
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
 };
 
 
-template <int dim, typename MatrixType, typename InverseMatrixType>
-class EnergyProjectionTransport : public VectorTransportBase<dim>
+template <typename MatrixType, typename InverseMatrixType>
+class EnergyProjectionTransport : public VectorTransportBase
 {
 public:
     static constexpr const char* id = "A";
+    using Context = InverseMatrixContext<MatrixType, InverseMatrixType>;
 
-    EnergyProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
-                              const InverseMatrixType& A_inv_c, const InverseMatrixType& A_inv_f,
+    EnergyProjectionTransport(const Context& mtx,
                               const LinearTransferBase& I,
-                              const ManifoldTransfer<dim, MatrixType>& pt)
-    : M_coarse(M_c), M_fine(M_f)
-    , A_inv_coarse(A_inv_c), A_inv_fine(A_inv_f)
-    , transfer(I), point_transfer(pt)
+                              const ManifoldTransfer<MatrixType>& pt)
+       : M_coarse(mtx.M_c), M_fine(mtx.M_f)
+       , A_inv_coarse(mtx.A_inv_c), A_inv_fine(mtx.A_inv_f)
+       , transfer(I), point_transfer(pt)
     {}
 
     void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
-                         const Vector<double>& v_coarse, Vector<double>& dst) const override
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -536,7 +309,7 @@ public:
     }
 
     void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
-                        const Vector<double>& v_fine, Vector<double>& dst) const override
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
@@ -551,25 +324,25 @@ private:
     const InverseMatrixType& A_inv_coarse, A_inv_fine;
 
     const LinearTransferBase& transfer;
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
 };
 
 
-template <int dim, typename MatrixType>
-class FrobeniusProjectionTransport : public VectorTransportBase<dim>
+template <typename MatrixType>
+class FrobeniusProjectionTransport : public VectorTransportBase
 {
 public:
+    using Context = MatrixContext<MatrixType>;
     static constexpr const char* id = "F";
 
-    FrobeniusProjectionTransport(const MatrixType& M_c, const MatrixType& M_f,
-                                 const LinearTransferBase& I,
-                                 const ManifoldTransfer<dim, MatrixType>& pt)
-        : M_coarse(M_c), M_fine(M_f)
-        , transfer(I), point_transfer(pt)
+    explicit FrobeniusProjectionTransport(const Context& mtx,
+                                          const LinearTransferBase& I,
+                                          const ManifoldTransfer<MatrixType>& pt)
+        : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I), point_transfer(pt)
     {}
 
     void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
-                         const Vector<double>& v_coarse, Vector<double>& dst) const override
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -580,7 +353,7 @@ public:
     }
 
     void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
-                        const Vector<double>& v_fine, Vector<double>& dst) const override
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
@@ -595,7 +368,7 @@ private:
     const MatrixType& M_fine;
 
     const LinearTransferBase& transfer;
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
 };
 
 
@@ -614,13 +387,15 @@ private:
  * @tparam dim The spatial dimension of the problem.
  * @tparam MatrixType The matrix type defining the metric.
  */
-template <int dim, typename MatrixType>
-class DifferentialTransport : public VectorTransportBase<dim>
+template <typename MatrixType>
+class DifferentialTransport : public VectorTransportBase
 {
 public:
-    DifferentialTransport(const ManifoldTransfer<dim, MatrixType>& pt,
-                          const MatrixType& M_f, const MatrixType& M_c)
-        : point_transfer(pt), M_fine(M_f), M_coarse(M_c)
+    using Context = MatrixContext<MatrixType>;
+    static constexpr const char* id = "D";
+
+    explicit DifferentialTransport(const Context& ctx)
+        : point_transfer(ctx.pt), M_fine(ctx.M_f), M_coarse(ctx.M_c)
     {}
 
     void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v_coarse,
@@ -674,68 +449,9 @@ public:
     }
 
 private:
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
     const MatrixType& M_fine;
     const MatrixType& M_coarse;
-};
-
-
-// Strategy C: Transport with Galerkin condition (M-metric)
-template <int dim, typename MatrixType>
-class GalerkinTransport : public VectorTransportBase<dim>
-{
-public:
-    GalerkinTransport(const ManifoldTransfer<dim, MatrixType>& pt)
-        : point_transfer(pt)
-    {}
-
-    void vector_prolongation(const Vector<double>&, const Vector<double>&,
-                             const Vector<double>&, Vector<double>&) const override
-    {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-    }
-
-    void vector_restriction(const Vector<double>&, const Vector<double>&,
-                            const Vector<double>&, Vector<double>&) const override
-    {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-    }
-
-private:
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
-};
-
-
-// Strategy D: Transport through pseudo-inverse
-template <int dim, typename MatrixType>
-class PseudoInvTransport : public VectorTransportBase<dim>
-{
-public:
-    PseudoInvTransport(const MatrixType& M_c, const MatrixType& M_f,
-                       const LinearTransferBase& I,
-                       const ManifoldTransfer<dim, MatrixType>& pt)
-        : M_coarse(M_c), M_fine(M_f)
-        , transfer(I), point_transfer(pt)
-    {}
-
-    void vector_prolongation(const Vector<double>&, const Vector<double>&,
-                             const Vector<double>&, Vector<double>&) const override
-    {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-    }
-
-    void vector_restriction(const Vector<double>&, const Vector<double>&,
-                            const Vector<double>&, Vector<double>&) const override
-    {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-    }
-
-private:
-    const MatrixType& M_coarse;
-    const MatrixType& M_fine;
-
-    const LinearTransferBase& transfer;
-    const ManifoldTransfer<dim, MatrixType>& point_transfer;
 };
 
 } // namespace gpe
