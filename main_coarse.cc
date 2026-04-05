@@ -41,7 +41,7 @@ int main()
     options.dimension = 2;
     options.degree    = 1;  // piecewise linear (1) or quadratic (2) elements
     options.radius    = 10;
-    options.beta      = 100;
+    options.beta      = 10000;
     options.bc        = BoundaryCondition::DIRICHLET;
     options.mesh_kind = MeshKind::QUADRILATERAL;
     options.order     = Ordering::DEFAULT;
@@ -68,17 +68,17 @@ int main()
     using InverseOpType   = PreconditionInverse<OperatorType, SparseMatrix<double>>;
     using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
 
-    // using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
+    using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
     // using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
-    using CoarseOracle    = EnergyCoarseOracle<dim>;
+    // using CoarseOracle    = EnergyCoarseOracle<dim>;
 
-    // using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
+    using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
     // using TiltOracle      = FrobeniusOracle<dim>;
-    using TiltOracle      = EnergyOracle<dim>;
+    // using TiltOracle      = EnergyOracle<dim>;
 
-    // using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
+    using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
     // using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
-    using VectorTransport = EnergyProjectionTransport<OperatorType, InverseOpType>;
+    // using VectorTransport = EnergyProjectionTransport<OperatorType, InverseOpType>;
 
     using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 

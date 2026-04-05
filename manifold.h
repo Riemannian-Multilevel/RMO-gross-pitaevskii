@@ -841,25 +841,34 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
 // TODO: fail to converge - check for correctness
 namespace coarse::energy
 {
-
 template <typename MatrixTypeM, typename MatrixTypeA0, typename MatrixTypeMpp>
-double function_value(const Vector<double>& zeta,
-                      const Vector<double>& phi,
-                      const Vector<double>& A_phi_w,
+double function_value(const dealii::Vector<double>& zeta,
+                      const dealii::Vector<double>& phi,
+                      const dealii::Vector<double>& A_phi_w,
                       const MatrixTypeM& M,
                       const MatrixTypeA0& A0,
                       const MatrixTypeMpp& Mpp,
                       double beta)
 {
+    // 1. Safety guard: Check if the trial point is in the lower hemisphere.
+    dealii::Vector<double> M_zeta(zeta.size());
+    M.vmult(M_zeta, zeta);
+
+    // If the line search probed too far, the inverse retraction is undefined.
+    // Return infinity to safely force the line search to backtrack.
+    if (phi * M_zeta <= 0.0) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    // 2. Safe evaluation
     const double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
 
-    Vector<double> v(zeta);
+    dealii::Vector<double> v(zeta);
     ellipsoid::retract_inv_by_norm(M, v, phi);
 
     const double correction_term = A_phi_w * v;
     return energy - correction_term;
 }
-
 
 template <typename MatrixTypeA, typename MatrixTypeM>
 double directional_derivative(const Vector<double>& zeta,

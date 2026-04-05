@@ -292,9 +292,10 @@ public:
     EnergyProjectionTransport(const Context& mtx,
                               const LinearTransferBase& I,
                               const ManifoldTransfer<MatrixType>& pt)
-       : M_coarse(mtx.M_c), M_fine(mtx.M_f)
-       , A_inv_coarse(mtx.A_inv_c), A_inv_fine(mtx.A_inv_f)
-       , transfer(I), point_transfer(pt)
+        : M_coarse(mtx.M_c), M_fine(mtx.M_f)
+        , A_inv_coarse(mtx.A_inv_c)
+        , A_inv_fine(mtx.A_inv_f)
+        , transfer(I), point_transfer(pt)
     {}
 
     void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
