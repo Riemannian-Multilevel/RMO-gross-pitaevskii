@@ -57,6 +57,12 @@ public:
      */
     void add_component(double weight, const MatrixType &matrix)
     {
+        Assert(weight != 0, dealii::ExcMessage("weight must be non-zero"));
+
+        if (m_components.size()) {
+            AssertDimension(matrix.n(), this->n());
+            AssertDimension(matrix.m(), this->m());
+        }
         m_components.push_back({weight, &matrix});
     }
 
@@ -94,7 +100,7 @@ public:
     global_dof_index m() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return m_components[0].second->m();
+        return m_components.back().second->m();
     }
 
     /**
@@ -104,7 +110,7 @@ public:
     global_dof_index n() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return m_components[0].second->n();
+        return m_components.back().second->n();
     }
 
     /**
@@ -161,6 +167,7 @@ private:
      * Marked mutable to allow use within const @ref vmult methods.
      */
     mutable VectorType m_vector;
+    // TODO: not thread-safe
 };
 
 
