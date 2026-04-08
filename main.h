@@ -450,87 +450,6 @@ fine_step:
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
-    // TODO: move loop to caller or separate method
-    void cycle(const Vector<double>& y0, std::ostream& os,
-               DescentOptions options_gd, DescentOptions options_gd_coarse,
-               unsigned n_pre = 1, unsigned n_post = 1)
-    {
-        timer.reset();
-
-        // 0. Initialize oracle and coarse model
-        Vector<double> y(y0);
-        O_fine.update(y);
-
-        unsigned i = 1;
-        while (true) {
-            // 1. Pre-smoothing
-            Vector<double> y_grad(O_fine.n_dofs());
-            Vector<double> dk(O_fine.n_dofs());
-
-            for (unsigned pre = 0; pre < n_pre; pre++) {
-                std::cerr << "Pre-smoothing: " << pre << "\n";
-                if (i > options_gd.max_iter) goto finalize;
-
-                // Update gradient
-                std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
-                auto lac_iter = O_fine.gradient(y, y_grad);
-                dk  = y_grad;
-                dk *= -1.0;
-
-                // Apply step
-                auto dir_deriv = O_fine.directional_derivative(y, dk);
-                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
-                info.iter      = i++;
-                info.coarse    = false;
-                info.lac_iter  = lac_iter;
-
-                cycle_eval(O_fine, y, convergence_table, info);
-            }
-
-            // 2. Coarse step
-            {
-                if (i > options_gd.max_iter) goto finalize;
-
-                // Update coarse direction
-                auto coarse_step = O_coarse.setup(y);
-                O_coarse.solve(coarse_step, options_gd_coarse, dk);
-
-                // Apply step
-                // Evaluate directional derivative in the M-norm
-                auto dir_deriv = O_fine.directional_derivative(y, dk);
-                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
-                info.iter      = i++;
-                info.coarse    = true;
-                info.lac_iter  = 0;
-
-                cycle_eval(O_fine, y, convergence_table, info);
-            }
-
-            // 3. Post-smoothing
-            for (unsigned post = 0; post < n_post; ++post) {
-                std::cerr << "Post-smoothing: " << post << "\n";
-                if (i > options_gd.max_iter) goto finalize;
-
-                // Update gradient
-                std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
-                auto lac_iter = O_fine.gradient(y, y_grad);
-                dk  = y_grad;
-                dk *= -1.0;
-
-                // Apply step
-                auto dir_deriv = O_fine.directional_derivative(y, dk);
-                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
-                info.iter      = i++;
-                info.coarse    = false;
-                info.lac_iter  = lac_iter;
-
-                cycle_eval(O_fine, y, convergence_table, info);
-            }
-        }
-finalize:
-        cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
-    }
-
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
@@ -554,7 +473,7 @@ private:
             step_size = armijo_line_search(O_fine, y, eta, Ex, dir_deriv, options_gd);
 
             if (step_size <= options_gd.ls_min) {
-                std::cerr << "  -> Coarse step rejected by line search." << std::endl;
+                std::cerr << "  -> Step rejected by line search." << std::endl;
             }
         }
         else {

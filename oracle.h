@@ -199,7 +199,6 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        // TODO: computation of grad_M for tolerance of Krylov solver
         if (m_res.residual > 0) {
             this->A_inv.set_tol(m_res.residual*this->options.tol_inner_res);
         }

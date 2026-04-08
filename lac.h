@@ -388,7 +388,7 @@ public:
     /** @brief Returns the solver control object used in the last solve. */
     const SolverControl& control() const { return m_control; }
 
-    void set_tol(double tol) const { std::cerr << "setting tolerance: " << tol << std::endl; m_tol = tol; }
+    void set_tol(double tol) const { m_tol = tol; }
 
 private:
     template <typename VectorType, typename PrecondType>
