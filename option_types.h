@@ -61,12 +61,14 @@ struct DescentOptions
     unsigned int max_iter;      // maximum GD iterations
     bool line_search;           // determine step-size by line search
 
-    // TODO: move to separate struct
-    unsigned int ls_max_iter;    // maximum line search iterations
-    double ls_alpha;
-    double ls_beta;
-    double ls_sigma;
-    double ls_min;
+    struct LineSearchOptions
+    {
+        unsigned int max_iter;    // maximum line search iterations
+        double alpha;
+        double beta;
+        double sigma;
+        double min;
+    } ls;
 };
 
 struct SolverOptions
@@ -78,10 +80,10 @@ struct SolverOptions
     Precondition precond;       // preconditioner for solving sparse linear equations
 };
 
-struct LineSearchOptions
-{
-
-};
+// struct LineSearchOptions
+// {
+//
+// };
 
 struct MG_Options
 {

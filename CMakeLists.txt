@@ -60,9 +60,3 @@ add_executable(test_gradient test_gradient.cc)
 target_sources(test_gradient PRIVATE test_gradient.h ${COMMON_HEADERS})
 deal_ii_setup_target(test_gradient)
 target_link_libraries(test_gradient fmt::fmt)
-
-add_executable(test_descent test_descent.cc)
-target_sources(test_descent PRIVATE test_gradient.h ${COMMON_HEADERS})
-deal_ii_setup_target(test_descent)
-target_link_libraries(test_descent fmt::fmt)
-

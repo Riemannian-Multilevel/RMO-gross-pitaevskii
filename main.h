@@ -411,9 +411,8 @@ public:
                     // Coarse step
                     O_coarse.solve(coarse_step, options_gd_coarse, dk);
 
-                    // Evaluate directional derivative in M-norm
-                    auto dir_deriv = O_fine.directional_derivative(y, dk);
-                    CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                    // TODO: debug step for checking descent direction (to gradient of corresponding fine oracle)
+                    CycleInfo info = cycle_smooth(y, dk, options_gd);
                     info.iter      = i;
                     info.coarse    = true;
                     info.lac_iter  = 0;
@@ -433,8 +432,7 @@ fine_step:
                 dk *= -1.0;
 
                 // Evaluate directional derivative in A-norm
-                auto dir_deriv = O_fine.directional_derivative(y, dk);
-                CycleInfo info = cycle_smooth(y, dir_deriv, dk, options_gd);
+                CycleInfo info = cycle_smooth(y, dk, options_gd);
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = lac_iter;
@@ -459,8 +457,7 @@ private:
     const GrossPitaevskiiProblem<dim>& problem_fine;
 
     // Implementation of smoothing steps
-    CycleInfo cycle_smooth(Vector<double>& y, const double dir_deriv,
-                           const Vector<double>& eta, DescentOptions options_gd)
+    CycleInfo cycle_smooth(Vector<double>& y, const Vector<double>& eta, DescentOptions options_gd)
     {
         timer.start();
         double step_size = options_gd.step_size;
@@ -469,10 +466,11 @@ private:
         if (options_gd.line_search) {
             std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
             double Ex = O_fine.value(y);
+            double dir_deriv = O_fine.directional_derivative(y, eta);
 
             step_size = armijo_line_search(O_fine, y, eta, Ex, dir_deriv, options_gd);
 
-            if (step_size <= options_gd.ls_min) {
+            if (step_size <= options_gd.ls.min) {
                 std::cerr << "  -> Step rejected by line search." << std::endl;
             }
         }

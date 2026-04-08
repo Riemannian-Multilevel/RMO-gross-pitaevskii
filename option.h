@@ -11,7 +11,9 @@ namespace gpe
 namespace po = boost::program_options;
 
 BOOST_DESCRIBE_STRUCT(DescentOptions, (),
-    (tol_lambda, tol_residual, step_size, max_iter));
+    (tol_lambda, tol_residual, step_size, max_iter, line_search, ls));
+BOOST_DESCRIBE_STRUCT(DescentOptions::LineSearchOptions, (),
+    (max_iter, alpha, beta, sigma, min));
 BOOST_DESCRIBE_STRUCT(SolverOptions, (),
     (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
@@ -140,11 +142,11 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.line_search  = vm["line-search"].as<bool>();
-    options_rgd.ls_max_iter   = vm["ls-max-iter"].as<int>();
-    options_rgd.ls_alpha     = vm["ls-alpha"].as<double>();
-    options_rgd.ls_beta      = vm["ls-beta"].as<double>();
-    options_rgd.ls_sigma     = vm["ls-sigma"].as<double>();
-    options_rgd.ls_min       = vm["ls-min"].as<double>();
+    options_rgd.ls.max_iter  = vm["ls-max-iter"].as<int>();
+    options_rgd.ls.alpha     = vm["ls-alpha"].as<double>();
+    options_rgd.ls.beta      = vm["ls-beta"].as<double>();
+    options_rgd.ls.sigma     = vm["ls-sigma"].as<double>();
+    options_rgd.ls.min       = vm["ls-min"].as<double>();
 }
 
 

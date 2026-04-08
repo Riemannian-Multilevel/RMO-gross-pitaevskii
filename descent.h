@@ -57,10 +57,10 @@ double armijo_line_search(OracleType& oracle,
                           const double dir_deriv,
                           const DescentOptions& options)
 {
-    double alpha = options.ls_alpha;
+    double alpha = options.ls.alpha;
     Vector<double> x_trial(x);
 
-    for (unsigned int ls_iter = 0; ls_iter < options.ls_max_iter; ++ls_iter) {
+    for (unsigned int ls_iter = 0; ls_iter < options.ls.max_iter; ++ls_iter) {
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
         step *= alpha;
@@ -74,22 +74,22 @@ double armijo_line_search(OracleType& oracle,
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
         //std::cerr << "dir deriv: " << dir_deriv << std::scientific << std::endl;
-        if (fx_new - fx <= options.ls_sigma * alpha * dir_deriv) {
+        if (fx_new - fx <= options.ls.sigma * alpha * dir_deriv) {
             x = x_trial;    // step accepted, write x
             return alpha;
         }
-        if (alpha < options.ls_min) {
+        if (alpha < options.ls.min) {
             x = x_trial;    // step accepted, write x
-            return options.ls_min;
+            return options.ls.min;
         }
         oracle.update(x);   // step discarded, restore original state
 
         // Backtrack
-        alpha *= options.ls_beta;
+        alpha *= options.ls.beta;
     }
     std::cerr << "Warning: Armijo line search hit max iterations ("
-              << options.ls_max_iter << ")." << std::endl;
-    return options.ls_min;  // TODO: throw exception that can be caught
+              << options.ls.max_iter << ")." << std::endl;
+    return options.ls.min;  // TODO: throw exception that can be caught
 }
 
 struct EmptyCheck
