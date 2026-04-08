@@ -123,15 +123,15 @@ inline po::options_description descent_cli_options() {
             "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
             "use armijo line search")
-        ("ls-max-iter", po::value<int>()->default_value(5),
+        ("ls-max-iter", po::value<int>()->default_value(3),
             "maximum number of iterations for line search")
         ("ls-alpha", po::value<double>()->default_value(1.0),
             "alpha for armijo line search")
-        ("ls-beta", po::value<double>()->default_value(0.5),
+        ("ls-beta", po::value<double>()->default_value(0.6),
             "beta for armijo line search")
-        ("ls-sigma", po::value<double>()->default_value(0.4),
+        ("ls-sigma", po::value<double>()->default_value(0.2),
             "sigma for armijo line search")
-        ("ls-min", po::value<double>()->default_value(1e-4),
+        ("ls-min", po::value<double>()->default_value(1e-1),
             "minimal step size for armijo line search");
     return d;
 }
@@ -165,11 +165,11 @@ inline void apply_inner_options(const po::variables_map& vm, SolverOptions& opti
 inline po::options_description inner_cli_options() {
     po::options_description d("Inner solver options");
     d.add_options()
-        ("solver", po::value<std::string>()->default_value("gmres"),
+        ("solver", po::value<std::string>()->default_value("cg"),
             "sparse solver (gmres|minres|cg)")
         ("precond", po::value<std::string>()->default_value("none"),
             "preconditioner (none|diagonal|sparse_ilu|amg)")
-        ("max-inner", po::value<int>()->default_value(100),
+        ("max-inner", po::value<int>()->default_value(500),
             "maximum number of iterations for sparse solver")
         ("tol-inner", po::value<double>()->default_value(1e-6),
             "tolerance for sparse solver, relative to right-hand side")
