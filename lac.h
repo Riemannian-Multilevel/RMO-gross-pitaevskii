@@ -1,6 +1,6 @@
 #ifndef GPE_LAC_H
 #define GPE_LAC_H
-#define SOLVER_MIN_TOL 1e-10
+#define SOLVER_MIN_TOL 1e-2
 
 #include "option_types.h"
 #include <vector>
@@ -233,7 +233,7 @@ public:
     {
         dst = 0.0;
         const double rhs_norm = rhs.l2_norm();
-        const double tol = m_tol > 0 ? m_tol : std::max(m_reltol * rhs_norm, SOLVER_MIN_TOL);
+        const double tol = std::min(m_tol > 0 ? m_tol : m_reltol * rhs_norm, SOLVER_MIN_TOL);
         m_control = SolverControl(m_max_iter, tol);
 
         // TODO: continue on a partial solve with diagnostic, instead of throwing an exception
