@@ -73,6 +73,7 @@ struct SolverOptions
 {
     unsigned int max_inner;     // maximum sparse solver iterations
     double tol_inner;           // relative tolerance for inner solver
+    double tol_inner_res;       // relative tolerance for inner solver, w.r.t residual
     SolverMethod solver;        // method for solving sparse linear equations
     Precondition precond;       // preconditioner for solving sparse linear equations
 };

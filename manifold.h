@@ -47,7 +47,7 @@ State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M
 
     Vector<double> Ax(x.size()); // A x
     A.vmult(Ax, x);
-    prop.lambda = x * Ax;          // Rayleigh quotient (x'Ax / x'Mx)
+    prop.lambda = x * Ax / prop.mass;  // Rayleigh quotient (x'Ax / x'Mx)
 
     Vector<double> r(Ax);
     r.add(-prop.lambda, Mx);        // r = A x - lambda M x
@@ -674,13 +674,13 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
     Vector<double> Mv(v.size());
     M.vmult(Mv, v);
 
-    // Clamp to [-1.0, 1.0] to prevent NaN in acos due to floating-point drift
+    // Clamp to [-1.0, 1.0] to prevent NaN in acos due to numerical errors
     double xMv = std::clamp(x * Mv, -1.0, 1.0);
 
     v.add(-xMv, x); // v <- Pi_x(v)
 
     // Handle the limit case where x and v are identical (xMv -> 1.0)
-    // The limit of arccos(z)/sqrt(1-z^2) as z->1 is 1.0.
+    // The limit of arccos(z)/sqrt(1-z^2) as z->1 is 1.0
     if (std::abs(1.0 - xMv) < 1e-14) {
         // v is already Pi_x(v), and the scalar multiplier is 1.0.
         return;
@@ -848,7 +848,7 @@ double function_value(const Vector<double>& zeta, const Vector<double>& phi,
                       const MatrixType& M, const MatrixType& A0, const MatrixType& Mpp,
                       double beta)
 {
-    // 1. Compute the standard Gross-Pitaevskii energy on the coarse grid: E_H(zeta)
+    // 1. Compute the Gross-Pitaevskii energy on the coarse grid: E_H(zeta)
     double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
 
     // 2. Compute the inverse retraction: invRet_phi(zeta)
@@ -871,7 +871,7 @@ double directional_derivative(const Vector<double>& zeta,
 {
     const unsigned int n_dofs = zeta.size();
 
-    // Differential of the standard GP energy: (A * zeta)^T z
+    // Differential of the GP energy: (A * zeta)^T z
     Vector<double> Az(n_dofs);
     A.vmult(Az, zeta);
 
@@ -880,7 +880,7 @@ double directional_derivative(const Vector<double>& zeta,
     const double phi_M_zeta = phi * M_zeta;
     const double w_zeta     = w * zeta;
 
-    // Differential of the F-tilt
+    // Differential of the Frobenius tilt
     // D T(zeta)[z] = (w^T z) / (phi^T M zeta) - (w^T zeta * phi^T M z) / (phi^T M zeta)^2
     Vector<double> M_phi(n_dofs);
     M.vmult(M_phi, phi);
@@ -904,24 +904,23 @@ void gradient(const MatrixType& M, const MatrixType& A,
 {
     const unsigned int n_dofs = zeta.size();
 
-    // 1. Compute phi^T M zeta for the tilt scaling
+    // 1. Compute phi^T M zeta
     Vector<double> M_zeta(n_dofs);
     M.vmult(M_zeta, zeta);
     const double phi_M_zeta = phi * M_zeta;
 
-    // 2. Compute the unprojected vector: v = A * zeta - (1 / phi^T M zeta) * w
+    // 2. Compute v = A * zeta - (1 / phi^T M zeta) * w
     Vector<double> v(n_dofs);
     A.vmult(v, zeta);
     v.add(-1.0 / phi_M_zeta, w);
 
-    // 3. Apply the F-orthogonal projection reusing the geometry namespace
+    // 3. Apply F-orthogonal projection
     ellipsoid::frobenius::project_onto_tangent_space(zeta, M, v, dst);
 }
 
 
 // Energy-adaptive gradient of the Frobenius coarse model
-// TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
-//       tag- or class-based metric selection
+// TODO: tag- or class-based metric selection
 template <typename MatrixType, typename InverseMatrixType>
 void energy_adaptive_gradient(const MatrixType& M,
                               const InverseMatrixType& A_inv,
@@ -933,17 +932,18 @@ void energy_adaptive_gradient(const MatrixType& M,
 {
     const unsigned int n_dofs = zeta.size();
 
-    // 1. Compute the standard F-gradient
-    Vector<double> grad_F(zeta.size());
+    // 1. Compute the exact F-gradient (g_F)
+    Vector<double> grad_F(n_dofs);
     gradient(M, A, zeta, phi, w, grad_F);
 
-    // 2. Apply the restricted Hamiltonian inverse: grad_A = A_inv * grad_F
-    Vector<double> v(n_dofs);
-    A_inv.vmult(v, grad_F);
+    // 2. Apply A^{-1} (Computes v = A^{-1} g_F)
+    Vector<double> Ainv_grad_F(n_dofs);
+    A_inv.vmult(Ainv_grad_F, grad_F);
 
-    // Note: If A_inv strictly represents \tilde{A}^{-1} (projected),
-    // the output should naturally lie in the tangent space.
-    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, v, dst);
+    // 3. Apply the Energy Projection
+    // This computes the inverse composition: (\Pi_F A \Pi_F)^{-1} g_F
+    //ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, Ainv_grad_F, dst);
+    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, Ainv_grad_F, dst);
 }
 
 } // namespace coarse::frobenius

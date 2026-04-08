@@ -153,10 +153,11 @@ inline void apply_inner_options(const po::variables_map& vm, SolverOptions& opti
     const auto solver_str = upper(vm["solver"].as<std::string>());
     const auto precond_str= upper(vm["precond"].as<std::string>());
 
-    options_slv.max_inner    = vm["max-inner"].as<int>();
-    options_slv.tol_inner    = vm["tol-inner"].as<double>();
-    options_slv.solver       = string_to_enum<SolverMethod>(solver_str);
-    options_slv.precond      = string_to_enum<Precondition>(precond_str);
+    options_slv.max_inner     = vm["max-inner"].as<int>();
+    options_slv.tol_inner     = vm["tol-inner"].as<double>();
+    options_slv.tol_inner_res = vm["tol-inner-res"].as<double>();
+    options_slv.solver        = string_to_enum<SolverMethod>(solver_str);
+    options_slv.precond       = string_to_enum<Precondition>(precond_str);
 }
 
 inline po::options_description inner_cli_options() {
@@ -169,7 +170,9 @@ inline po::options_description inner_cli_options() {
         ("max-inner", po::value<int>()->default_value(100),
             "maximum number of iterations for sparse solver")
         ("tol-inner", po::value<double>()->default_value(1e-6),
-            "tolerance for sparse solver, relative to right-hand side");
+            "tolerance for sparse solver, relative to right-hand side")
+        ("tol-inner-res", po::value<double>()->default_value(1e-2),
+            "tolerance for sparse solver, relative to residual");
     return d;
 }
 

@@ -216,6 +216,9 @@ public:
         , m_control(m_max_iter, SOLVER_MIN_TOL)
     {}
 
+    // Set absolute tolerance for vmult() step
+    void set_tol(double tol) const { m_tol = tol; }
+
     /**
      * @brief Performs the system solve: \f$ dst = M^{-1} \cdot rhs \f$.
      * This method initializes the solver and control parameters based on the
@@ -230,7 +233,7 @@ public:
     {
         dst = 0.0;
         const double rhs_norm = rhs.l2_norm();
-        const double tol = std::max(m_reltol * rhs_norm, SOLVER_MIN_TOL);
+        const double tol = m_tol > 0 ? m_tol : std::max(m_reltol * rhs_norm, SOLVER_MIN_TOL);
         m_control = SolverControl(m_max_iter, tol);
 
         // TODO: continue on a partial solve with diagnostic, instead of throwing an exception
@@ -283,6 +286,7 @@ private:
     // Mutable: relative tolerance changes depending on rhs
     // in every (logically constant) vmult()
     mutable SolverControl m_control;
+    mutable double m_tol = 0.0;
 };
 
 
@@ -384,13 +388,17 @@ public:
     /** @brief Returns the solver control object used in the last solve. */
     const SolverControl& control() const { return m_control; }
 
+    void set_tol(double tol) const { std::cerr << "setting tolerance: " << tol << std::endl; m_tol = tol; }
+
 private:
     template <typename VectorType, typename PrecondType>
     void solve_with(const OperatorType& matrix, VectorType& dst, const VectorType& src,
                     const PrecondType& precond) const
     {
         const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_options, precond);
-
+        if (m_tol > 0) {
+            inv.set_tol(m_tol);
+        }
         inv.vmult(dst, src);
         m_control = inv.control();
     }
@@ -405,6 +413,7 @@ private:
 
     // Stores the state of the most recent solve_with() call
     mutable SolverControl m_control;
+    mutable double m_tol = 0.0;
 };
 
 } // namespace gpe

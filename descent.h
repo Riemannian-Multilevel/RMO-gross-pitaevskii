@@ -73,6 +73,7 @@ double armijo_line_search(OracleType& oracle,
 
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
+        //std::cerr << "dir deriv: " << dir_deriv << std::scientific << std::endl;
         if (fx_new - fx <= options.ls_sigma * alpha * dir_deriv) {
             x = x_trial;    // step accepted, write x
             return alpha;

@@ -19,14 +19,15 @@ int main()
     options_gd.ls_alpha      = 1.0;
     options_gd.ls_beta       = 0.6;
     options_gd.ls_sigma      = 0.2;
-    options_gd.ls_min        = 1e-4;   // threshold
+    options_gd.ls_min        = 1e-1;   // threshold
     options_gd.ls_max_iter   = 2;
 
     SolverOptions  options_slv{};  // inner solver options
-    options_slv.max_inner    = 500;
-    options_slv.solver       = SolverMethod::MINRES;
-    options_slv.precond      = Precondition::NONE;
-    options_slv.tol_inner    = 1e-6;
+    options_slv.max_inner     = 500;
+    options_slv.solver        = SolverMethod::MINRES;
+    options_slv.precond       = Precondition::NONE;
+    options_slv.tol_inner     = 1e-6;
+    options_slv.tol_inner_res = 1e-2;
 
     SolverOptions options_slv_coarse = options_slv;
     // TODO: reduce tolerance for coarse level
@@ -41,7 +42,7 @@ int main()
     options.dimension = 2;
     options.degree    = 1;  // piecewise linear (1) or quadratic (2) elements
     options.radius    = 10;
-    options.beta      = 10000;
+    options.beta      = 100;
     options.bc        = BoundaryCondition::DIRICHLET;
     options.mesh_kind = MeshKind::QUADRILATERAL;
     options.order     = Ordering::DEFAULT;
@@ -73,7 +74,6 @@ int main()
     // using TiltOracle      = FrobeniusOracle<dim>;
     using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
     // using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
-    // using VectorTransport = EnergyProjectionTransport<OperatorType, InverseOpType>;
     using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
     FullApproximationScheme<dim, SmoothOracle, CoarseModel> FAS(

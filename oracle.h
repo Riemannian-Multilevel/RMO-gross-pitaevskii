@@ -152,14 +152,21 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        if (m_res.residual > 0) {
+            this->M_inv.set_tol(m_res.residual*this->options.tol_inner_res);
+        }
         ellipsoid::mass::gradient(this->M_inv, this->A, this->M, x, output);
         return this->M_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->M);
+        m_res = iteration::residual(x, this->A, this->M);
+        return m_res;
     }
+
+private:
+    mutable iteration::State m_res;
 };
 
 
@@ -192,14 +199,22 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        // TODO: computation of grad_M for tolerance of Krylov solver
+        if (m_res.residual > 0) {
+            this->A_inv.set_tol(m_res.residual*this->options.tol_inner_res);
+        }
         ellipsoid::energy::gradient(this->A_inv, this->M, x, output);
         return this->A_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->M);
+        m_res = iteration::residual(x, this->A, this->M);
+        return m_res;
     }
+
+private:
+    mutable iteration::State m_res;
 };
 
 
@@ -241,8 +256,12 @@ public:
      */
     iteration::State residual(const Vector<double>& x) const override
     {
-        return iteration::residual(x, this->A, this->M, false);
+        m_res = iteration::residual(x, this->A, this->M, false);
+        return m_res;
     }
+
+private:
+    mutable iteration::State m_res;
 };
 
 // template <int dim>
@@ -281,8 +300,9 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::gradient(this->M, x, m_phi, m_w, output);
-        return 0; // No linear solver needed for pure M-gradient
+        coarse::mass::gradient(this->M, this->M_inv, this->A, x, m_phi, m_w, output);
+
+        return this->M_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
@@ -293,6 +313,7 @@ public:
 private:
     Vector<double> m_w;
     Vector<double> m_phi;
+    mutable double last_grad_norm = 0.0;
 };
 
 
@@ -323,7 +344,8 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         coarse::mass::energy_adaptive_gradient(this->M, this->A_inv, x, m_phi, m_w, output);
-        return 0; // No linear solver needed for pure M-gradient
+
+        return this->A_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override

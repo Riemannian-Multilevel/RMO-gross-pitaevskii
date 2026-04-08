@@ -137,24 +137,7 @@ public:
     }
 
     auto get_M() const { return problem.get_operator_M(); }
-
-    auto get_M_inv(SolverOptions options_gd) const
-    {
-        using InverseOpType = InverseMatrix<decltype(this->get_M()), dealii::PreconditionIdentity>;
-
-        return InverseOpType(get_M(), options_gd.solver, dealii::PreconditionIdentity{},
-            options_gd.max_inner, options_gd.tol_inner);
-    }
-
     auto get_A(double beta) const { return problem.get_operator_A(beta); }
-
-    auto get_A_inv(double beta, SolverOptions options_gd) const
-    {
-        using InverseOpType = InverseMatrix<decltype(this->get_A(beta)), dealii::PreconditionIdentity>;
-
-        return InverseOpType(get_A(beta), options_gd.solver, dealii::PreconditionIdentity{},
-            options_gd.max_inner, options_gd.tol_inner);
-    }
 
 private:
     /** @brief Persistent discretization infrastructure. */
