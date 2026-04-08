@@ -25,6 +25,7 @@ set(COMMON_HEADERS
         gpe.h
         random.h
         main.h
+        main_coarse.h
         grid_operators.h
         oracle.h
 )
@@ -52,7 +53,7 @@ target_link_libraries(main_bench fmt::fmt)
 add_executable(main_coarse main_coarse.cc)
 target_sources(main_coarse PRIVATE ${COMMON_HEADERS})
 deal_ii_setup_target(main_coarse)
-target_link_libraries(main_coarse fmt::fmt)
+target_link_libraries(main_coarse Boost::program_options fmt::fmt)
 
 # Verification of gradients
 # TODO: register cmake test

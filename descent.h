@@ -203,12 +203,12 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
     }
 
     std::cerr << std::endl << std::endl;
-    convergence_table.set_precision("mass", 4);
-    convergence_table.set_precision("lambda", 4);
+    convergence_table.set_precision("mass", 2);
+    convergence_table.set_precision("lambda", 2);
     convergence_table.set_precision("residual", 4);
-    convergence_table.set_precision("energy", 8);
-    convergence_table.set_precision("step", 4);
-    convergence_table.set_precision("elapsed", 4);
+    convergence_table.set_precision("energy", 16);
+    convergence_table.set_precision("step", 2);
+    convergence_table.set_precision("elapsed", 2);
 
     //convergence_table.set_scientific("mass",true);
     convergence_table.set_scientific("lambda", true);
