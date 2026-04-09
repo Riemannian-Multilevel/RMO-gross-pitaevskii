@@ -1,7 +1,8 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include "main.h"
+#include "gpe.h"
+#include "oracle.h"
 #include "option.h"
 #include "util.h"
 
@@ -13,10 +14,10 @@ using namespace dealii;
 
 int main(int argc, char* argv[])
 {
-    GPE_Options options{};
-    DescentOptions options_rgd{};
-    SolverOptions options_slv{};
-    MG_Options options_mg{};
+    GPE_Options    options{};
+    DescentOptions options_gd{};
+    SolverOptions  options_slv{};
+    MG_Options     options_mg{};
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -36,13 +37,13 @@ int main(int argc, char* argv[])
             return 0;
         }
         apply_gpe_options(vm, options);
-        apply_descent_options(vm, options_rgd);
+        apply_descent_options(vm, options_gd);
         apply_mg_options(vm, options_mg);
         apply_inner_options(vm, options_slv);
 
-        with_dimension(options.dimension, [&](auto D)
+        with_dimension(options.dimension, [&]<typename T0>(T0 D)
         {
-            constexpr int dim = decltype(D)::value;
+            constexpr int dim = T0::value;
             unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
             unsigned int max_level = options_mg.max_level;
 
@@ -60,7 +61,7 @@ int main(int argc, char* argv[])
                 // options_rgd contains the solver tolerances and step size
                 // options.beta is the non-linear coupling constant
                 simulator.distribute(x0);
-                auto x = simulator.run(x0, options.beta, options_slv, options_rgd, std::cout);
+                auto x = simulator.run(x0, options.beta, options_slv, options_gd, std::cout);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);

@@ -42,17 +42,13 @@ enum class MeshKind
     SIMPLEX
 };
 
-enum class VectorTransportKind  // ~Method?
+// TODO: support more complicated potentials
+enum class Potential
 {
-    PROJECTION,         // composition of orthogonal projection and linear interpolation
-    DIFF,               // differential of prolongation and restriction maps
-    DIFF_ADJ_COARSE,    // metric adjoint w.r.t. A/M-metric, starting from prolongation map
-    PINV_ADJ_COARSE,    // as above, but taking the pseudo-inverse Dp+
-    DIFF_ADJ_FINE,      // metric adjoint w.r.t. A/M-metric, starting from restriction map
-    PINV_ADJ_FINE,      // as above, but taking the pseudo-inverse Dr+
+    SQUARE
 };
 
-// TODO: separate inner solver + line search options from (gradient) descent options
+
 struct DescentOptions
 {
     double tol_lambda;          // tolerance for rayleigh quotients
@@ -64,10 +60,10 @@ struct DescentOptions
     struct LineSearchOptions
     {
         unsigned int max_iter;    // maximum line search iterations
-        double alpha;
-        double beta;
-        double sigma;
-        double min;
+        double alpha;             // starting step-size for backtracking
+        double beta;              // reduction factor for backtracking
+        double sigma;             // factor for sufficient decrease
+        double min;               // minimum step-size taken
     } ls;
 };
 
@@ -79,11 +75,6 @@ struct SolverOptions
     SolverMethod solver;        // method for solving sparse linear equations
     Precondition precond;       // preconditioner for solving sparse linear equations
 };
-
-// struct LineSearchOptions
-// {
-//
-// };
 
 struct MG_Options
 {
@@ -104,6 +95,13 @@ struct GPE_Options
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
 };
 
-}
+struct FAS_Options
+{
+    double kappa;           // weight for ratio of restricted and coarse gradient
+    double eps;             // minimum norm of restricted gradient
+    unsigned coarse_every;  // minimum number of fine steps before coarse step is taken
+};
+
+} // namespace gpe
 
 #endif //GPE_OPTION_TYPES_H

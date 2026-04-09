@@ -10,8 +10,6 @@
 
 namespace gpe
 {
-
-
 /**
  * @brief Computes the coarse grid correction term for a multilevel cycle.
  *
@@ -65,6 +63,7 @@ struct CycleInfo
     bool     coarse;
 };
 
+
 template <typename Oracle>
 void cycle_eval(const Oracle& O, const Vector<double>& y,
                 dealii::ConvergenceTable& convergence_table,
@@ -83,6 +82,7 @@ void cycle_eval(const Oracle& O, const Vector<double>& y,
     convergence_table.add_value("step",info.step_size);
     convergence_table.add_value("elapsed",info.elapsed);
 }
+
 
 inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ostream& os,
                            dealii::TableHandler::TextOutputFormat format)

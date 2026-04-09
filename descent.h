@@ -44,7 +44,6 @@ struct SolverInfo {
  * @param fx Function value at current point f(x).
  * @param dir_deriv Directional derivative <grad f(x), eta>_x.
  * @param options Line search parameters.
- * @param threshold Minimal step-size taken.
  * @return The accepted step size alpha (returns 0 if failed to converge).
  */
 // TODO: vector x is updated in place, even for tentative steps, since no copy
@@ -57,6 +56,9 @@ double armijo_line_search(OracleType& oracle,
                           const double dir_deriv,
                           const DescentOptions& options)
 {
+    if (dir_deriv >= 0) {
+        std::cerr << "warning: not a descent direction" << std::endl;
+    }
     double alpha = options.ls.alpha;
     Vector<double> x_trial(x);
 
@@ -73,8 +75,7 @@ double armijo_line_search(OracleType& oracle,
 
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
-        //std::cerr << "dir deriv: " << dir_deriv << std::scientific << std::endl;
-        if (fx_new - fx <= options.ls.sigma * alpha * dir_deriv) {
+        if (fx_new <= fx + options.ls.sigma * alpha * dir_deriv) {
             x = x_trial;    // step accepted, write x
             return alpha;
         }

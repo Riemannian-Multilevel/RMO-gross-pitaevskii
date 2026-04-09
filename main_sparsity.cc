@@ -95,9 +95,9 @@ int main(int argc, char** argv)
         apply_gpe_options(vm, options);
         apply_mg_options(vm, options_mg);
 
-        with_dimension(options.dimension, [&](auto D)
+        with_dimension(options.dimension, [&]<typename T0>(T0 D)
         {
-            constexpr int dim = decltype(D)::value;
+            constexpr int dim = T0::value;
             unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
             unsigned int max_level = options_mg.max_level;
 

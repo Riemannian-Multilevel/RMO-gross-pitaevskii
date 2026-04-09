@@ -24,8 +24,7 @@ set(COMMON_HEADERS
         sparsity.h
         gpe.h
         random.h
-        main.h
-        main_coarse.h
+        coarse.h
         grid_operators.h
         oracle.h
 )

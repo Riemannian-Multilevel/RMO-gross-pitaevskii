@@ -27,6 +27,7 @@ BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 
+
 // ---------- MG_Options ----------
 inline po::options_description mg_cli_options() {
     po::options_description d("multilevel options");
@@ -178,6 +179,28 @@ inline po::options_description inner_cli_options() {
     return d;
 }
 
+
+// ---------- FAS_Options ----------
+inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_fas)
+{
+    options_fas.kappa        = vm["kappa"].as<double>();
+    options_fas.eps          = vm["eps"].as<double>();
+    options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
 }
+
+inline po::options_description fas_cli_options()
+{
+    po::options_description d("FAS options");
+    d.add_options()
+        ("kappa", po::value<double>()->default_value(0.8),\
+            "weight for ratio of restricted and coarse gradient")
+        ("eps", po::value<double>()->default_value(1e-4),
+            "minimum norm of restricted gradient")
+        ("coarse-every", po::value<unsigned>()->default_value(2),
+            "minimum number of fine steps before coarse step is taken");
+    return d;
+}
+
+} // namespace gpe
 
 #endif //GPE_OPTION_CLI_H

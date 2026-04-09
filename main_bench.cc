@@ -1,5 +1,5 @@
-#include "manifold.h"
-#include "main.h"
+#include "oracle.h"
+#include "gpe.h"
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
