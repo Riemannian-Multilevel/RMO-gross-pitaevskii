@@ -12,14 +12,18 @@ find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 deal_ii_initialize_cached_variables()
 
 # Find all .h (header) files in the include/ directory
-file(GLOB_RECURSE HEADER_ALL CONFIGURE_DEPENDS "include/*.h")
+file(GLOB_RECURSE HEADER_ALL "include/*.h")
 
-# Loop through each discovered source file
 function(add_gpe_executable TARGET_NAME)
+    # Parse the arguments
+    set(options BOOST_PO)
+    set(oneValueArgs "")
+    set(multiValueArgs LINK_LIBS)
+    cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
     # Construct the path to the source file
     set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${TARGET_NAME}.cc")
 
-    # Optional but recommended: Check if the file exists to catch typos early
     if(NOT EXISTS "${SRC_FILE}")
         message(FATAL_ERROR "Cannot create target '${TARGET_NAME}': Source file ${SRC_FILE} not found.")
     endif()
@@ -31,17 +35,23 @@ function(add_gpe_executable TARGET_NAME)
     # Apply the include directories to this target
     target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-    # Apply deal.II configurations and link external libraries
+    # Apply deal.II configurations
     deal_ii_setup_target(${TARGET_NAME})
-    target_link_libraries(${TARGET_NAME} Boost::program_options fmt::fmt)
+
+    # Build up additional libraries
+    set(LIBRARIES_TO_LINK fmt::fmt)
+    if(ARG_BOOST_PO)
+        list(APPEND LIBRARIES_TO_LINK Boost::program_options)
+    endif()
+
+    target_link_libraries(${TARGET_NAME} ${LIBRARIES_TO_LINK})
 endfunction()
 
-
 # --- Create targets for executables
-add_gpe_executable(main)
-add_gpe_executable(main_bench)
-add_gpe_executable(main_coarse)
-add_gpe_executable(main_sparsity)
+add_gpe_executable(main BOOST_PO)
+add_gpe_executable(main_bench BOOST_PO)
+add_gpe_executable(main_coarse BOOST_PO)
+add_gpe_executable(main_sparsity BOOST_PO)
 
 # --- Create targets for tests
 enable_testing()
