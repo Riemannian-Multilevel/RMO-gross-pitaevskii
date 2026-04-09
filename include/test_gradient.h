@@ -167,15 +167,12 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        const auto& A0  = this->m_problem.get_A0();
-        const auto& Mpp = this->m_problem.get_Mpp();
-
-        return ellipsoid::function_value(x, A0, Mpp, this->m_beta);
+        return this->m_problem.value(x, this->m_beta);
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return ellipsoid::directional_derivative(x, z, this->A);
+        return this->m_problem.directional_derivative(x, z, this->m_beta);
     }
 
     void random_point(Vector<double>& x) const override
@@ -339,19 +336,14 @@ public:
 
     double value(const Vector<double>& x) const final
     {
-        const auto& A0  = this->m_problem.get_A0();
-        const auto& Mpp = this->m_problem.get_Mpp();
-        const auto& M   = this->m_problem.get_M();
+        const double energy = this->m_problem.value(x, this->m_beta);
 
-        // Both energy-based and mass-weighed gradients use the mass-weighed coarse model
-        return coarse::mass::function_value(x,
-            this->m_phi, this->m_w, M, A0, Mpp, this->m_beta);
+        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M, energy);
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const final
     {
-        return coarse::mass::directional_derivative(x,
-            this->m_phi, this->m_w, z, this->M, this->A);
+        return coarse::mass::directional_derivative(x, this->m_phi, this->m_w, z, this->M, this->A);
     }
 
     Vector<double> gradient(const Vector<double>& x) const final
@@ -404,18 +396,14 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        const auto& A0  = this->m_problem.get_A0();
-        const auto& Mpp = this->m_problem.get_Mpp();
-        const auto& M   = this->m_problem.get_M();
+        const double energy = this->m_problem.value(x, this->m_beta);
 
-        return coarse::frobenius::function_value(x,
-            this->m_phi, this->m_w, M, A0, Mpp, this->m_beta);
+        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
     }
 
     double directional_derivative(const dealii::Vector<double>& x, const dealii::Vector<double>& z) const override
     {
-        return coarse::frobenius::directional_derivative(x,
-            this->m_phi, this->m_w, z, this->M, this->A);
+        return coarse::frobenius::directional_derivative(x, this->m_phi, this->m_w, z, this->M, this->A);
     }
 
     Vector<double> gradient(const Vector<double>& x) const final

@@ -47,11 +47,13 @@ function(add_gpe_executable TARGET_NAME)
     target_link_libraries(${TARGET_NAME} ${LIBRARIES_TO_LINK})
 endfunction()
 
+
 # --- Create targets for executables
 add_gpe_executable(main BOOST_PO)
 add_gpe_executable(main_bench BOOST_PO)
 add_gpe_executable(main_coarse BOOST_PO)
 add_gpe_executable(main_sparsity BOOST_PO)
+
 
 # --- Create targets for tests
 enable_testing()

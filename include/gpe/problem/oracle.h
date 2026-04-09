@@ -263,16 +263,6 @@ private:
     mutable iteration::State m_res;
 };
 
-// template <int dim>
-// class CoarseOracleBase : public OracleBase<dim>
-// {
-// public:
-//     using OracleBase<dim>::OracleBase;
-//
-// protected:
-//
-// };
-
 
 // TODO: use tag dispatch for gradient metric
 template <int dim>
@@ -290,8 +280,9 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::mass::function_value(x, m_phi, m_w, this->problem.get_M(),
-            this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        const double energy = this->problem.value(x, this->beta);
+
+        return coarse::mass::function_value(x, m_phi, m_w, this->M, energy);
     }
 
     /**
@@ -332,8 +323,9 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::mass::function_value(x, m_phi, m_w, this->problem.get_M(),
-            this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        const double energy = this->problem.value(x, this->beta);
+
+        return coarse::mass::function_value(x, m_phi, m_w, this->M, energy);
     }
 
     /**
@@ -374,8 +366,9 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::frobenius::function_value(x, m_phi, m_w,
-            this->problem.get_M(), this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        const double energy = this->problem.value(x, this->beta);
+
+        return coarse::frobenius::function_value(x, m_phi, m_w, this->M, energy);
     }
 
     /**
@@ -419,9 +412,9 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        return coarse::frobenius::function_value(x, m_phi, m_w,
-            this->problem.get_M(), this->problem.get_A0(),
-            this->problem.get_Mpp(), this->beta);
+        const double energy = this->problem.value(x, this->beta);
+
+        return coarse::frobenius::function_value(x, m_phi, m_w, energy);
     }
 
     /**

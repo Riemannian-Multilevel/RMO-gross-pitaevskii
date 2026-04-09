@@ -73,45 +73,6 @@ State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M
 namespace ellipsoid
 {
 
-// Directional derivative of the GP functional
-template <typename MatrixType>
-double directional_derivative(const Vector<double>& x, const Vector<double>& z, const MatrixType& A)
-{
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-    return Ax * z;
-}
-
-/**
- * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
- *
- * Computes the energy value:
- * \f[
- * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
- * \f]
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] x The state vector (solution coefficients).
- * @param[in] A0 The linear part of the stiffness/Hamiltonian matrix.
- * @param[in] Mpp The nonlinear part of the matrix (\f$ M_{\phi\phi} \f$) evaluated at @p x.
- * @return The computed energy value.
- */
-// TODO: different functions can be defined on the ellipsoid, move to separate module
-template <typename MatrixType>
-double function_value(const Vector<double>& x, const MatrixType& A0, const MatrixType& Mpp, double beta)
-{
-    Vector<double> Bx(x.size());
-    A0.vmult(Bx, x);
-    Bx *= 0.5;
-
-    Vector<double> Mpp_x(x.size());
-    Mpp.vmult(Mpp_x, x);
-
-    Bx.add(0.25*beta, Mpp_x);
-    return x * Bx;
-}
-
-
 namespace energy
 {
 /**
@@ -204,7 +165,7 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv, const Vector<dou
     output.add(-1.0/denom, Ainv_Mx);
 }
 
-
+// TODO: move to separate namespace
 /**
  * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
  *
@@ -265,7 +226,7 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-xMv, x);
 }
 
-
+// TODO: move to separate namespace
 /**
  * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
  *
@@ -326,7 +287,7 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-nom / denom, Mx);
 }
 
-
+// TODO: move to separate namespace
 /**
  * @brief Computes the Riemannian gradient in the F-metric.
  * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
@@ -708,6 +669,7 @@ double first_order_coherence()  // TODO
 namespace coarse::mass
 {
 
+// TODO: move to separate namespace
 /**
  * @brief Computes the coarse model function value using the mass-weighted metric.
  *
@@ -728,12 +690,8 @@ double function_value(const Vector<double>& zeta,
                       const Vector<double>& phi,
                       const Vector<double>& w,
                       const MatrixType& M,
-                      const MatrixType& A0,
-                      const MatrixType& Mpp, double beta)
+                      const double energy)
 {
-    // Using the existing function_value helper
-    const double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
-
     // We use a temporary vector since invRet modifies the argument in-place
     Vector<double> v(zeta);
     ellipsoid::retract_inv_by_norm(M, v, phi);
@@ -745,6 +703,7 @@ double function_value(const Vector<double>& zeta,
     return energy - correction_term;
 }
 
+// TODO: move to separate namespace
 template <typename MatrixTypeA, typename MatrixTypeM>
 double directional_derivative(const Vector<double>& zeta,
                               const Vector<double>& phi,
@@ -770,7 +729,7 @@ double directional_derivative(const Vector<double>& zeta,
     return grad * z;
 }
 
-
+// TODO: move to separate namespace
 /**
  * Computes the coarse gradient update step in the mass-weighted metric.
  * @param M Mass matrix
@@ -805,7 +764,7 @@ void gradient(const MatrixType& M,
     dst.add(-1.0, invRet);
 }
 
-
+// TODO: move to separate namespace
 /**
  * Computes the coarse gradient update step in the energy metric.
  * @param M Mass matrix (M_coarse)
@@ -845,17 +804,14 @@ namespace coarse::frobenius
 template <typename MatrixType>
 double function_value(const Vector<double>& zeta, const Vector<double>& phi,
                       const Vector<double>& w,
-                      const MatrixType& M, const MatrixType& A0, const MatrixType& Mpp,
-                      double beta)
+                      const MatrixType& M,
+                      const double energy)
 {
-    // 1. Compute the Gross-Pitaevskii energy on the coarse grid: E_H(zeta)
-    double energy = ellipsoid::function_value(zeta, A0, Mpp, beta);
-
-    // 2. Compute the inverse retraction: invRet_phi(zeta)
+    // Compute the inverse retraction: invRet_phi(zeta)
     Vector<double> inv_ret(zeta);
     ellipsoid::retract_inv_by_norm(M, inv_ret, phi);
 
-    // 3. Subtract the linear tilt: <w, invRet_phi(zeta)>_F
+    // Subtract the linear tilt: <w, invRet_phi(zeta)>_F
     const double correction_term = w * inv_ret;
     return energy - correction_term;
 }
