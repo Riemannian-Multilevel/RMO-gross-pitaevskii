@@ -1,10 +1,10 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include "gpe.h"
-#include "oracle.h"
-#include "option.h"
-#include "util.h"
+#include <gpe/problem/gpe.h>
+#include <gpe/problem/oracle.h>
+#include <gpe/option.h>
+#include <gpe/util/util.h>
 
 #include <iostream>
 #include <fmt/format.h>
@@ -41,6 +41,8 @@ int main(int argc, char* argv[])
         apply_mg_options(vm, options_mg);
         apply_inner_options(vm, options_slv);
 
+        // TODO: use multiresolution if multilevel=true
+        //       timer carried on across levels
         with_dimension(options.dimension, [&]<typename T0>(T0 D)
         {
             constexpr int dim = T0::value;
@@ -58,7 +60,7 @@ int main(int argc, char* argv[])
 
                 // Run the Riemannian Gradient Descent pipeline
                 // Square<dim>() is passed as the Potential V
-                // options_rgd contains the solver tolerances and step size
+                // options_gd contains the solver tolerances and step size
                 // options.beta is the non-linear coupling constant
                 simulator.distribute(x0);
                 auto x = simulator.run(x0, options.beta, options_slv, options_gd, std::cout);

@@ -1,8 +1,8 @@
-#include "manifold.h"
-#include "oracle.h"
-#include "gpe.h"
-#include "coarse.h"
-#include "option.h"
+#include <gpe/ropt/manifold.h>
+#include <gpe/ropt/coarse.h>
+#include <gpe/problem/oracle.h>
+#include <gpe/problem/gpe.h>
+#include <gpe/option.h>
 
 using namespace dealii;
 using namespace gpe;

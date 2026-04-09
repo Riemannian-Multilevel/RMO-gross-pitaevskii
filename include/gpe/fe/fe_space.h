@@ -1,7 +1,7 @@
 #ifndef GPE_DOFS_HH
 #define GPE_DOFS_HH
 
-#include "option_types.h"
+#include <gpe/option_types.h>
 
 // step 2 -- dof libraries
 #include <deal.II/dofs/dof_handler.h>

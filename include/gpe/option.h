@@ -1,8 +1,8 @@
 #ifndef GPE_OPTION_CLI_H
 #define GPE_OPTION_CLI_H
 
-#include "option_types.h"
-#include "util.h"
+#include <gpe/option_types.h>
+#include <gpe/util/util.h>
 
 #include <boost/program_options.hpp>
 

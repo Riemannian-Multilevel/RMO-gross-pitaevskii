@@ -1,8 +1,8 @@
-#include "fe_space.h"
-#include "grid.h"
-#include "sparsity.h"
-#include "option.h"
-#include "util.h"
+#include <gpe/fe/fe_space.h>
+#include <gpe/fe/grid.h>
+#include <gpe/util/sparsity.h>
+#include <gpe/util/util.h>
+#include <gpe/option.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_q.h>

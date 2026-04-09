@@ -9,54 +9,41 @@ find_package(deal.II 9.7.0 REQUIRED
 )
 #find_package(fmt CONFIG REQUIRED)
 find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
-
-set(COMMON_HEADERS
-        fe_space.h
-        fe_interpolate.h
-        grid.h
-        assemble.h
-        manifold.h
-        lac.h
-        util.h
-        descent.h
-        option.h
-        option_types.h
-        sparsity.h
-        gpe.h
-        random.h
-        coarse.h
-        grid_operators.h
-        oracle.h
-)
 deal_ii_initialize_cached_variables()
 
-# Evaluate sparsity patterns for different orderings
-add_executable(main_sparsity main_sparsity.cc)
-target_sources(main_sparsity PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(main_sparsity)
-target_link_libraries(main_sparsity Boost::program_options fmt::fmt)
+# Find all .h (header) files in the include/ directory
+file(GLOB_RECURSE HEADER_ALL CONFIGURE_DEPENDS "include/*.h")
 
-# Main GPE program
-add_executable(main main.cc)
-target_sources(main PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(main)
-target_link_libraries(main Boost::program_options fmt::fmt)
+# Loop through each discovered source file
+function(add_gpe_executable TARGET_NAME)
+    # Construct the path to the source file
+    set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${TARGET_NAME}.cc")
 
-# Benchmarking
-add_executable(main_bench main_bench.cc)
-target_sources(main_bench PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(main_bench)
-target_link_libraries(main_bench fmt::fmt)
+    # Optional but recommended: Check if the file exists to catch typos early
+    if(NOT EXISTS "${SRC_FILE}")
+        message(FATAL_ERROR "Cannot create target '${TARGET_NAME}': Source file ${SRC_FILE} not found.")
+    endif()
 
-# Nash coarse model
-add_executable(main_coarse main_coarse.cc)
-target_sources(main_coarse PRIVATE ${COMMON_HEADERS})
-deal_ii_setup_target(main_coarse)
-target_link_libraries(main_coarse Boost::program_options fmt::fmt)
+    # Create an executable for this specific source file
+    add_executable(${TARGET_NAME} ${SRC_FILE})
+    target_sources(${TARGET_NAME} PRIVATE ${HEADER_ALL})
 
-# Verification of gradients
-# TODO: register cmake test
-add_executable(test_gradient test_gradient.cc)
-target_sources(test_gradient PRIVATE test_gradient.h ${COMMON_HEADERS})
-deal_ii_setup_target(test_gradient)
-target_link_libraries(test_gradient fmt::fmt)
+    # Apply the include directories to this target
+    target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+    # Apply deal.II configurations and link external libraries
+    deal_ii_setup_target(${TARGET_NAME})
+    target_link_libraries(${TARGET_NAME} Boost::program_options fmt::fmt)
+endfunction()
+
+add_gpe_executable(main)
+add_gpe_executable(main_bench)
+add_gpe_executable(main_coarse)
+add_gpe_executable(main_sparsity)
+
+enable_testing()
+
+add_gpe_executable(test_descent)
+add_gpe_executable(test_gradient)
+add_test(descent test_descent COMMAND test_descent)
+add_test(gradient test_gradient COMMAND test_gradient)

@@ -5,7 +5,8 @@
 #ifndef GPE_FE_INTERPOLATE_H
 #define GPE_FE_INTERPOLATE_H
 
-#include "lac.h"
+#include <gpe/lac.h>
+
 #include <deal.II/grid/grid_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 

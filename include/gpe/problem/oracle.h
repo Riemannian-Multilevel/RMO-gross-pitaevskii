@@ -1,9 +1,9 @@
 #ifndef GPE_ORACLE_H
 #define GPE_ORACLE_H
 
-#include "lac.h"
-#include "manifold.h"
-#include "gpe.h"
+#include <gpe/lac.h>
+#include <gpe/problem/gpe.h>
+#include <gpe/ropt/manifold.h>
 
 namespace gpe
 {

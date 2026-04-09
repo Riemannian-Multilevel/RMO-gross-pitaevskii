@@ -4,9 +4,9 @@
 #ifndef GPE_TEST_GRADIENT_H
 #define GPE_TEST_GRADIENT_H
 
-#include "gpe.h"
-#include "random.h"
-#include "manifold.h"
+#include <gpe/problem/gpe.h>
+#include <gpe/util/random.h>
+#include <gpe/ropt/manifold.h>
 
 #include <boost/math/special_functions/math_fwd.hpp>
 

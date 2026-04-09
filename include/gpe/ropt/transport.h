@@ -1,9 +1,9 @@
 #ifndef GPE_GRID_OPERATORS_H
 #define GPE_GRID_OPERATORS_H
 
-#include "option_types.h"
-#include "manifold.h"
-#include "fe_interpolate.h"
+#include <gpe/fe/fe_interpolate.h>
+#include <gpe/ropt/manifold.h>
+#include <gpe/option_types.h>
 
 namespace gpe
 {

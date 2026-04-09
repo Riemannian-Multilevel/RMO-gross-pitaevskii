@@ -3,7 +3,7 @@
 //
 #include "test_gradient.h"
 
-#include "oracle.h"
+#include <gpe/problem/oracle.h>
 #include <fstream>
 #include <fmt/format.h>
 

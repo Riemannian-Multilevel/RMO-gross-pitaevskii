@@ -4,12 +4,12 @@
 #ifndef GPE_GPE_H
 #define GPE_GPE_H
 
-#include "assemble.h"
-#include "grid.h"
-#include "sparsity.h"
-#include "fe_space.h"
-#include "descent.h"
-#include "option_types.h"
+#include <gpe/fe/assemble.h>
+#include <gpe/fe/grid.h>
+#include <gpe/fe/fe_space.h>
+#include <gpe/ropt/descent.h>
+#include <gpe/util/sparsity.h>
+#include <gpe/option_types.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_q.h>

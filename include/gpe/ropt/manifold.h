@@ -4,7 +4,7 @@
 #define ZERO_ROUNDOFF 1e-15
 #endif
 
-#include "lac.h"
+#include <gpe/lac.h>
 #include <deal.II/base/function.h>
 
 namespace gpe

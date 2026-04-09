@@ -1,9 +1,9 @@
 #ifndef GPE_DESCENT_H
 #define GPE_DESCENT_H
 
-#include "option_types.h"
-#include "manifold.h"
-#include "lac.h"
+#include <gpe/ropt/manifold.h>
+#include <gpe/lac.h>
+#include <gpe/option_types.h>
 
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/timer.h>

@@ -1,5 +1,5 @@
-#include "oracle.h"
-#include "gpe.h"
+#include <gpe/problem/oracle.h>
+#include <gpe/problem/gpe.h>
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>

@@ -4,9 +4,9 @@
 #ifndef GPE_MAIN_COARSE_H
 #define GPE_MAIN_COARSE_H
 
-#include "lac.h"
-#include "oracle.h"
-#include "grid_operators.h"
+#include <gpe/lac.h>
+#include <gpe/problem/oracle.h>
+#include <gpe/ropt/transport.h>
 
 namespace gpe
 {
