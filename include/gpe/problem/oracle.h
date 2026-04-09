@@ -138,13 +138,13 @@ public:
     */
     double value(const Vector<double>& x) const override
     {
-        return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        return this->problem.value(x, this->beta);
     }
 
     // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return ellipsoid::directional_derivative(x, z, this->A);
+        return this->problem.directional_derivative(x, z, this->beta);
     }
 
     /**
@@ -184,13 +184,13 @@ public:
      */
     double value(const Vector<double>& x) const override
     {
-        return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        return this->problem.value(x, this->beta);
     }
 
     // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return ellipsoid::directional_derivative(x, z, this->A);
+        return this->problem.directional_derivative(x, z, this->beta);
     }
 
     /**
@@ -229,13 +229,13 @@ public:
      */
     double value(const Vector<double>& x) const override
     {
-        return ellipsoid::function_value(x, this->problem.get_A0(), this->problem.get_Mpp(), this->beta);
+        return this->problem.value(x, this->beta);
     }
 
     // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return ellipsoid::directional_derivative(x, z, this->A);
+        return this->problem.directional_derivative(x, z, this->beta);
     }
 
     /**

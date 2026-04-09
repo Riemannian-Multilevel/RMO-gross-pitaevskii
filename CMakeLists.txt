@@ -36,14 +36,20 @@ function(add_gpe_executable TARGET_NAME)
     target_link_libraries(${TARGET_NAME} Boost::program_options fmt::fmt)
 endfunction()
 
+
+# --- Create targets for executables
 add_gpe_executable(main)
 add_gpe_executable(main_bench)
 add_gpe_executable(main_coarse)
 add_gpe_executable(main_sparsity)
 
+# --- Create targets for tests
 enable_testing()
 
 add_gpe_executable(test_descent)
 add_gpe_executable(test_gradient)
+add_gpe_executable(test_matrix_free)
+
 add_test(descent test_descent COMMAND test_descent)
 add_test(gradient test_gradient COMMAND test_gradient)
+add_test(matrix_free test_matrix_free COMMAND test_matrix_free)

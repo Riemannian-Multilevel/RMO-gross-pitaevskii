@@ -344,6 +344,11 @@ void assemble_mass_phiphi(dealii::SparseMatrix<double>& matrix,
         f_mass_phiphi, constraints, level);
 }
 
+namespace matrix_free
+{
+
+} // namespace matrix_free
+
 } // namespace gpe
 
 #endif //GPE_ASSEMBLE_H

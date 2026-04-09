@@ -49,6 +49,7 @@ struct EmptyStrategy
 
 // Test correctness of gradients for random samples
 // TODO: additional data (h=1-8, n_trial_points=100, start_exp=-8)
+//       include exact directional derivative
 template <int dim>
 CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
 {

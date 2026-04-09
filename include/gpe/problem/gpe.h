@@ -26,6 +26,8 @@ namespace gpe
  *
  * @tparam dim The spatial dimension of the problem.
  */
+// TODO: use stored beta (e.g in options) and setter method to update it?
+//       (consistency between calls of get_operator_A(), value(), directional_derivative())
 template <int dim>
 class GrossPitaevskiiProblem
 {
@@ -82,9 +84,83 @@ public:
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
 
-    // TODO: call assemble_nonlinear_term() here?
+    /**
+     * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
+     * Computes the energy value:
+     * \f[
+     * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
+     * \f]
+     */
+    double value(const Vector<double>& x, const double beta) const
+    {
+        Vector<double> A0_x(x.size());
+        A0.vmult(A0_x, x);
+        A0_x *= 0.5;
+
+        Vector<double> Mpp_x(x.size());
+        Mpp.vmult(Mpp_x, x);
+
+        A0_x.add(0.25*beta, Mpp_x);
+        return x * A0_x;
+    }
+
+    // Matrix-free evaluation of the Gross Pitaevskii energy. This function does not require calling
+    // assemble_nonlinear_term() beforehand.
+    // Conceptually this is similar to gpe::assemble, but iterates over the finite element grid
+    // instead of assembling a potentially large sparse matrix.
+    double value_matrix_free(const Vector<double>& x, const double beta) const
+    {
+        // Linear term: 0.5 * x^T * A0 * x
+        // A0 is fixed between operations
+        Vector<double> A0_x(x.size());
+        A0.vmult(A0_x, x);
+        double energy_linear = x * A0_x;
+
+        // 2. Non-linear term: (beta / 2) * \int |x|^4 dx
+        double energy_nonlinear = 0.0;
+        // Use a quadrature formula appropriate for the element degree
+        dealii::QGauss<dim> quadrature_formula(dof_handler.get_fe().degree + 1);
+        // We only need to know the function values and the quadrature weights (JxW)
+        dealii::FEValues<dim> fe_values(dof_handler.get_fe(), quadrature_formula,
+                                        dealii::update_values | dealii::update_JxW_values);
+
+        const unsigned int n_q_points = quadrature_formula.size();
+        std::vector<double> x_values(n_q_points);
+
+        // Loop over all active cells
+        // TODO: dof_handler.mg_cell_iterators_on_level(level)
+        for (const auto& cell : dof_handler.active_cell_iterators()) {
+            if (cell->is_locally_owned()) {
+                fe_values.reinit(cell);
+                fe_values.get_function_values(x, x_values);
+
+                // Integrate |x|^4 over the cell
+                for (unsigned int q = 0; q < n_q_points; ++q) {
+                    const double val = x_values[q];
+                    const double val_sq = val * val;
+
+                    energy_nonlinear += (val_sq * val_sq) * fe_values.JxW(q);
+                }
+            }
+        }
+        return 0.5*energy_linear + 0.25*beta*energy_nonlinear;
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z,
+                                  const double beta) const
+    {
+        Vector<double> A0_x(x.size());
+        A0.vmult(A0_x, x);
+
+        Vector<double> Mpp_x(x.size());
+        Mpp.vmult(Mpp_x, x);
+
+        A0_x.add(beta, Mpp_x);
+        return A0_x * z;
+    }
+
     // Since LinearCombination stores pointers to matrices, these functions are lazy;
-    // the (non-linear) terms can be assembled after calling this funciton.
+    // the (non-linear) terms can be assembled after calling this function.
     auto get_operator_A(const double beta) const
     {
         using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
