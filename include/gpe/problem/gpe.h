@@ -32,6 +32,8 @@ template <int dim>
 class GrossPitaevskiiProblem
 {
 public:
+    using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
+
     /**
      * @brief Constructor that initializes sparsity patterns and assembles linear matrices.
      * Computes the initial system matrices:
@@ -84,6 +86,43 @@ public:
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
 
+    // TODO: Euclidean gradient
+
+    // Since LinearCombination stores pointers to matrices, these functions are lazy;
+    // the (non-linear) terms can be assembled after calling this function.
+    auto get_operator_A(const double weight_Mpp,
+                        const double weight_A0 = 1.0) const
+    {
+        Operator Aop;
+
+        // Note: We pass pointers to our internal matrices.
+        // The operator is valid as long as this Problem instance exists.
+        Aop.add_component(weight_A0, A0);
+        Aop.add_component(weight_Mpp, Mpp);
+        Aop.reinit(Vector<double>(A0.m()));
+
+        return Aop;
+    }
+
+    auto get_operator_A(const Vector<double>& x, const double weight_Mpp,
+                        const double weight_A0 = 1.0) const
+    {
+        assemble_nonlinear_term(x);
+        return get_operator_A(weight_Mpp, weight_A0);
+    }
+
+    auto get_operator_M(const double weight_M = 1.0) const
+    {
+        using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
+        Operator Mop;
+
+        Mop.add_component(weight_M, M);
+        Mop.reinit(Vector<double>(A0.m()));
+
+        return Mop;
+    }
+
+    // TODO: should this be in a separate class? (or objective namespace)
     /**
      * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
      * Computes the energy value:
@@ -91,65 +130,25 @@ public:
      * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
      * \f]
      */
+    // TODO: LinearCombination / get_operator_A()
     double value(const Vector<double>& x, const double beta) const
     {
-        Vector<double> A0_x(x.size());
-        A0.vmult(A0_x, x);
-        A0_x *= 0.5;
+        auto A = get_operator_A(beta*0.25, 0.5);
+        Vector<double> Ax(x.size());
+        A.vmult(Ax, x);
 
-        Vector<double> Mpp_x(x.size());
-        Mpp.vmult(Mpp_x, x);
-
-        A0_x.add(0.25*beta, Mpp_x);
-        return x * A0_x;
+        return x * Ax;
     }
 
+    // TODO: same as value(), but with different weights -> LinearCombination / get_operator_A()
     double directional_derivative(const Vector<double>& x, const Vector<double>& z,
                                   const double beta) const
     {
-        Vector<double> A0_x(x.size());
-        A0.vmult(A0_x, x);
+        auto A = get_operator_A(beta, 1.0);
+        Vector<double> Ax(x.size());
+        A.vmult(Ax, x);
 
-        Vector<double> Mpp_x(x.size());
-        Mpp.vmult(Mpp_x, x);
-
-        A0_x.add(beta, Mpp_x);
-        return A0_x * z;
-    }
-
-    // TODO: Euclidean gradient
-
-    // Since LinearCombination stores pointers to matrices, these functions are lazy;
-    // the (non-linear) terms can be assembled after calling this function.
-    auto get_operator_A(const double beta) const
-    {
-        using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
-        Operator Aop;
-
-        // Note: We pass pointers to our internal matrices.
-        // The operator is valid as long as this Problem instance exists.
-        Aop.add_component(1.0, A0);
-        Aop.add_component(beta, Mpp);
-        Aop.reinit(Vector<double>(A0.m()));
-
-        return Aop;
-    }
-
-    auto get_operator_A(const Vector<double>& x, const double beta) const
-    {
-        assemble_nonlinear_term(x);
-        return get_operator_A(beta);
-    }
-
-    auto get_operator_M() const
-    {
-        using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
-        Operator Mop;
-
-        Mop.add_component(1.0, M);
-        Mop.reinit(Vector<double>(A0.m()));
-
-        return Mop;
+        return Ax * z;
     }
 
     /** @brief Returns the linear operator \f$ A_0 \f$. */
