@@ -13,17 +13,30 @@ struct MatrixContext
 {
     const MatrixType& M_c;
     const MatrixType& M_f;
+    const MatrixType& A_c;
+    const MatrixType& A_f;
 
-    MatrixContext(const MatrixType& M_c, const MatrixType& M_f)
-        : M_c(M_c), M_f(M_f) {}
+    MatrixContext(const MatrixType& M_c, const MatrixType& M_f,
+                  const MatrixType& A_c, const MatrixType& A_f)
+        : M_c(M_c), M_f(M_f), A_c(A_c), A_f(A_f)
+    {}
 };
 
-// template <typename MatrixType, typename InverseMatrixType>
-// struct InverseMatrixContext : MatrixContext<MatrixType>
-// {
-//     const InverseMatrixType& A_inv_c;
-//     const InverseMatrixType& A_inv_f;
-// };
+
+template <typename InverseMatrixType>
+struct InverseMatrixContext
+{
+    const InverseMatrixType& M_inv_c;
+    const InverseMatrixType& M_inv_f;
+    const InverseMatrixType& A_inv_c;
+    const InverseMatrixType& A_inv_f;
+
+    InverseMatrixContext(const InverseMatrixType& M_inv_c, const InverseMatrixType& M_inv_f,
+                         const InverseMatrixType& A_inv_c, const InverseMatrixType& A_inv_f)
+        : M_inv_c(M_inv_c), M_inv_f(M_inv_f), A_inv_c(A_inv_c), A_inv_f(A_inv_f)
+    {}
+};
+
 
 // Metric-independent transfers for the fine/coarse manifolds S_h/S_H
 template <typename MatrixType>
@@ -223,6 +236,7 @@ class MassProjectionTransport : public VectorTransportBase
 {
 public:
     static constexpr const char* id = "M";
+    static constexpr bool requires_inverse = false;
     using Context = MatrixContext<MatrixType>;
 
     MassProjectionTransport(const Context& mtx,
@@ -280,6 +294,7 @@ class FrobeniusProjectionTransport : public VectorTransportBase
 public:
     using Context = MatrixContext<MatrixType>;
     static constexpr const char* id = "F";
+    static constexpr bool requires_inverse = false;
 
     explicit FrobeniusProjectionTransport(const Context& mtx,
                                           const LinearTransferBase& I,
@@ -339,9 +354,13 @@ class DifferentialTransport : public VectorTransportBase
 public:
     using Context = MatrixContext<MatrixType>;
     static constexpr const char* id = "D";
+    static constexpr bool requires_inverse = false;
 
-    explicit DifferentialTransport(const Context& ctx)
-        : point_transfer(ctx.pt), M_fine(ctx.M_f), M_coarse(ctx.M_c)
+    explicit DifferentialTransport(const Context& ctx,
+                                   const LinearTransferBase& I,
+                                   const ManifoldTransfer<MatrixType>& pt)
+        : transfer(I), point_transfer(pt)
+        , M_fine(ctx.M_f), M_coarse(ctx.M_c)
     {}
 
     void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v_coarse,
@@ -395,11 +414,14 @@ public:
     }
 
 private:
+    const LinearTransferBase& transfer;
     const ManifoldTransfer<MatrixType>& point_transfer;
     const MatrixType& M_fine;
     const MatrixType& M_coarse;
 };
 
+
 } // namespace gpe
+
 
 #endif //GPE_GRID_OPERATORS_H

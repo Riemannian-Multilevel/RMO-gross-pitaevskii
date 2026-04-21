@@ -129,10 +129,11 @@ template <int dim, typename Oracle, typename CoarseOracle, typename VectorTransp
 class CoarseModel
 {
 public:
-    using OperatorType  = LinearCombination<SparseMatrix<double>,Vector<double>>;
-    using MatrixType    = SparseMatrix<double>;
+    using OperatorType   = LinearCombination<SparseMatrix<double>,Vector<double>>;
+    using MatrixType     = SparseMatrix<double>;
     using InverseOpType  = PreconditionInverse<OperatorType, SparseMatrix<double>>;
-    using Context       = MatrixContext<OperatorType>;
+    using Context        = MatrixContext<OperatorType>;
+    using InverseContext = InverseMatrixContext<InverseOpType>;
 
     CoarseModel(const GrossPitaevskiiProblem<dim>& problem_coarse,
                 const GrossPitaevskiiProblem<dim>& problem_fine,
@@ -159,9 +160,16 @@ public:
 
         // Grid operators
         , transfer(transfer)
-        , context(M_coarse, M_fine)
+        , context(M_coarse, M_fine, A_coarse, A_fine)
+        , inverse_context(M_coarse_inv, M_fine_inv, A_coarse_inv, A_fine_inv)
         , point_transfer(context, transfer)
-        , vector_transport(context, transfer, point_transfer)
+        , vector_transport([&]() {
+            if constexpr (VectorTransport::requires_inverse) {
+                return VectorTransport(context, inverse_context, transfer, point_transfer);
+            } else {
+                return VectorTransport(context, transfer, point_transfer);
+            }
+        }())
     {}
 
     void set_timer(const dealii::Timer& timer_new)
@@ -245,6 +253,7 @@ private:
     // Grid operators
     const LinearTransferBase& transfer;
     Context context;  // TODO: redundant
+    InverseContext inverse_context;
     ManifoldTransfer<OperatorType> point_transfer;
     VectorTransport vector_transport;
 };
