@@ -378,7 +378,7 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
     M.vmult(Mv, v);
 
     const double xMv = x*Mv;
-    AssertThrow(xMv > 0, dealii::ExcInternalError("x'Mv must be nonzero"));
+    AssertThrow(std::abs(xMv) > 0, dealii::ExcInternalError("x'Mv must be nonzero"));
 
     v /= xMv;
     v.add(-1.0, x);

@@ -317,6 +317,8 @@ public:
                 if (x_grad_restr_norm <= eps) {
                     check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
                 }
+                std::cerr << "x_grad_restr_norm: " << x_grad_restr_norm << "\n";
+                std::cerr << "x_grad_norm: " << x_grad_norm << "\n";
                 if (x_grad_restr_norm >= kappa*x_grad_norm && x_grad_restr_norm > eps) {
                     // Coarse step
                     O_coarse.solve(coarse_step, options_gd_coarse, dk);

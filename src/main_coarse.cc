@@ -39,7 +39,7 @@ int main(int argc, char* argv[])
         apply_inner_options(vm, options_slv);
         apply_fas_options(vm, options_fas);
 
-        with_dimension(options.dimension, [&]<typename T0>(T0 D)
+        with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
             SolverOptions options_slv_coarse = options_slv;
@@ -73,19 +73,29 @@ int main(int argc, char* argv[])
             using InverseOpType   = PreconditionInverse<OperatorType, SparseMatrix<double>>;
             using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
 
+            // I_h^H = 1/c M_H^{-1} I_H^h M_h
+            const OperatorType  M_fine = GP_fine.get_M();
+            const OperatorType  M_coarse = GP_coarse.get_M();
+            const InverseOpType M_inv_coarse(M_coarse, options_slv);
+
+            MassTransfer mass_transfer(transfer, M_fine, M_inv_coarse);
+
             using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
             // using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
             using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
             // using TiltOracle      = FrobeniusOracle<dim>;
-            using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
-            // using VectorTransport = DifferentialTransport<OperatorType>;
-            // using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
+            // using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
+            //using VectorTransport = experimental::MassProjectionTransportAdjoint<OperatorType, InverseOpType>;
+            //using VectorTransport  = experimental::DifferentialTransportAdjoint<OperatorType, InverseOpType>;
+            using VectorTransport = DifferentialTransport<OperatorType>;
+            //using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
             using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
             FullApproximationScheme<dim, SmoothOracle, CoarseModel> FAS(
                 problem_coarse,
                 problem_fine,
-                transfer,
+                // transfer,
+                mass_transfer,
                 options.beta,
                 options_slv,
                 options_slv_coarse

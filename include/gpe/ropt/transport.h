@@ -333,64 +333,6 @@ private:
 };
 
 
-template <typename MatrixType, typename InverseMatrixType>
-class MassProjectionTransportAdjoint : public VectorTransportBase
-{
-public:
-    static constexpr const char* id = "M";
-    static constexpr bool requires_inverse = false;
-    using Context = MatrixContext<MatrixType>;
-    using InverseContext = InverseMatrixContext<MatrixType>;
-
-    MassProjectionTransportAdjoint(const Context& mtx,
-                                   const InverseContext& inv_mtx,
-                                   const LinearTransferBase& I,
-                                   const ManifoldTransfer<MatrixType>& pt)
-        : transfer(I), point_transfer(pt)
-        , M_coarse(mtx.M_c), M_fine(mtx.M_f), M_inv_coarse(inv_mtx.M_inv_c)
-    {}
-
-    /**
-     * @brief Prolongs a tangent vector using ambient interpolation and M-metric projection.
-     * Computes:
-     * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
-     * where $I_H^h$ is the standard linear prolongation operator.
-     */
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
-    {
-        // Tangent vector interpolated to fine ambient space
-        Vector<double> Iv(transfer.n_fine());
-        transfer.to_fine_mesh(v_coarse, Iv);
-
-        // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
-        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
-    }
-
-    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                            const Vector<double>& v_fine, Vector<double>& dst) const override
-    {
-        Vector<double> Mh_v(transfer.n_fine());
-        M_fine.vmult(Mh_v, v_fine);
-
-        Vector<double> I_Mh_v(transfer.n_coarse());
-        transfer.to_coarse_mesh(Mh_v, I_Mh_v);
-
-        M_inv_coarse.vmult(dst, I_Mh_v);
-        double alpha = y_coarse * I_Mh_v;
-        dst.add(-alpha, y_coarse);
-    }
-
-private:
-    const LinearTransferBase& transfer;
-    const ManifoldTransfer<MatrixType>& point_transfer;
-
-    const MatrixType& M_coarse;
-    const MatrixType& M_fine;
-    const InverseMatrixType& M_inv_coarse;
-};
-
-
 /**
  * @brief Strategy for vector transport via differentials.
  * This class implements the `VectorTransportBase` interface by computing the differential
@@ -477,6 +419,176 @@ private:
     const MatrixType& M_fine;
     const MatrixType& M_coarse;
 };
+
+
+namespace experimental
+{
+
+template <typename MatrixType, typename InverseMatrixType>
+class MassProjectionTransportAdjoint : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "MA";
+    static constexpr bool requires_inverse = true;
+    using Context = MatrixContext<MatrixType>;
+    using InverseContext = InverseMatrixContext<InverseMatrixType>;
+
+    /**
+     * @brief Constructor for the adjoint mass-metric projection transport.
+     * @param mtx Contains the fine and coarse mass matrices (M_f, M_c).
+     * @param inv_mtx Contains the inverse of the coarse mass matrix (M_inv_c).
+     * @param I The linear transfer operator (prolongation/restriction).
+     * @param pt Manifold transfer operator.
+     */
+    MassProjectionTransportAdjoint(const Context& mtx,
+                                   const InverseContext& inv_mtx,
+                                   const LinearTransferBase& I,
+                                   const ManifoldTransfer<MatrixType>& pt)
+        : transfer(I), point_transfer(pt)
+        , M_coarse(mtx.M_c), M_fine(mtx.M_f), M_inv_coarse(inv_mtx.M_inv_c)
+    {}
+
+    /**
+     * @brief Prolongs a tangent vector using ambient interpolation and M-metric projection.
+     * Computes the operator P_y^x:
+     * P_y^x(v) = Pi_x ( I_H^h(v) )
+     * where I_H^h is the standard linear prolongation operator and Pi_x is the
+     * M-orthogonal projection onto the fine tangent space T_x S_h.
+     * @param x_fine The point on the fine manifold (x).
+     * @param y_coarse The point on the coarse manifold (y).
+     * @param v_coarse The tangent vector on the coarse manifold to be prolonged.
+     * @param dst The resulting prolonged tangent vector on the fine manifold.
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        AssertDimension(y_coarse.size(), transfer.n_coarse());
+        AssertDimension(x_fine.size(), transfer.n_fine());
+
+        // Tangent vector interpolated to fine ambient space: I_H^h(v)
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v_coarse, Iv);
+
+        // Orthogonal projection I_H^h(v) -> T_x S_h in M-metric: Pi_x( I_H^h(v) )
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
+    }
+
+    /**
+     * @brief Restricts a tangent vector using the adjoint of the M-metric projection transport.
+     * * Computes the operator R_x^y = (P_y^x)^*:
+     * R_x^y(v) = Pi_y ( M_H^{-1} (I_H^h)^T M_h v )
+     * * This operator ensures the Galerkin condition holds in the tangent spaces:
+     * <u, R_x^y v>_{M_H} = <P_y^x u, v>_{M_h}
+     * * @param y_coarse The point on the coarse manifold (y).
+     * @param x_fine The point on the fine manifold (x).
+     * @param v_fine The tangent vector on the fine manifold to be restricted.
+     * @param dst The resulting restricted tangent vector on the coarse manifold.
+     */
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+                                const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // 1. Apply fine mass matrix: M_h * v
+        Vector<double> Mh_v(transfer.n_fine());
+        M_fine.vmult(Mh_v, v_fine);
+
+        // 2. Apply transpose of prolongation: (I_H^h)^T * (M_h * v)
+        Vector<double> I_Mh_v(transfer.n_coarse());
+        transfer.to_coarse_mesh(Mh_v, I_Mh_v);
+
+        // 3. Apply inverse coarse mass matrix: w = M_H^{-1} * (I_H^h)^T * M_h * v
+        M_inv_coarse.vmult(dst, I_Mh_v);
+
+        const double alpha = y_coarse * I_Mh_v;
+        dst.add(-alpha, y_coarse);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
+
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& M_inv_coarse;
+};
+
+
+template <typename MatrixType, typename InverseMatrixType>
+class DifferentialTransportAdjoint : public VectorTransportBase
+{
+public:
+    using Context = MatrixContext<MatrixType>;
+    using InverseContext = InverseMatrixContext<InverseMatrixType>;
+    static constexpr const char* id = "DA";
+    static constexpr bool requires_inverse = true;
+
+    explicit DifferentialTransportAdjoint(const Context& ctx,
+                                          const InverseContext& inv_ctx,
+                                          const LinearTransferBase& I,
+                                          const ManifoldTransfer<MatrixType>& pt)
+        : transfer(I), point_transfer(pt)
+        , M_fine(ctx.M_f), M_coarse(ctx.M_c), M_inv_fine(inv_ctx.M_inv_f)
+    {}
+
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // 1. Calculate beta = || I_h^H x ||_{M_H}
+        // using the explicit norm: sqrt( (I_h^H x)^T * M_H * (I_h^H x) )
+        Vector<double> Ix(transfer.n_coarse());
+        transfer.to_coarse_mesh(x_fine, Ix); // Applies I_h^H = (I_H^h)^T
+
+        Vector<double> MH_Ix(transfer.n_coarse());
+        M_coarse.vmult(MH_Ix, Ix);
+
+        // Safe, direct evaluation of the M_H norm
+        double beta = std::sqrt(Ix * MH_Ix);
+
+        // 2. Apply coarse mass matrix: M_H u
+        Vector<double> MH_u(transfer.n_coarse());
+        M_coarse.vmult(MH_u, v_coarse);
+
+        // 3. Prolong: I_H^h (M_H u)
+        Vector<double> I_MH_u(transfer.n_fine());
+        transfer.to_fine_mesh(MH_u, I_MH_u);
+
+        // 4. Apply fine inverse mass matrix and scale by 1/beta: 1/beta * M_h^{-1} I_H^h M_H u
+        M_inv_fine.vmult(dst, I_MH_u);
+        dst /= beta;
+
+
+        // TODO: optional?
+        // Vector<double> unprojected_dst = dst;
+        // ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, unprojected_dst, dst);
+    }
+
+    void vector_restriction(const Vector<double>& x_fine, const Vector<double>& v_fine,
+                            Vector<double>& dst) const
+    {
+        point_transfer.diff_restriction(x_fine, v_fine, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Differential D_r(y): T_y S_h -> T_r(y) S_H
+        Vector<double> D_ry(point_transfer.n_coarse());
+        vector_restriction(x_fine, v_fine, D_ry);
+
+        // Vector transport T_r(y) S_H -> T_x S_H
+        // TODO: way to signal that y_coarse and x_fine result from y = r(x)
+        ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, D_ry, dst);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
+
+    const MatrixType& M_fine;
+    const MatrixType& M_coarse;
+    const InverseMatrixType& M_inv_fine;
+};
+
+} // namespace experimental
 
 
 } // namespace gpe

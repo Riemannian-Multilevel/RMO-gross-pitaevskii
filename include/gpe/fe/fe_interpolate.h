@@ -248,6 +248,44 @@ private:
     }
 };
 
-}
+
+template <typename MatrixType, typename InverseMatrixType>
+class MassTransfer : public LinearTransferBase
+{
+public:
+    MassTransfer(const LinearTransferBase& transfer,
+                 const MatrixType& M_fine,
+                 const InverseMatrixType& M_inv_coarse)
+        : _transfer(transfer)
+        , _M_fine(M_fine)
+        , _M_inv_coarse(M_inv_coarse)
+    {}
+
+    void to_coarse_mesh(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
+    {
+        Vector<double> Mh_v(_transfer.n_fine());
+        _M_fine.vmult(Mh_v, src_fine);
+
+        Vector<double> Ih_Mh_v(_transfer.n_coarse());
+        _transfer.to_coarse_mesh(Mh_v, Ih_Mh_v);
+
+        _M_inv_coarse.vmult(dst_coarse, Ih_Mh_v);
+    }
+
+    void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
+    {
+        _transfer.to_fine_mesh(src_coarse, dst_fine);
+    }
+
+    unsigned n_coarse() const override { return _transfer.n_coarse(); };
+    unsigned n_fine() const override { return _transfer.n_fine(); };
+
+private:
+    const LinearTransferBase& _transfer;
+    const MatrixType& _M_fine;
+    const InverseMatrixType& _M_inv_coarse;
+};
+
+} // namespace gpe
 
 #endif //GPE_FE_INTERPOLATE_H
