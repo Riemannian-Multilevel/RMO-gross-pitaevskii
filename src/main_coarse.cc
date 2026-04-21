@@ -85,8 +85,6 @@ int main(int argc, char* argv[])
             using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
             // using TiltOracle      = FrobeniusOracle<dim>;
             // using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
-            //using VectorTransport = experimental::MassProjectionTransportAdjoint<OperatorType, InverseOpType>;
-            //using VectorTransport  = experimental::DifferentialTransportAdjoint<OperatorType, InverseOpType>;
             using VectorTransport = DifferentialTransport<OperatorType>;
             //using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
             using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
