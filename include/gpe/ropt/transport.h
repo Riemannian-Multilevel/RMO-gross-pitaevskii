@@ -60,13 +60,13 @@ public:
      * * Mathematically:
      * \f[ r(y) = \frac{I_h^H y}{\|I_h^H y\|_{M_H}} \f]
      *
-     * @param y_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
-     * @param x_coarse [out] The restricted point $r(y) \in \mathcal{S}_{M_H}$ on the coarse grid.
+     * @param x_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
+     * @param y_coarse [out] The restricted point $r(y) \in \mathcal{S}_{M_H}$ on the coarse grid.
      */
-    void restriction(const Vector<double>& y_fine, Vector<double>& x_coarse) const
+    void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const
     {
-        transfer.to_coarse_mesh(y_fine, x_coarse);
-        ellipsoid::retract_by_norm(M_coarse, x_coarse);
+        transfer.to_coarse_mesh(x_fine, y_coarse);
+        ellipsoid::retract_by_norm(M_coarse, y_coarse);
     }
 
     /**
@@ -80,13 +80,13 @@ public:
      * * Mathematically:
      * \f[ p(x) = \frac{I_H^h x}{\|I_H^h x\|_{M_h}} \f]
      *
-     * @param x_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
-     * @param y_fine [out] The prolonged point $p(x) \in \mathcal{S}_{M_h}$ on the fine grid.
+     * @param y_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
+     * @param x_fine [out] The prolonged point $p(x) \in \mathcal{S}_{M_h}$ on the fine grid.
      */
-    void prolongation(const Vector<double>& x_coarse, Vector<double>& y_fine) const
+    void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const
     {
-        transfer.to_fine_mesh(x_coarse, y_fine);
-        ellipsoid::retract_by_norm(M_fine, y_fine);
+        transfer.to_fine_mesh(y_coarse, x_fine);
+        ellipsoid::retract_by_norm(M_fine, x_fine);
     }
 
     /**
@@ -101,15 +101,15 @@ public:
      * 4. **Mass-weighted inner product:** $\langle \hat{x}, v_H \rangle_{M_H} = \hat{x}^\top M_H v_H$
      * 5. **Assembly:** $\Drm r(y)[v] = \frac{1}{n_H} \left( v_H - \frac{\langle \hat{x}, v_H \rangle_{M_H}}{n_H^2} \hat{x} \right)$
      *
-     * @param y_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
+     * @param x_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
      * @param v The tangent vector $v \in T_y \mathcal{S}_{M_h}$.
      * @param dst The mapped tangent vector $\Drm r(y)[v] \in T_{r(y)} \mathcal{S}_{M_H}$.
      */
-    void diff_restriction(const Vector<double>& y_fine, const Vector<double>& v, Vector<double>& dst) const
+    void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const
     {
         // Linear restriction of the base point: I_h^H(y)
         Vector<double> x_lin(transfer.n_coarse());
-        transfer.to_coarse_mesh(y_fine, x_lin);
+        transfer.to_coarse_mesh(x_fine, x_lin);
 
         // Norm of the linear point: ||x_lin||_{M_H}^2
         Vector<double> M_x_lin(transfer.n_coarse());
@@ -144,15 +144,15 @@ public:
      * 4. **Mass-weighted inner product:** $\langle \hat{y}, v_h \rangle_{M_h} = \hat{y}^\top M_h v_h$
      * 5. **Assembly:** $\Drm p(x)[v] = \frac{1}{n_h} \left( v_h - \frac{\langle \hat{y}, v_h \rangle_{M_h}}{n_h^2} \hat{y} \right)$
      *
-     * @param x_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
+     * @param y_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
      * @param v The tangent vector $v \in T_x \mathcal{S}_{M_H}$.
      * @param dst The mapped tangent vector $\Drm p(x)[v] \in T_{p(x)} \mathcal{S}_{M_h}$.
      */
-    void diff_prolongation(const Vector<double>& x_coarse, const Vector<double>& v, Vector<double>& dst) const
+    void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const
     {
         // 1. Linear prolongation of the base point: I_H^h(x)
         Vector<double> y_lin(transfer.n_fine());
-        transfer.to_fine_mesh(x_coarse, y_lin);
+        transfer.to_fine_mesh(y_coarse, y_lin);
 
         // 2. Norm of the linear point: ||y_lin||_{M_h}^2
         Vector<double> M_y_lin(transfer.n_fine());
@@ -193,25 +193,25 @@ public:
 
     /**
      * @brief Prolongs a tangent vector from the coarse grid to the fine grid.
-     * @param y_fine The actual fine iterate (defines the target tangent space).
-     * @param x_coarse The coarse iterate (defines the source tangent space).
+     * @param x_fine The actual fine iterate (defines the target tangent space).
+     * @param y_coarse The coarse iterate (defines the source tangent space).
      * @param v_coarse The vector in T_x S_H to be prolonged.
      * @param dst_fine [out] The prolonged vector, guaranteed to be in T_y S_h.
      */
-    virtual void vector_prolongation(const Vector<double>& y_fine,
-                                     const Vector<double>& x_coarse,
+    virtual void vector_prolongation(const Vector<double>& x_fine,
+                                     const Vector<double>& y_coarse,
                                      const Vector<double>& v_coarse,
                                      Vector<double>& dst_fine) const = 0;
 
     /**
      * @brief Restricts a tangent vector from the fine grid to the coarse grid.
-     * @param x_coarse The actual coarse iterate (defines the target tangent space).
-     * @param y_fine The fine iterate (defines the source tangent space).
+     * @param y_coarse The actual coarse iterate (defines the target tangent space).
+     * @param x_fine The fine iterate (defines the source tangent space).
      * @param v_fine The vector in T_y S_h to be restricted.
      * @param dst_coarse [out] The restricted vector, guaranteed to be in T_x S_H.
      */
-    virtual void vector_restriction(const Vector<double>& x_coarse,
-                                    const Vector<double>& y_fine,
+    virtual void vector_restriction(const Vector<double>& y_coarse,
+                                    const Vector<double>& x_fine,
                                     const Vector<double>& v_fine,
                                     Vector<double>& dst_coarse) const = 0;
 };
@@ -251,7 +251,7 @@ public:
      * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
      * where $I_H^h$ is the standard linear prolongation operator.
      */
-    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
@@ -259,7 +259,7 @@ public:
         transfer.to_fine_mesh(v_coarse, Iv);
 
         // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
-        ellipsoid::mass::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
     }
 
     /**
@@ -268,7 +268,7 @@ public:
      * $$\mathcal{T}_{h \to H}(v) = P_{T_x \mathcal{S}_H} (I_h^H v)$$
      * where $I_h^H$ is the standard linear restriction operator.
      */
-    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
@@ -276,7 +276,7 @@ public:
         transfer.to_coarse_mesh(v_fine, Iv);
 
         // Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
-        ellipsoid::mass::project_onto_tangent_space(x_coarse, M_coarse, Iv, dst);
+        ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, Iv, dst);
     }
 
 private:
@@ -302,7 +302,7 @@ public:
         : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I), point_transfer(pt)
     {}
 
-    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>&,
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
@@ -310,10 +310,10 @@ public:
         transfer.to_fine_mesh(v_coarse, Iv);
 
         // F-orthogonal projection on the fine grid
-        ellipsoid::frobenius::project_onto_tangent_space(y_fine, M_fine, Iv, dst);
+        ellipsoid::frobenius::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
     }
 
-    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>&,
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
@@ -321,7 +321,7 @@ public:
         transfer.to_coarse_mesh(v_fine, Iv);
 
         // F-Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
-        ellipsoid::frobenius::project_onto_tangent_space(x_coarse, M_coarse, Iv, dst);
+        ellipsoid::frobenius::project_onto_tangent_space(y_coarse, M_coarse, Iv, dst);
     }
 
 private:
@@ -363,10 +363,10 @@ public:
         , M_fine(ctx.M_f), M_coarse(ctx.M_c)
     {}
 
-    void vector_prolongation(const Vector<double>& x_coarse, const Vector<double>& v_coarse,
+    void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
                              Vector<double>& dst) const
     {
-        point_transfer.diff_prolongation(x_coarse, v_coarse, dst);
+        point_transfer.diff_prolongation(y_coarse, v_coarse, dst);
     }
 
     /**
@@ -376,22 +376,22 @@ public:
      * $$\hat{v} = D p(x_H)[v_H] \quad \in T_{p(x_H)} \mathcal{S}_h$$
      * $$\mathcal{T}_{H \to h}(v_H) = P_{T_y \mathcal{S}_h} (\hat{v})$$
      */
-    void vector_prolongation(const Vector<double>& y_fine, const Vector<double>& x_coarse,
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
         // Differential D_p(x): T_x S_H -> T_p(x) S_h
         Vector<double> D_px(point_transfer.n_fine());
-        vector_prolongation(x_coarse, v_coarse, D_px);
+        vector_prolongation(y_coarse, v_coarse, D_px);
 
         // Vector transport T_p(x) S_h -> T_y S_h
         // TODO: which metric to choose for orthogonal projection?
-        ellipsoid::mass::project_onto_tangent_space(y_fine, M_fine, D_px, dst);
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
     }
 
-    void vector_restriction(const Vector<double>& y_fine, const Vector<double>& v_fine,
+    void vector_restriction(const Vector<double>& x_fine, const Vector<double>& v_fine,
                             Vector<double>& dst) const
     {
-        point_transfer.diff_restriction(y_fine, v_fine, dst);
+        point_transfer.diff_restriction(x_fine, v_fine, dst);
     }
 
     /**
@@ -401,16 +401,16 @@ public:
      * $$\hat{v} = D r(y_h)[v_h] \quad \in T_{r(y_h)} \mathcal{S}_H$$
      * $$\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})$$
      */
-    void vector_restriction(const Vector<double>& x_coarse, const Vector<double>& y_fine,
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
         const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Differential D_r(y): T_y S_h -> T_r(y) S_H
         Vector<double> D_ry(point_transfer.n_coarse());
-        vector_restriction(y_fine, v_fine, D_ry);
+        vector_restriction(x_fine, v_fine, D_ry);
 
         // Vector transport T_r(y) S_H -> T_x S_H
         // TODO: which metric to choose for orthogonal projection?
-        ellipsoid::mass::project_onto_tangent_space(x_coarse, M_coarse, D_ry, dst);
+        ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, D_ry, dst);
     }
 
 private:

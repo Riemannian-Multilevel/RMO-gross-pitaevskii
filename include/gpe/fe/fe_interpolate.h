@@ -19,6 +19,7 @@ class LinearTransferBase
 public:
     virtual ~LinearTransferBase() = default;
 
+    // TODO: match vmult() interface (output&, const input&)
     virtual void to_coarse_mesh(const Vector<double>&, Vector<double>&) const = 0;
 
     virtual void to_fine_mesh(const Vector<double>&, Vector<double>&) const = 0;

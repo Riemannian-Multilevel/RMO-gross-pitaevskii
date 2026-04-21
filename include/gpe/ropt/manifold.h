@@ -898,8 +898,7 @@ void energy_adaptive_gradient(const MatrixType& M,
 
     // 3. Apply the Energy Projection
     // This computes the inverse composition: (\Pi_F A \Pi_F)^{-1} g_F
-    //ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, Ainv_grad_F, dst);
-    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, Ainv_grad_F, dst);
+    ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, Ainv_grad_F, dst);
 }
 
 } // namespace coarse::frobenius

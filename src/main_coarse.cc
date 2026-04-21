@@ -65,8 +65,8 @@ int main(int argc, char* argv[])
             LinearTransferMatrix<dim> transfer(GP_coarse.get_dofs(), GP_fine.get_dofs(),
                 GP_coarse.get_constraints(), GP_fine.get_constraints());
 
-            Vector<double> y0(GP_fine.n_dofs());
-            y0 = 1.0;  // starting value should be non-zero
+            Vector<double> x0(GP_fine.n_dofs());
+            x0 = 1.0;  // starting value should be non-zero
 
             // TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
             using OperatorType    = LinearCombination<SparseMatrix<double>, Vector<double>>;
@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
             );
 
             //FAS.cycle(y0, std::cout, options_gd, options_gd_coarse);
-            FAS.cycle_condition(y0, std::cout, options_gd, options_gd_coarse,
+            FAS.cycle_condition(x0, std::cout, options_gd, options_gd_coarse,
                 options_fas.kappa, options_fas.eps, options_fas.coarse_every);
         });
     }
