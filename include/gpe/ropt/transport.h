@@ -333,6 +333,64 @@ private:
 };
 
 
+template <typename MatrixType, typename InverseMatrixType>
+class MassProjectionTransportAdjoint : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "M";
+    static constexpr bool requires_inverse = false;
+    using Context = MatrixContext<MatrixType>;
+    using InverseContext = InverseMatrixContext<MatrixType>;
+
+    MassProjectionTransportAdjoint(const Context& mtx,
+                                   const InverseContext& inv_mtx,
+                                   const LinearTransferBase& I,
+                                   const ManifoldTransfer<MatrixType>& pt)
+        : transfer(I), point_transfer(pt)
+        , M_coarse(mtx.M_c), M_fine(mtx.M_f), M_inv_coarse(inv_mtx.M_inv_c)
+    {}
+
+    /**
+     * @brief Prolongs a tangent vector using ambient interpolation and M-metric projection.
+     * Computes:
+     * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
+     * where $I_H^h$ is the standard linear prolongation operator.
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Tangent vector interpolated to fine ambient space
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v_coarse, Iv);
+
+        // Orthogonal projection I(v \in T_x S_H) -> T_p(x) S_h in M-metric
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        Vector<double> Mh_v(transfer.n_fine());
+        M_fine.vmult(Mh_v, v_fine);
+
+        Vector<double> I_Mh_v(transfer.n_coarse());
+        transfer.to_coarse_mesh(Mh_v, I_Mh_v);
+
+        M_inv_coarse.vmult(dst, I_Mh_v);
+        double alpha = y_coarse * I_Mh_v;
+        dst.add(-alpha, y_coarse);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransfer<MatrixType>& point_transfer;
+
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& M_inv_coarse;
+};
+
+
 /**
  * @brief Strategy for vector transport via differentials.
  * This class implements the `VectorTransportBase` interface by computing the differential
