@@ -71,21 +71,20 @@ int main(int argc, char* argv[])
             // TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
             using OperatorType    = LinearCombination<SparseMatrix<double>, Vector<double>>;
             using InverseOpType   = PreconditionInverse<OperatorType, SparseMatrix<double>>;
-            using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
 
             // I_h^H = 1/c M_H^{-1} I_H^h M_h
             const OperatorType  M_fine = GP_fine.get_M();
             const OperatorType  M_coarse = GP_coarse.get_M();
             const InverseOpType M_inv_coarse(M_coarse, options_slv);
-
             MassTransfer mass_transfer(transfer, M_fine, M_inv_coarse);
 
+            using SmoothOracle    = EnergyOracle<dim>;                          // for solutions on the fine level
             using CoarseOracle    = MassCoarseOracleEnergyAdaptive<dim>;        // for solutions on the coarse level
             // using CoarseOracle    = FrobeniusCoarseOracleEnergyAdaptive<dim>;
             using TiltOracle      = MassOracle<dim>;                            // for computing correction term w
             // using TiltOracle      = FrobeniusOracle<dim>;
-            // using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
-            using VectorTransport = DifferentialTransport<OperatorType>;
+            using VectorTransport = MassProjectionTransport<OperatorType>; // for transferring coarse directions
+            // using VectorTransport = DifferentialTransport<OperatorType>;
             //using VectorTransport = FrobeniusProjectionTransport<OperatorType>;
             using CoarseModel     = CoarseModel<dim, TiltOracle, CoarseOracle, VectorTransport>;
 
