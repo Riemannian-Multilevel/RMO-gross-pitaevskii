@@ -655,15 +655,6 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace energy
 
 
-namespace coarse
-{
-double first_order_coherence()  // TODO
-{
-    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-}
-
-} // namespace coarse
-
 // TODO: the coarse model is DEFINED in the M-metric (-> metric independence for certain vector transports.)
 //       it can be SOLVED in either the M- or the A-metric (as implemented by gradient() overloads.)
 namespace coarse::mass

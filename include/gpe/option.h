@@ -20,12 +20,19 @@ BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (multilevel, n_levels, min_level, max_level));
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind));
+BOOST_DESCRIBE_STRUCT(FAS_Options, (),
+    (kappa, eps, coarse_every, galerkin_t, transport_t, coarse_t));
+
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
+BOOST_DESCRIBE_ENUM(Galerkin, FROBENIUS, MASS)
+BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL);
+BOOST_DESCRIBE_ENUM(CoarseKind, FROBENIUS, FROBENIUS_ENERGY_ADAPTIVE, MASS, MASS_ENERGY_ADAPTIVE);
+BOOST_DESCRIBE_ENUM(SmoothKind, MASS, ENERGY_ADAPTIVE);
 
 
 // ---------- MG_Options ----------
@@ -183,9 +190,12 @@ inline po::options_description inner_cli_options() {
 // ---------- FAS_Options ----------
 inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_fas)
 {
+    const auto galerkin_str = upper(vm["galerkin"].as<std::string>());
+
     options_fas.kappa        = vm["kappa"].as<double>();
     options_fas.eps          = vm["eps"].as<double>();
     options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
+    options_fas.galerkin_t    = string_to_enum<Galerkin>(galerkin_str);
 }
 
 inline po::options_description fas_cli_options()
@@ -197,7 +207,11 @@ inline po::options_description fas_cli_options()
         ("eps", po::value<double>()->default_value(1e-4),
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
-            "minimum number of fine steps before coarse step is taken");
+            "minimum number of fine steps before coarse step is taken")
+        ("galerkin", po::value<std::string>()->default_value("frobenius"),
+            "vector transport metric condition (frobenius|mass)")
+        ("transport", po::value<std::string>()->default_value("mass"),
+            "vector transport operator (standard|mass|differential)");
     return d;
 }
 

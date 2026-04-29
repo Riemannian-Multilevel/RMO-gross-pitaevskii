@@ -106,11 +106,6 @@ public:
     {
         throw dealii::ExcNotImplemented();
     }
-    virtual double directional_derivative(const Vector<double>&, const Vector<double>&, const Vector<double>&) const
-    {
-        throw dealii::ExcNotImplemented();
-    }
-
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
@@ -264,6 +259,30 @@ private:
 };
 
 
+template <int dim>
+class CoarseOracleBase : public OracleBase<dim>
+{
+public:
+    static constexpr const char* id = "C";
+    using OracleBase<dim>::OracleBase;
+
+    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    {
+        m_w = w_new;
+        m_phi = phi_new;
+    }
+
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy=this->value(x)};
+    }
+
+private:
+    Vector<double> m_w;
+    Vector<double> m_phi;
+};
+
+
 // TODO: use tag dispatch for gradient metric
 template <int dim>
 class MassCoarseOracle : public OracleBase<dim>
@@ -303,7 +322,6 @@ public:
 private:
     Vector<double> m_w;
     Vector<double> m_phi;
-    mutable double last_grad_norm = 0.0;
 };
 
 
@@ -414,7 +432,7 @@ public:
     {
         const double energy = this->problem.value(x, this->beta);
 
-        return coarse::frobenius::function_value(x, m_phi, m_w, energy);
+        return coarse::frobenius::function_value(x, m_phi, m_w, this->M, energy);
     }
 
     /**

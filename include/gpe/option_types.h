@@ -7,6 +7,8 @@
 
 namespace gpe
 {
+
+// TODO: consistent naming of classes
 // Every ordering should be compatible to (geometric) multigrid
 enum class Ordering
 {
@@ -48,7 +50,42 @@ enum class Potential
     SQUARE
 };
 
+// Metric which fulfills Galerkin condition for interpolators/restrictors
+enum class Galerkin
+{
+    FROBENIUS,
+    MASS
+};
 
+enum class Transport
+{
+    FROBENIUS,
+    MASS,
+    DIFFERENTIAL
+};
+
+enum class TiltKind
+{
+    FROBENIUS,
+    MASS
+};
+
+enum class CoarseKind
+{
+    FROBENIUS,
+    FROBENIUS_ENERGY_ADAPTIVE,
+    MASS,
+    MASS_ENERGY_ADAPTIVE
+};
+
+enum class SmoothKind
+{
+    MASS,
+    ENERGY_ADAPTIVE
+};
+
+
+// ----- Option structures
 struct DescentOptions
 {
     double tol_lambda;          // tolerance for rayleigh quotients
@@ -100,6 +137,10 @@ struct FAS_Options
     double kappa;           // weight for ratio of restricted and coarse gradient
     double eps;             // minimum norm of restricted gradient
     unsigned coarse_every;  // minimum number of fine steps before coarse step is taken
+    Galerkin galerkin_t;    // metric condition on interpolator/restriction
+                            // should be consistent with coarse_t
+    Transport transport_t;  // type of vector transport
+    CoarseKind coarse_t;    // type of coarse oracle (shift metric, gradient metric)
 };
 
 } // namespace gpe

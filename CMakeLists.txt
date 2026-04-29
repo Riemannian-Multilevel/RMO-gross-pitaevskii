@@ -16,9 +16,9 @@ file(GLOB_RECURSE HEADER_ALL "include/*.h")
 
 function(add_gpe_executable TARGET_NAME)
     # Parse the arguments
-    set(options BOOST_PO)
+    set(options "")
     set(oneValueArgs "")
-    set(multiValueArgs LINK_LIBS)
+    set(multiValueArgs LINK_LIBS EXTRA_SOURCES)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     # Construct the path to the source file
@@ -29,7 +29,7 @@ function(add_gpe_executable TARGET_NAME)
     endif()
 
     # Create an executable for this specific source file
-    add_executable(${TARGET_NAME} ${SRC_FILE})
+    add_executable(${TARGET_NAME} ${SRC_FILE} ${ARG_EXTRA_SOURCES})
     target_sources(${TARGET_NAME} PRIVATE ${HEADER_ALL})
 
     # Apply the include directories to this target
@@ -39,20 +39,23 @@ function(add_gpe_executable TARGET_NAME)
     deal_ii_setup_target(${TARGET_NAME})
 
     # Build up additional libraries
-    set(LIBRARIES_TO_LINK fmt::fmt)
-    if(ARG_BOOST_PO)
-        list(APPEND LIBRARIES_TO_LINK Boost::program_options)
-    endif()
+#    set(LIBRARIES_TO_LINK fmt::fmt)
+#    if(ARG_BOOST_PO)
+#        list(APPEND LIBRARIES_TO_LINK Boost::program_options)
+#    endif()
 
-    target_link_libraries(${TARGET_NAME} ${LIBRARIES_TO_LINK})
+    target_link_libraries(${TARGET_NAME} ${ARG_LINK_LIBS})
 endfunction()
 
 
 # --- Create targets for executables
-add_gpe_executable(main BOOST_PO)
-add_gpe_executable(main_bench BOOST_PO)
-add_gpe_executable(main_coarse BOOST_PO)
-add_gpe_executable(main_sparsity BOOST_PO)
+add_gpe_executable(main Boost::program_options fmt::fmt)
+add_gpe_executable(main_bench Boost::program_options fmt::fmt)
+
+add_gpe_executable(main_coarse Boost::program_options fmt::fmt)
+target_link_libraries(main_coarse Boost::program_options fmt::fmt)
+
+add_gpe_executable(main_sparsity Boost::program_options fmt::fmt)
 
 
 # --- Create targets for tests
