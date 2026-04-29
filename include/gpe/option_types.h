@@ -50,10 +50,22 @@ enum class Potential
     SQUARE
 };
 
-// Metric which fulfills Galerkin condition for interpolators/restrictors
-enum class Galerkin
+enum class CoarseMetric
 {
+    NONE,   // Galerkin condition not fulfilled
     FROBENIUS,
+    MASS
+};
+
+enum class SmoothKind
+{
+    MASS,
+    ENERGY_ADAPTIVE
+};
+
+enum class Interpolate
+{
+    NONE,
     MASS
 };
 
@@ -62,26 +74,6 @@ enum class Transport
     FROBENIUS,
     MASS,
     DIFFERENTIAL
-};
-
-enum class TiltKind
-{
-    FROBENIUS,
-    MASS
-};
-
-enum class CoarseKind
-{
-    FROBENIUS,
-    FROBENIUS_ENERGY_ADAPTIVE,
-    MASS,
-    MASS_ENERGY_ADAPTIVE
-};
-
-enum class SmoothKind
-{
-    MASS,
-    ENERGY_ADAPTIVE
 };
 
 
@@ -137,10 +129,13 @@ struct FAS_Options
     double kappa;           // weight for ratio of restricted and coarse gradient
     double eps;             // minimum norm of restricted gradient
     unsigned coarse_every;  // minimum number of fine steps before coarse step is taken
-    Galerkin galerkin_t;    // metric condition on interpolator/restriction
-                            // should be consistent with coarse_t
+    bool coarse_energy_adaptive;  // solve coarse model with energy-adaptive gradient descent
+
+    CoarseMetric metric_t;  // type of coarse oracle (shift metric, gradient metric)
     Transport transport_t;  // type of vector transport
-    CoarseKind coarse_t;    // type of coarse oracle (shift metric, gradient metric)
+    Interpolate interpol_t; // galerkin condition on linear interpolator
+                            // should be consistent with metric_t
+    SmoothKind smooth_t;    // type of fine oracle (gradient descent on fine level)
 };
 
 } // namespace gpe

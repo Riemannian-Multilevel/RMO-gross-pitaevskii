@@ -8,45 +8,48 @@
 namespace gpe
 {
 
-template <typename MatrixType>
-struct MatrixContext
+class ManifoldTransferBase
 {
-    const MatrixType& M_c;
-    const MatrixType& M_f;
-    const MatrixType& A_c;
-    const MatrixType& A_f;
+public:
+    ManifoldTransferBase(const LinearTransferBase& transfer_)
+        : transfer(transfer_) {}
+    virtual ~ManifoldTransferBase() = default;
 
-    MatrixContext(const MatrixType& M_c, const MatrixType& M_f,
-                  const MatrixType& A_c, const MatrixType& A_f)
-        : M_c(M_c), M_f(M_f), A_c(A_c), A_f(A_f)
-    {}
-};
+    // Mandatory operations
+    virtual void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const = 0;
 
+    virtual void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const = 0;
 
-template <typename InverseMatrixType>
-struct InverseMatrixContext
-{
-    const InverseMatrixType& M_inv_c;
-    const InverseMatrixType& M_inv_f;
-    const InverseMatrixType& A_inv_c;
-    const InverseMatrixType& A_inv_f;
+    // Optional operations
+    virtual void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const
+    {
+        throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
+    }
 
-    InverseMatrixContext(const InverseMatrixType& M_inv_c, const InverseMatrixType& M_inv_f,
-                         const InverseMatrixType& A_inv_c, const InverseMatrixType& A_inv_f)
-        : M_inv_c(M_inv_c), M_inv_f(M_inv_f), A_inv_c(A_inv_c), A_inv_f(A_inv_f)
-    {}
+    virtual void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const
+    {
+        throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
+    }
+
+    // Dimension
+    unsigned n_fine() const { return transfer.n_fine(); }
+    unsigned n_coarse() const { return transfer.n_coarse(); }
+
+protected:
+    // For now, every manifold transfer assumes an underlying (linear) interpolation for the embedding space
+    const LinearTransferBase& transfer;
 };
 
 
 // Metric-independent transfers for the fine/coarse manifolds S_h/S_H
 template <typename MatrixType>
-class ManifoldTransfer
+class ManifoldTransfer : public ManifoldTransferBase
 {
 public:
-    using Context = MatrixContext<MatrixType>;
-
-    ManifoldTransfer(const Context& mtx, const LinearTransferBase& I)
-        : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I)
+    ManifoldTransfer(const LinearTransferBase& transfer,
+                     const MatrixType& M_coarse,
+                     const MatrixType& M_fine)
+        : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine)
     {}
 
     /**
@@ -63,7 +66,7 @@ public:
      * @param x_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
      * @param y_coarse [out] The restricted point $r(y) \in \mathcal{S}_{M_H}$ on the coarse grid.
      */
-    void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const
+    void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const override
     {
         transfer.to_coarse_mesh(x_fine, y_coarse);
         ellipsoid::retract_by_norm(M_coarse, y_coarse);
@@ -83,7 +86,7 @@ public:
      * @param y_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
      * @param x_fine [out] The prolonged point $p(x) \in \mathcal{S}_{M_h}$ on the fine grid.
      */
-    void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const
+    void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const override
     {
         transfer.to_fine_mesh(y_coarse, x_fine);
         ellipsoid::retract_by_norm(M_fine, x_fine);
@@ -105,7 +108,7 @@ public:
      * @param v The tangent vector $v \in T_y \mathcal{S}_{M_h}$.
      * @param dst The mapped tangent vector $\Drm r(y)[v] \in T_{r(y)} \mathcal{S}_{M_H}$.
      */
-    void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const
+    void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const override
     {
         // Linear restriction of the base point: I_h^H(y)
         Vector<double> x_lin(transfer.n_coarse());
@@ -148,7 +151,7 @@ public:
      * @param v The tangent vector $v \in T_x \mathcal{S}_{M_H}$.
      * @param dst The mapped tangent vector $\Drm p(x)[v] \in T_{p(x)} \mathcal{S}_{M_h}$.
      */
-    void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const
+    void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const override
     {
         // 1. Linear prolongation of the base point: I_H^h(x)
         Vector<double> y_lin(transfer.n_fine());
@@ -175,13 +178,9 @@ public:
         dst /= n_h;
     }
 
-    unsigned n_fine() const { return transfer.n_fine(); }
-    unsigned n_coarse() const { return transfer.n_coarse(); }
-
 private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
-    const LinearTransferBase& transfer;
 };
 
 
@@ -236,13 +235,11 @@ class MassProjectionTransport : public VectorTransportBase
 {
 public:
     static constexpr const char* id = "M";
-    static constexpr bool requires_inverse = false;
-    using Context = MatrixContext<MatrixType>;
 
-    MassProjectionTransport(const Context& mtx,
-                            const LinearTransferBase& I,
-                            const ManifoldTransfer<MatrixType>& pt)
-        : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I), point_transfer(pt)
+    MassProjectionTransport(const LinearTransferBase& I,
+                            const MatrixType& M_coarse,
+                            const MatrixType& M_fine)
+        : M_coarse(M_coarse), M_fine(M_fine), transfer(I)
     {}
 
     /**
@@ -284,7 +281,6 @@ private:
     const MatrixType& M_fine;
 
     const LinearTransferBase& transfer;
-    const ManifoldTransfer<MatrixType>& point_transfer;
 };
 
 
@@ -292,14 +288,12 @@ template <typename MatrixType>
 class FrobeniusProjectionTransport : public VectorTransportBase
 {
 public:
-    using Context = MatrixContext<MatrixType>;
     static constexpr const char* id = "F";
-    static constexpr bool requires_inverse = false;
 
-    explicit FrobeniusProjectionTransport(const Context& mtx,
-                                          const LinearTransferBase& I,
-                                          const ManifoldTransfer<MatrixType>& pt)
-        : M_coarse(mtx.M_c), M_fine(mtx.M_f), transfer(I), point_transfer(pt)
+    explicit FrobeniusProjectionTransport(const LinearTransferBase& I,
+                                          const MatrixType& M_coarse,
+                                          const MatrixType& M_fine)
+        : M_coarse(M_coarse), M_fine(M_fine), transfer(I)
     {}
 
     void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
@@ -329,7 +323,6 @@ private:
     const MatrixType& M_fine;
 
     const LinearTransferBase& transfer;
-    const ManifoldTransfer<MatrixType>& point_transfer;
 };
 
 
@@ -352,15 +345,12 @@ template <typename MatrixType>
 class DifferentialTransport : public VectorTransportBase
 {
 public:
-    using Context = MatrixContext<MatrixType>;
     static constexpr const char* id = "D";
-    static constexpr bool requires_inverse = false;
 
-    explicit DifferentialTransport(const Context& ctx,
-                                   const LinearTransferBase& I,
-                                   const ManifoldTransfer<MatrixType>& pt)
-        : transfer(I), point_transfer(pt)
-        , M_fine(ctx.M_f), M_coarse(ctx.M_c)
+    explicit DifferentialTransport(const ManifoldTransferBase& pt,
+                                   const MatrixType& M_coarse,
+                                   const MatrixType& M_fine)
+        : M_coarse(M_coarse), M_fine(M_fine), point_transfer(pt)
     {}
 
     void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
@@ -414,10 +404,10 @@ public:
     }
 
 private:
-    const LinearTransferBase& transfer;
-    const ManifoldTransfer<MatrixType>& point_transfer;
     const MatrixType& M_fine;
     const MatrixType& M_coarse;
+
+    const ManifoldTransfer<MatrixType>& point_transfer;
 };
 
 } // namespace gpe

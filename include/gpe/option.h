@@ -21,7 +21,7 @@ BOOST_DESCRIBE_STRUCT(MG_Options, (),
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
-    (kappa, eps, coarse_every, galerkin_t, transport_t, coarse_t));
+    (kappa, eps, coarse_every, metric_t, transport_t, interpol_t));
 
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
@@ -29,9 +29,9 @@ BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
-BOOST_DESCRIBE_ENUM(Galerkin, FROBENIUS, MASS)
+BOOST_DESCRIBE_ENUM(CoarseMetric, NONE, FROBENIUS, MASS)
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL);
-BOOST_DESCRIBE_ENUM(CoarseKind, FROBENIUS, FROBENIUS_ENERGY_ADAPTIVE, MASS, MASS_ENERGY_ADAPTIVE);
+BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 BOOST_DESCRIBE_ENUM(SmoothKind, MASS, ENERGY_ADAPTIVE);
 
 
@@ -195,7 +195,8 @@ inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_
     options_fas.kappa        = vm["kappa"].as<double>();
     options_fas.eps          = vm["eps"].as<double>();
     options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
-    options_fas.galerkin_t    = string_to_enum<Galerkin>(galerkin_str);
+    options_fas.coarse_energy_adaptive = vm["coarse-energy-adaptive"].as<bool>();
+    options_fas.metric_t    = string_to_enum<CoarseMetric>(galerkin_str);
 }
 
 inline po::options_description fas_cli_options()
@@ -208,10 +209,13 @@ inline po::options_description fas_cli_options()
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
             "minimum number of fine steps before coarse step is taken")
+        // TODO: name for negative option? (default true)
+        ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
+            "solve coarse model with energy-adaptive gradient")
         ("galerkin", po::value<std::string>()->default_value("frobenius"),
             "vector transport metric condition (frobenius|mass)")
         ("transport", po::value<std::string>()->default_value("mass"),
-            "vector transport operator (standard|mass|differential)");
+            "vector transport operator (frobenius|mass|differential)");
     return d;
 }
 

@@ -249,14 +249,19 @@ private:
 };
 
 
-template <typename MatrixType, typename InverseMatrixType>
+// TODO: inherits from LinearTransferBase, yet takes a LinearTransferBase as an argument....?
+template <int dim, typename TransferType, typename MatrixType, typename InverseMatrixType>
 class MassTransfer : public LinearTransferBase
 {
 public:
-    MassTransfer(const LinearTransferBase& transfer,
+
+    MassTransfer(const dealii::DoFHandler<dim>& dof_coarse,
+                 const dealii::DoFHandler<dim>& dof_fine,
+                 const dealii::AffineConstraints<double>& constraints_coarse,
+                 const dealii::AffineConstraints<double>& constraints_fine,
                  const MatrixType& M_fine,
                  const InverseMatrixType& M_inv_coarse)
-        : _transfer(transfer)
+        : _transfer(TransferType(dof_coarse, dof_fine, constraints_coarse, constraints_fine))
         , _M_fine(M_fine)
         , _M_inv_coarse(M_inv_coarse)
     {}
@@ -281,7 +286,7 @@ public:
     unsigned n_fine() const override { return _transfer.n_fine(); };
 
 private:
-    const LinearTransferBase& _transfer;
+    TransferType _transfer;
     const MatrixType& _M_fine;
     const InverseMatrixType& _M_inv_coarse;
 };
