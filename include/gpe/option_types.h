@@ -63,17 +63,17 @@ enum class SmoothKind
     ENERGY_ADAPTIVE
 };
 
-enum class Interpolate
-{
-    NONE,
-    MASS
-};
-
 enum class Transport
 {
     FROBENIUS,
     MASS,
     DIFFERENTIAL
+};
+
+enum class Interpolate
+{
+    NONE,
+    MASS
 };
 
 

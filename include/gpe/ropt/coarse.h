@@ -29,6 +29,39 @@ struct CycleInfo
 };
 
 
+// Implementation of smoothing steps
+template <typename Oracle>
+CycleInfo cycle_smooth(const Oracle& O_fine, Vector<double>& x, const Vector<double>& eta,
+                       dealii::Timer& timer, DescentOptions options_gd)
+{
+    timer.start();
+    double step_size = options_gd.step_size;
+
+    // Update point (fixed step or line search)
+    if (options_gd.line_search) {
+        std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
+        double Ex = O_fine.value(x);
+        double dir_deriv = O_fine.directional_derivative(x, eta);
+
+        step_size = armijo_line_search(O_fine, x, eta, Ex, dir_deriv, options_gd);
+
+        if (step_size <= options_gd.ls.min) {
+            std::cerr << "  -> Step rejected by line search." << std::endl;
+        }
+    }
+    else {
+        std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
+        O_fine.retract(eta, x, options_gd.step_size);  // update y
+
+        std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
+        O_fine.update(x);
+    }
+
+    timer.stop();
+    return {.step_size = step_size, .elapsed = timer.cpu_time()};
+}
+
+
 template <typename Oracle>
 void cycle_eval(const Oracle& O, const Vector<double>& y,
                 dealii::ConvergenceTable& convergence_table,
@@ -247,14 +280,63 @@ private:
 };
 
 
-// TODO: factor out the cycle_smooth() methods (consolidate with descent.h)
-//       convergence check (cf. EnergySimulator::run)
+template <int dim>
+class GradientDescent
+{
+public:
+    // O_fine: oracle used for computing gradient descent steps on the fine level
+    GradientDescent(const OracleBase<dim>& O_fine)
+        : O_fine(O_fine)
+    {}
+
+    void cycle(const Vector<double>& x0, std::ostream& os, DescentOptions options_gd)
+    {
+        timer.reset();
+
+        // 0. Initialize oracle and coarse model
+        Vector<double> x(x0);
+        O_fine.update(x);
+        Vector<double> x_grad(x.size());
+        Vector<double> dk(x.size());
+
+        for (unsigned i = 0; i < options_gd.max_iter; i++) {
+            // Update gradient
+            std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
+            auto lac_iter = O_fine.gradient(x, x_grad);
+            dk  = x_grad;
+            dk *= -1.0;
+
+            // Evaluate directional derivative in A-norm
+            CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
+            info.iter      = i;
+            info.coarse    = false;
+            info.lac_iter  = lac_iter;
+
+            cycle_eval(O_fine, x, convergence_table, info);
+
+        }
+        convergence_table.set_precision("grad_restr_norm", 4);
+        convergence_table.set_precision("grad_norm", 4);
+        convergence_table.set_scientific("grad_restr_norm", true);
+        convergence_table.set_scientific("grad_norm", true);
+
+        cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
+    }
+
+private:
+    dealii::ConvergenceTable convergence_table;
+    dealii::Timer timer;
+    const OracleBase<dim>& O_fine;
+};
+
+
+// TODO: convergence check (cf. EnergySimulator::run)
 template <int dim, typename TiltOracle>
 class FullApproximationScheme
 {
 public:
     // TODO: to support recursion, we need to be able to take arbitrary Oracles at levels 0...{n-1}
-    // O_fine: oracle used for computing gradient descept steps on the fine level
+    // O_fine: oracle used for computing gradient descent steps on the fine level
     //         independent from oracles used in CoarseModel (w, <w,.> and corresponding objectives)
     // O_coarse_model:
     //         model used for computing coarse descent steps
@@ -265,9 +347,10 @@ public:
         O_coarse_model.set_timer(timer);
     }
 
-    void cycle_condition(const Vector<double>& x0, std::ostream& os,
-                         DescentOptions options_gd, DescentOptions options_gd_coarse,
-                         double kappa, double eps, unsigned coarse_every = 1)
+    // TODO: move options to constructor for common cycle() interface?
+    void cycle(const Vector<double>& x0, std::ostream& os,
+               DescentOptions options_gd, DescentOptions options_gd_coarse,
+               double kappa, double eps, unsigned coarse_every = 1)
     {
         timer.reset();
 
@@ -303,7 +386,7 @@ public:
                     O_coarse_model.solve(coarse_step, options_gd_coarse, dk);
 
                     // TODO: debug step for checking descent direction (to gradient of corresponding fine oracle)
-                    CycleInfo info = cycle_smooth(x, dk, options_gd);
+                    CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
                     info.iter      = i;
                     info.coarse    = true;
                     info.lac_iter  = 0;
@@ -323,7 +406,7 @@ public:
                 dk *= -1.0;
 
                 // Evaluate directional derivative in A-norm
-                CycleInfo info = cycle_smooth(x, dk, options_gd);
+                CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = lac_iter;
@@ -337,37 +420,6 @@ public:
         convergence_table.set_scientific("grad_norm", true);
 
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
-    }
-
-protected:
-    // Implementation of smoothing steps
-    CycleInfo cycle_smooth(Vector<double>& x, const Vector<double>& eta, DescentOptions options_gd)
-    {
-        timer.start();
-        double step_size = options_gd.step_size;
-
-        // Update point (fixed step or line search)
-        if (options_gd.line_search) {
-            std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
-            double Ex = O_fine.value(x);
-            double dir_deriv = O_fine.directional_derivative(x, eta);
-
-            step_size = armijo_line_search(O_fine, x, eta, Ex, dir_deriv, options_gd);
-
-            if (step_size <= options_gd.ls.min) {
-                std::cerr << "  -> Step rejected by line search." << std::endl;
-            }
-        }
-        else {
-            std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
-            O_fine.retract(eta, x, options_gd.step_size);  // update y
-
-            std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
-            O_fine.update(x);
-        }
-
-        timer.stop();
-        return {.step_size = step_size, .elapsed = timer.cpu_time()};
     }
 
 private:

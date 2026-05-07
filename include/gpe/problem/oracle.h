@@ -291,7 +291,7 @@ public:
         return {.energy=this->value(x)};
     }
 
-private:
+protected:
     Vector<double> m_w;
     Vector<double> m_phi;
 };

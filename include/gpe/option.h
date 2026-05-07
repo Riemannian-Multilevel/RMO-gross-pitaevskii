@@ -209,13 +209,12 @@ inline po::options_description fas_cli_options()
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
             "minimum number of fine steps before coarse step is taken")
-        // TODO: name for negative option? (default true)
-        ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
-            "solve coarse model with energy-adaptive gradient")
-        ("galerkin", po::value<std::string>()->default_value("frobenius"),
-            "vector transport metric condition (frobenius|mass)")
-        ("transport", po::value<std::string>()->default_value("mass"),
-            "vector transport operator (frobenius|mass|differential)");
+        // ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
+        //     "solve coarse model with energy-adaptive gradient")
+        // ("galerkin", po::value<std::string>()->default_value("frobenius"),
+        //     "vector transport metric condition (frobenius|mass)")
+        // ("transport", po::value<std::string>()->default_value("mass"),
+        //     "vector transport operator (frobenius|mass|differential)");
     return d;
 }
 
