@@ -1,4 +1,4 @@
-#include <gpe/fe/fe_space.h>
+#include <gpe/fe/space.h>
 #include <gpe/fe/grid.h>
 #include <gpe/util/sparsity.h>
 #include <gpe/util/util.h>

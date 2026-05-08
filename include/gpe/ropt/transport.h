@@ -1,7 +1,7 @@
 #ifndef GPE_GRID_OPERATORS_H
 #define GPE_GRID_OPERATORS_H
 
-#include <gpe/fe/fe_interpolate.h>
+#include <gpe/fe/interpolate.h>
 #include <gpe/ropt/manifold.h>
 #include <gpe/option_types.h>
 
