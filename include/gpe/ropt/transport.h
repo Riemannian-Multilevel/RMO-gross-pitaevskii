@@ -404,10 +404,10 @@ public:
     }
 
 private:
-    const MatrixType& M_fine;
     const MatrixType& M_coarse;
+    const MatrixType& M_fine;
 
-    const ManifoldTransfer<MatrixType>& point_transfer;
+    const ManifoldTransferBase& point_transfer;
 };
 
 } // namespace gpe

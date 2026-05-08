@@ -849,25 +849,40 @@ void gradient(const MatrixType& M, const MatrixType& A,
               const Vector<double>& w,
               Vector<double>& dst)
 {
-    const unsigned int n_dofs = zeta.size();
+    // phi represents \psi_k, zeta represents \zeta
 
-    // 1. Compute phi^T M zeta
-    Vector<double> M_zeta(n_dofs);
-    M.vmult(M_zeta, zeta);
-    const double phi_M_zeta = phi * M_zeta;
+    // 1. Compute M_H * \zeta
+    Vector<double> Mzeta(zeta.size());
+    M.vmult(Mzeta, zeta);
 
-    // 2. Compute v = A * zeta - (1 / phi^T M zeta) * w
-    Vector<double> v(n_dofs);
-    A.vmult(v, zeta);
-    v.add(-1.0 / phi_M_zeta, w);
+    // 2. Compute \beta = \psi_k^\top M_H \zeta
+    const double beta = phi * Mzeta;
+    AssertThrow(std::abs(beta) > ZERO_ROUNDOFF, dealii::ExcMessage("phi^T M zeta must be non-zero"));
 
-    // 3. Apply F-orthogonal projection
-    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, v, dst);
+    // 3. Compute M_H * \psi_k
+    Vector<double> Mphi(zeta.size());
+    M.vmult(Mphi, phi);
+
+    // 4. Compute scalar \zeta^\top w_{k,e}
+    const double zeta_w = zeta * w;
+
+    // 5. Construct the inner vector: w_{k,e} - (\zeta^\top w_{k,e} / \beta) M_H \psi_k
+    Vector<double> inner(w);
+    inner.add(-zeta_w / beta, Mphi);
+
+    // 6. Compute A_\zeta \zeta
+    Vector<double> Azeta(zeta.size());
+    A.vmult(Azeta, zeta);
+
+    // 7. Assemble the pre-projection vector: u = A_\zeta \zeta - (1 / \beta) * inner
+    Vector<double> u(Azeta);
+    u.add(-1.0 / beta, inner);
+
+    // 8. Project onto the tangent space using the Frobenius metric
+    ellipsoid::frobenius::project_onto_tangent_space(zeta, M, u, dst);
 }
 
-
 // Energy-adaptive gradient of the Frobenius coarse model
-// TODO: tag- or class-based metric selection
 template <typename MatrixType, typename InverseMatrixType>
 void energy_adaptive_gradient(const MatrixType& M,
                               const InverseMatrixType& A_inv,
@@ -877,19 +892,34 @@ void energy_adaptive_gradient(const MatrixType& M,
                               const Vector<double>& w,
                               Vector<double>& dst)
 {
-    const unsigned int n_dofs = zeta.size();
+    // 1. Compute the coarse gradient in the Frobenius metric: \grad_{\rm e} q_k^{\rm GP}(\zeta)
+    Vector<double> grad_e(zeta.size());
+    gradient(M, A, zeta, phi, w, grad_e);
 
-    // 1. Compute the exact F-gradient (g_F)
-    Vector<double> grad_F(n_dofs);
-    gradient(M, A, zeta, phi, w, grad_F);
+    // 2. Apply the inverse operator: v = A_\zeta^{-1}(\grad_{\rm e} q_k^{\rm GP}(\zeta))
+    Vector<double> v(zeta.size());
+    A_inv.vmult(v, grad_e);
 
-    // 2. Apply A^{-1} (Computes v = A^{-1} g_F)
-    Vector<double> Ainv_grad_F(n_dofs);
-    A_inv.vmult(Ainv_grad_F, grad_F);
+    // 3. Compute M_H \zeta
+    Vector<double> Mzeta(zeta.size());
+    M.vmult(Mzeta, zeta);
 
-    // 3. Apply the Energy Projection
-    // This computes the inverse composition: (\Pi_F A \Pi_F)^{-1} g_F
-    ellipsoid::energy::project_onto_tangent_space(A_inv, zeta, M, Ainv_grad_F, dst);
+    // 4. Compute A_\zeta^{-1} M_H \zeta
+    Vector<double> Ainv_Mzeta(zeta.size());
+    A_inv.vmult(Ainv_Mzeta, Mzeta);
+
+    // 5. Compute Numerator: \zeta^\top M_H A_\zeta^{-1}(\grad_{\rm e} q_k^{\rm GP}(\zeta))
+    // By grouping, this is equivalent to the dot product of (M_H \zeta) and v
+    const double num = Mzeta * v;
+
+    // 6. Compute Denominator: \zeta^\top M_H A_\zeta^{-1} M_H \zeta
+    // By grouping, this is equivalent to the dot product of (M_H \zeta) and (A_\zeta^{-1} M_H \zeta)
+    const double denom = Mzeta * Ainv_Mzeta;
+    AssertThrow(denom > ZERO_ROUNDOFF, dealii::ExcInternalError("zeta^T M_H A^{-1} M_H zeta <= 0"));
+
+    // 7. Assemble the final formulation
+    dst = v;
+    dst.add(-num / denom, Ainv_Mzeta);
 }
 
 } // namespace coarse::frobenius

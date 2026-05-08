@@ -351,7 +351,7 @@ public:
     {
         if (m_precond_type == Precondition::DIAGONAL) {
             // Create a vector to hold the inverse diagonal elements
-            dealii::Vector<double> inv_diag(diag);
+            Vector<double> inv_diag(diag);
             const double relaxation = 0.6;
 
             for (unsigned int i = 0; i < inv_diag.size(); ++i) {
@@ -415,6 +415,9 @@ private:
     mutable SolverControl m_control;
     mutable double m_tol = 0.0;
 };
+
+using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
+using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
 } // namespace gpe
 

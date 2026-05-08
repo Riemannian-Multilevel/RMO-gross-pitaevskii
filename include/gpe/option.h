@@ -29,10 +29,9 @@ BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
-BOOST_DESCRIBE_ENUM(CoarseMetric, NONE, FROBENIUS, MASS)
+BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE)
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL);
 BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
-BOOST_DESCRIBE_ENUM(SmoothKind, MASS, ENERGY_ADAPTIVE);
 
 
 // ---------- MG_Options ----------
@@ -190,13 +189,19 @@ inline po::options_description inner_cli_options() {
 // ---------- FAS_Options ----------
 inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_fas)
 {
-    const auto galerkin_str = upper(vm["galerkin"].as<std::string>());
+    const auto metric_str = upper(vm["metric"].as<std::string>());
+    const auto transp_str = upper(vm["transport"].as<std::string>());
+    const auto interp_str = upper(vm["interpolate"].as<std::string>());
+    // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
 
     options_fas.kappa        = vm["kappa"].as<double>();
     options_fas.eps          = vm["eps"].as<double>();
     options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
-    options_fas.coarse_energy_adaptive = vm["coarse-energy-adaptive"].as<bool>();
-    options_fas.metric_t    = string_to_enum<CoarseMetric>(galerkin_str);
+    // options_fas.coarse_energy_adaptive = vm["coarse-energy-adaptive"].as<bool>();
+    // options_fas.smooth_t     = vm["metric-smooth"].as<bool>();
+    options_fas.metric_t     = string_to_enum<MetricKind>(metric_str);
+    options_fas.transport_t  = string_to_enum<Transport>(transp_str);
+    options_fas.interpol_t   = string_to_enum<Interpolate>(interp_str);
 }
 
 inline po::options_description fas_cli_options()
@@ -211,10 +216,14 @@ inline po::options_description fas_cli_options()
             "minimum number of fine steps before coarse step is taken")
         // ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
         //     "solve coarse model with energy-adaptive gradient")
-        // ("galerkin", po::value<std::string>()->default_value("frobenius"),
-        //     "vector transport metric condition (frobenius|mass)")
-        // ("transport", po::value<std::string>()->default_value("mass"),
-        //     "vector transport operator (frobenius|mass|differential)");
+        ("metric", po::value<std::string>()->default_value("mass"),
+            "metric for coarse model (none|frobenius|mass)")
+        // ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
+        //     "metric for smoother (energy_adaptive|mass|frobenius)")
+        ("transport", po::value<std::string>()->default_value("mass"),
+            "vector transport operator (frobenius|mass|differential)")
+        ("interpolate", po::value<std::string>()->default_value("none"),
+            "galerkin condition on linear interpolation (none|mass)");
     return d;
 }
 

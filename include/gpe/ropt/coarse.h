@@ -31,7 +31,7 @@ struct CycleInfo
 
 // Implementation of smoothing steps
 template <typename Oracle>
-CycleInfo cycle_smooth(const Oracle& O_fine, Vector<double>& x, const Vector<double>& eta,
+CycleInfo cycle_smooth(Oracle& O_fine, Vector<double>& x, const Vector<double>& eta,
                        dealii::Timer& timer, DescentOptions options_gd)
 {
     timer.start();
@@ -39,7 +39,9 @@ CycleInfo cycle_smooth(const Oracle& O_fine, Vector<double>& x, const Vector<dou
 
     // Update point (fixed step or line search)
     if (options_gd.line_search) {
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
+#endif
         double Ex = O_fine.value(x);
         double dir_deriv = O_fine.directional_derivative(x, eta);
 
@@ -50,10 +52,14 @@ CycleInfo cycle_smooth(const Oracle& O_fine, Vector<double>& x, const Vector<dou
         }
     }
     else {
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
+#endif
         O_fine.retract(eta, x, options_gd.step_size);  // update y
 
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
+#endif
         O_fine.update(x);
     }
 
@@ -129,7 +135,7 @@ struct CoarseCond
 
 // TODO: TiltOracle template chosen to ensure consistency between O_coarse and O_fine (-> w)
 //       use runtime type-check or move functionality to CoarseOracle(Base)
-template <int dim, typename TiltOracle>
+template <int dim>
 class CoarseModel
 {
 public:
@@ -142,8 +148,9 @@ public:
     //           oracle for evaluating gradient of coarse model \grad q_k(y)
     //           metric for \grad q_k(y) can differ from gradient of w and <w, .>_y
     // TODO: move computation of w to CoarseOracleBase to avoid mismatches in metric between w and <w,.>
-    CoarseModel(const TiltOracle& O_coarse, const TiltOracle& O_fine,
-                const CoarseOracleBase<dim>& qk,
+    //       const correctness for CoarseOracleBase
+    CoarseModel(const OracleBase<dim>& O_coarse, const OracleBase<dim>& O_fine,
+                CoarseOracleBase<dim>& qk,
                 const ManifoldTransferBase& point_transfer,
                 const VectorTransportBase& vector_transport)
         : O_coarse(O_coarse), O_fine(O_fine)
@@ -153,11 +160,10 @@ public:
         , n_coarse(O_coarse.n_dofs())
         , n_fine(O_fine.n_dofs())
     {
-        AssertThrow(O_coarse.metric == O_fine.metric, dealii::ExcInternalError("mismatch between fine and coarse oracle"));
-        //AssertThrow(typeid(O_coarse) == typeid(O_fine), dealii::ExcInternalError("mismatch between fine and coarse oracle"));
+        AssertThrow(O_coarse.get_metric() == O_fine.get_metric(), dealii::ExcInternalError("mismatch between fine and coarse oracle"));
     }
 
-    void set_timer(const dealii::Timer& timer_new)
+    void set_timer(const dealii::Timer& timer_new) const
     {
         timer = timer_new;
     }
@@ -166,28 +172,38 @@ public:
     // so that a coarse criterion can be efficiently evaluated.
     // TODO: save CoarseStep inside of class (with const ref accessor), instead of returning?
     CoarseStep
-    setup(const Vector<double>& x)
+    setup(const Vector<double>& x) const
     {
         AssertDimension(x.size(),n_fine);
         CoarseStep step(x, n_coarse, n_fine);
 
         // Starting coarse point
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
+#endif
         point_transfer.restriction(x, step.y);
 
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
-        O_coarse.update(step.y);
+#endif
+        O_coarse.update(step.y);  // mutable state (non-linear factor Mpp)
 
         // Compute coarse M-gradient (-> coarse correction w)
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id << "-coarse gradient\n";
+#endif
         O_coarse.gradient(step.y, step.y_grad);
 
         // Compute fine M-gradient (-> coarse correction w)
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
+#endif
         O_fine.gradient(x, step.x_grad);
 
         // Compute restricted gradient (-> coarse correction w)
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector restriction\n";
+#endif
         vector_transport.vector_restriction(step.y, x, step.x_grad, step.x_grad_restr);
 
         return step;
@@ -196,7 +212,7 @@ public:
     // TODO: Use cycle_fine() for consistency instead of gradient_descent()
     void solve(const CoarseStep& step, DescentOptions options_gd, Vector<double>& dst)
     {
-        AssertDimension(dst.size(),n_fine);
+        AssertDimension(dst.size(), n_fine);
         const auto& M_coarse = O_coarse.get_M();
 
         Vector<double> w(n_coarse);
@@ -204,20 +220,26 @@ public:
         w.add(-1.0, step.x_grad_restr);
 
         // Set up coarse model
+        // TODO: const correctness - view to OracleBase
         qk.update_parameters(w, step.y);
         Vector<double> zk(n_coarse);
 
         // Find zk such that qk(zk) < qk(x)
-        // TODO: variable method
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << qk.id << "-gradient descent\n";
+#endif
         zk = gradient_descent(qk, step.y, options_gd, std::cerr);
 
         // Compute the search direction, zk <- L_x(zk)
         // FIXME? use separate variable to hold ambient tangent vector L_x(zk)
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
+#endif
         ellipsoid::retract_inv_by_norm(M_coarse, zk, step.y);
 
+#ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << vector_transport.id << "-vector prolongation\n";
+#endif
         vector_transport.vector_prolongation(step.x, step.y, zk, dst);
     }
 
@@ -231,26 +253,34 @@ public:
         AssertDimension(v_restr.size(),n_coarse);
         CoarseCond cond;
 
-        if (qk.metric == CoarseMetric::MASS) {
+        if (qk.get_metric() == MetricKind::MASS) {
+#ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: M-norm of gradient\n";
+#endif
             const auto& M_fine = O_fine.get_M();
 
             Vector<double> Mv(n_fine);
             M_fine.vmult(Mv, v);
             cond.norm_fine   = std::sqrt(v*Mv);
 
+#ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] coarse: M-norm of restricted gradient\n";
+#endif
             const auto& M_coarse = O_coarse.get_M();
 
             Vector<double> Mg_restr(n_coarse);
             M_coarse.vmult(Mg_restr, v_restr);
             cond.norm_coarse = std::sqrt(v_restr*Mg_restr);
         }
-        else if (qk.metric == CoarseMetric::FROBENIUS) {
+        else if (qk.get_metric() == MetricKind::FROBENIUS) {
+#ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: F-norm of gradient\n";
+#endif
             cond.norm_fine   = std::sqrt(v*v);
 
+#ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] coarse: F-norm of restricted gradient\n";
+#endif
             cond.norm_coarse = std::sqrt(v_restr*v_restr);
         }
         else {
@@ -263,12 +293,13 @@ public:
     unsigned n_dofs() const { return n_coarse; }
 
 private:
-    dealii::Timer timer;
+    mutable dealii::Timer timer;
 
     // Function evaluation
-    const TiltOracle& O_coarse;  // coarse objective
-    const TiltOracle& O_fine;    // fine objective
-    const CoarseOracleBase<dim>& qk;  // coarse objective + linear shift
+    const OracleBase<dim>& O_coarse;  // coarse objective
+    const OracleBase<dim>& O_fine;    // fine objective
+    // TODO: const correctness?
+    CoarseOracleBase<dim>& qk;  // coarse objective + linear shift
 
     // Grid operators
     const ManifoldTransferBase& point_transfer;
@@ -301,7 +332,9 @@ public:
 
         for (unsigned i = 0; i < options_gd.max_iter; i++) {
             // Update gradient
+#ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
+#endif
             auto lac_iter = O_fine.gradient(x, x_grad);
             dk  = x_grad;
             dk *= -1.0;
@@ -313,13 +346,7 @@ public:
             info.lac_iter  = lac_iter;
 
             cycle_eval(O_fine, x, convergence_table, info);
-
         }
-        convergence_table.set_precision("grad_restr_norm", 4);
-        convergence_table.set_precision("grad_norm", 4);
-        convergence_table.set_scientific("grad_restr_norm", true);
-        convergence_table.set_scientific("grad_norm", true);
-
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
@@ -331,7 +358,7 @@ private:
 
 
 // TODO: convergence check (cf. EnergySimulator::run)
-template <int dim, typename TiltOracle>
+template <int dim>
 class FullApproximationScheme
 {
 public:
@@ -340,7 +367,8 @@ public:
     //         independent from oracles used in CoarseModel (w, <w,.> and corresponding objectives)
     // O_coarse_model:
     //         model used for computing coarse descent steps
-    FullApproximationScheme(const OracleBase<dim>& O_fine, const CoarseModel<dim, TiltOracle>& O_coarse_model)
+    // TODO: const correctness for CoarseModel
+    FullApproximationScheme(const OracleBase<dim>& O_fine, CoarseModel<dim>& O_coarse_model)
         : O_fine(O_fine)
         , O_coarse_model(O_coarse_model)
     {
@@ -373,15 +401,15 @@ public:
                 auto coarse_cond = O_coarse_model.norm(coarse_step.x_grad, coarse_step.x_grad_restr);
 
                 // Norm of fine (M-)gradient
-                convergence_table.add_value("grad_norm", coarse_cond.x_grad_norm);
+                convergence_table.add_value("grad_norm", coarse_cond.norm_fine);
                 // Norm of restricted (M-)gradient
-                convergence_table.add_value("grad_restr_norm", coarse_cond.x_grad_restr_norm);
+                convergence_table.add_value("grad_restr_norm", coarse_cond.norm_coarse);
 
-                if (coarse_cond.x_grad_restr_norm <= eps) {
+                if (coarse_cond.norm_coarse <= eps) {
                     check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
                 }
 
-                if (coarse_cond.x_grad_restr_norm >= kappa*coarse_cond.x_grad_norm && coarse_cond.x_grad_restr_norm > eps) {
+                if (coarse_cond.norm_coarse >= kappa*coarse_cond.norm_fine && coarse_cond.norm_coarse > eps) {
                     // Coarse step
                     O_coarse_model.solve(coarse_step, options_gd_coarse, dk);
 
@@ -400,7 +428,9 @@ public:
                 convergence_table.add_value("grad_norm", 0);
     fine_step:
                 // Update gradient
+#ifdef CPU_TIME
                 std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
+#endif
                 auto lac_iter = O_fine.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
@@ -426,7 +456,8 @@ private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
     const OracleBase<dim>& O_fine;
-    const CoarseModel<dim, TiltOracle>& O_coarse_model;  // encodes both the coarse model, and the method to solve it
+    // TODO: const correctness (update_parameters) - compute tilt inside CoarseOracleBase
+    CoarseModel<dim>& O_coarse_model;  // encodes both the coarse model, and the method to solve it
 };
 
 } // namespace gpe

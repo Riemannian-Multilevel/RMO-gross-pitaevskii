@@ -43,8 +43,6 @@ class OracleBase
 public:
     static constexpr int dimension = dim;
     static constexpr const char* id = "";
-    using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
-    using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
     /**
      * @brief Constructs the Oracle by referencing an existing GPE problem.
@@ -59,22 +57,17 @@ public:
         , options(options_)
         , A(problem.get_operator_A(beta))
         , M(problem.get_operator_M())
-        , A_inv(A, options_)
-        , M_inv(M, options_)
-    {
-        A_inv.update_static(problem.get_A0());
-    }
+    {}
 
     virtual ~OracleBase() = default;
+    virtual MetricKind get_metric() const { return MetricKind::NONE; }
 
     /**
      * @brief Updates the problem state and preconditioner for a new evaluation point.
-     * @note This method is NOT const, as it mutates the internal operator state.
      */
-    void update(const Vector<double>& x)
+    virtual void update(const Vector<double>& x) const
     {
         problem.assemble_nonlinear_term(x);
-        A_inv.update_dynamic(A.diagonal());
     }
 
     /**
@@ -96,8 +89,6 @@ public:
     // Accessors
     const auto& get_M() const { return M; }
     const auto& get_A() const { return A; }
-    const auto& get_M_inv() const { return M_inv; }
-    const auto& get_A_inv() const { return A_inv; }
 
     SolverOptions get_options() const { return options; }
     double get_beta() const { return beta; }
@@ -123,7 +114,6 @@ protected:
     double beta;
     SolverOptions options;
     OperatorType A, M;
-    InverseOpType A_inv, M_inv;
 };
 
 
@@ -132,7 +122,14 @@ class MassOracle : public OracleBase<dim>
 {
 public:
     static constexpr const char* id = "M";
-    using OracleBase<dim>::OracleBase;
+    static constexpr auto metric = MetricKind::MASS;
+
+    MassOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , M_inv(this->M, options_) // Specialized member
+    {}
+
+    MetricKind get_metric() const override { return metric; }
 
     /**
       * @brief Computes the Gross-Pitaevskii energy functional value.
@@ -155,10 +152,10 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         if (m_res.residual > 0) {
-            this->M_inv.set_tol(m_res.residual*this->options.tol_inner_res);
+            M_inv.set_tol(m_res.residual*this->options.tol_inner_res);
         }
-        ellipsoid::mass::gradient(this->M_inv, this->A, this->M, x, output);
-        return this->M_inv.control().last_step();
+        ellipsoid::mass::gradient(M_inv, this->A, this->M, x, output);
+        return M_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
@@ -168,6 +165,7 @@ public:
     }
 
 private:
+    InverseOpType M_inv;
     mutable iteration::State m_res;
 };
 
@@ -177,8 +175,22 @@ class EnergyOracle : public OracleBase<dim>
 {
 public:
     static constexpr const char* id = "A";
-    // Inherit constructors from OracleBase
-    using OracleBase<dim>::OracleBase;
+    static constexpr auto metric = MetricKind::ENERGY_ADAPTIVE;
+
+    EnergyOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
+        : OracleBase<dim>(problem_, beta_, options_)
+        , A_inv(this->A, options_) // Specialized member
+    {
+        A_inv.update_static(this->problem.get_A0());
+    }
+
+    MetricKind get_metric() const override { return metric; }
+
+    void update(const Vector<double>& x) const override
+    {
+        OracleBase<dim>::update(x); // Calls assembly
+        A_inv.update_dynamic(this->A.diagonal());
+    }
 
     /**
      * @brief Computes the Gross-Pitaevskii energy functional value.
@@ -215,6 +227,7 @@ public:
     }
 
 private:
+    mutable InverseOpType A_inv; // Moved from Base
     mutable iteration::State m_res;
 };
 
@@ -225,6 +238,9 @@ class FrobeniusOracle : public OracleBase<dim>
 public:
     static constexpr const char* id = "F";
     using OracleBase<dim>::OracleBase;
+    static constexpr auto metric = MetricKind::FROBENIUS;
+
+    MetricKind get_metric() const override { return metric; }
 
     /**
      * @brief Computes the Gross-Pitaevskii energy functional value.
@@ -277,8 +293,9 @@ class CoarseOracleBase : public OracleBase<dim>
 public:
     static constexpr const char* id = "C";
     // TODO: abuse of notation: Galerkin condition vs. metric used for the shift w, dot product <w,.> and coarse condition
-    static constexpr auto metric = CoarseMetric::NONE;
     using OracleBase<dim>::OracleBase;
+
+    MetricKind get_metric() const override { return MetricKind::NONE; }
 
     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
     {
@@ -305,8 +322,14 @@ class MassCoarseOracle : public CoarseOracleBase<dim>
 {
 public:
     static constexpr const char* id = "MC";
-    static constexpr auto metric = CoarseMetric::MASS;
-    using CoarseOracleBase<dim>::CoarseOracleBase;
+    static constexpr auto metric = MetricKind::MASS;
+
+    MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
+        : CoarseOracleBase<dim>(problem_, beta_, options_)
+        , M_inv(this->M, options_) // Specialized member
+    {}
+
+    MetricKind get_metric() const override { return metric; }
 
     double value(const Vector<double>& x) const final
     {
@@ -320,11 +343,13 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
-        coarse::mass::gradient(this->M, this->M_inv, this->A, x, this->m_phi, this->m_w, output);
+        coarse::mass::gradient(this->M, M_inv, this->A, x, this->m_phi, this->m_w, output);
 
-        return this->M_inv.control().last_step();
+        return M_inv.control().last_step();
     }
 
+private:
+    InverseOpType M_inv;
 };
 
 
@@ -334,8 +359,22 @@ class MassCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim>
 {
 public:
     static constexpr const char* id = "MCA";
-    static constexpr auto metric = CoarseMetric::MASS;
-    using CoarseOracleBase<dim>::CoarseOracleBase;
+    static constexpr auto metric = MetricKind::MASS;
+
+    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
+        : CoarseOracleBase<dim>(problem_, beta_, options_)
+        , A_inv(this->A, options_) // Specialized member
+    {
+        A_inv.update_static(this->problem.get_A0());
+    }
+
+    MetricKind get_metric() const override { return metric; }
+
+    void update(const Vector<double>& x) const override
+    {
+        CoarseOracleBase<dim>::update(x); // Calls assembly
+        A_inv.update_dynamic(this->A.diagonal());
+    }
 
     double value(const Vector<double>& x) const final
     {
@@ -350,10 +389,13 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
-        coarse::mass::energy_adaptive_gradient(this->M, this->A_inv, x, this->m_phi, this->m_w, output);
+        coarse::mass::energy_adaptive_gradient(this->M, A_inv, x, this->m_phi, this->m_w, output);
 
         return this->A_inv.control().last_step();
     }
+
+private:
+    mutable InverseOpType A_inv;
 };
 
 
@@ -363,8 +405,10 @@ class FrobeniusCoarseOracle : public CoarseOracleBase<dim>
 {
 public:
     static constexpr const char* id = "FC";
-    static constexpr auto metric = CoarseMetric::FROBENIUS;
+    static constexpr auto metric = MetricKind::FROBENIUS;
     using CoarseOracleBase<dim>::CoarseOracleBase;
+
+    MetricKind get_metric() const override { return metric; }
 
     double value(const Vector<double>& x) const final
     {
@@ -380,8 +424,7 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
         // Compute the pure Frobenius gradient
-        coarse::frobenius::gradient(this->problem.get_M(), this->A,
-            x, this->m_phi, this->m_w, output);
+        coarse::frobenius::gradient(this->M, this->A, x, this->m_phi, this->m_w, output);
 
         return 0; // 0 iterations, as no Krylov solver is used
     }
@@ -394,8 +437,22 @@ class FrobeniusCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim>
 {
 public:
     static constexpr const char* id = "FCA";
-    static constexpr auto metric = CoarseMetric::FROBENIUS;
-    using CoarseOracleBase<dim>::CoarseOracleBase;
+    static constexpr auto metric = MetricKind::FROBENIUS;
+
+    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
+        : CoarseOracleBase<dim>(problem_, beta_, options_)
+        , A_inv(this->A, options_) // Specialized member
+    {
+            A_inv.update_static(this->problem.get_A0());
+    }
+
+    MetricKind get_metric() const override { return metric; }
+
+    void update(const Vector<double>& x) const override
+    {
+        CoarseOracleBase<dim>::update(x); // Calls assembly
+        A_inv.update_dynamic(this->A.diagonal());
+    }
 
     double value(const Vector<double>& x) const final
     {
@@ -417,6 +474,9 @@ public:
         // Return the number of Krylov iterations used by A_inv
         return this->A_inv.control().last_step();
     }
+
+private:
+    mutable InverseOpType A_inv;
 };
 
 } // namespace gpe

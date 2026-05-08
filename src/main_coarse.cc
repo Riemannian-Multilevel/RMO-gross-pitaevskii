@@ -7,17 +7,13 @@
 using namespace dealii;
 using namespace gpe;
 
-// TODO: separate preconditioners for gradient descent, and inverse of M (coarse gradients)
-using OperatorType   = LinearCombination<SparseMatrix<double>, Vector<double>>;
-using InverseOpType  = PreconditionInverse<OperatorType, SparseMatrix<double>>;
-
 
 template <int dim>
 struct ContextMultiLevel
 {
     ContextMultiLevel(const OracleBase<dim>& O_descent,
                       const OracleBase<dim>& O_tilt, const OracleBase<dim>& O_tilt_coarse,
-                      const CoarseOracleBase<dim>& O_coarse,
+                      CoarseOracleBase<dim>& O_coarse,
                       const LinearTransferBase& transfer,
                       const ManifoldTransferBase& point_transfer,
                       const VectorTransportBase& vector_transport)
@@ -31,7 +27,8 @@ struct ContextMultiLevel
     const OracleBase<dim>& O_descent;               // Oracle for gradient descent on fine level
     const OracleBase<dim>& O_tilt;                  // Oracle for coarse correction term on fine level
     const OracleBase<dim>& O_tilt_coarse;           // Oracle for coarse correction term on coarse level
-    const CoarseOracleBase<dim>& O_coarse;          // Oracle for coarse model
+    // TODO: const correctness (update_parameters) - calculation of tilt term inside CoarseOracleBase
+    CoarseOracleBase<dim>& O_coarse;          // Oracle for coarse model
 
     const LinearTransferBase& transfer;             // Linear interpolation with Galerkin condition
     const ManifoldTransferBase& point_transfer;     // Point transfer operator
@@ -47,7 +44,7 @@ struct ExperimentSingleLevel
         : m_solver(O_descent), m_options(options)
     {}
 
-    void cycle(const Vector<double>& x0, std::ostream os)
+    void cycle(const Vector<double>& x0, std::ostream& os)
     {
         m_solver.cycle(x0, os, m_options);
     }
@@ -58,30 +55,42 @@ private:
 };
 
 
-template <int dim, typename TiltOracle>
+template <int dim>
 struct ExperimentMultiLevel
 {
     ExperimentMultiLevel(ContextMultiLevel<dim> ctx,
-                         DescentOptions options, DescentOptions options_coarse)
+                         DescentOptions options,
+                         DescentOptions options_coarse)
         : model(ctx.O_tilt_coarse, ctx.O_tilt, ctx.O_coarse, ctx.point_transfer, ctx.vector_transport)
         , solver(ctx.O_descent, model)
         , m_options(options)
         , m_options_coarse(options_coarse)
     {}
 
-    void cycle(const Vector<double>& x0, std::ostream os,
+    void cycle(const Vector<double>& x0, std::ostream& os,
                double kappa, double eps, unsigned coarse_every)
     {
         solver.cycle(x0, os, m_options, m_options_coarse, kappa, eps, coarse_every);
     }
 
 private:
-    CoarseModel<dim, TiltOracle> model;
-    FullApproximationScheme<dim, TiltOracle> solver;
+    CoarseModel<dim> model;
+    FullApproximationScheme<dim> solver;
     DescentOptions m_options;
     DescentOptions m_options_coarse;
 };
 
+void cat_file(std::string filename)
+{
+    std::ifstream inFile(filename);
+
+    if (inFile) {
+        // Use rdbuf() to send the file buffer directly to cout
+        std::cout << inFile.rdbuf();
+    } else {
+        std::cerr << "Error: Could not open file for reading.\n";
+    }
+}
 
 int main(int argc, char* argv[])
 {
@@ -162,38 +171,79 @@ int main(int argc, char* argv[])
             const auto& M_fine = GP_fine.get_M();
             auto M_inv_fine = InverseOpType(M_fine, options_slv);
 
+            // Starting values (non-zero) and cycle
+            Vector<double> x0(GP_fine.n_dofs());
+            x0 = 1.0;
 
-            // Set up experiments
-            // TODO: factory based on enums (option_types.h) <- identical constructor signature
-            // Function evaluation
-            MassOracle<dim> oracle_mass_coarse(problem_coarse, options.beta, options_slv_coarse);
-            MassOracle<dim> oracle_mass_fine(problem_fine, options.beta, options_slv);
-            EnergyOracle<dim> oracle_energy_coarse(problem_coarse, options.beta, options_slv_coarse);
-            EnergyOracle<dim> oracle_energy_fine(problem_fine, options.beta, options_slv);
-            FrobeniusOracle<dim> oracle_frobenius_coarse(problem_coarse, options.beta, options_slv_coarse);
-            FrobeniusOracle<dim> oracle_frobenius_fine(problem_fine, options.beta, options_slv);
+            // Oracle for fine level descent
+            EnergyOracle<dim> o_descent(problem_fine, options.beta, options_slv);
 
-            // Coarse models
-            MassCoarseOracle<dim> oracle_mass_coarse_model(problem_coarse, options.beta, options_slv_coarse);
-            MassCoarseOracleEnergyAdaptive<dim> oracle_mass_ea_coarse_model(problem_coarse, options.beta, options_slv_coarse);
-            FrobeniusCoarseOracle<dim> oracle_frobenius_coarse_model(problem_coarse, options.beta, options_slv_coarse);
-            FrobeniusCoarseOracleEnergyAdaptive<dim> oracle_frobenius_ea_coarse_model(problem_coarse, options.beta, options_slv_coarse);
+            // Oracle for correction term
+            std::unique_ptr<OracleBase<dim>>       o_tilt         = nullptr;
+            std::unique_ptr<OracleBase<dim>>       o_tilt_coarse  = nullptr;
+            std::unique_ptr<CoarseOracleBase<dim>> o_coarse_model = nullptr;
 
-            // Operators (standard Galerkin condition)
-            LinearTransferMatrix<dim> transfer(dofs_coarse, dofs_fine, constraints_coarse, constraints_fine);
-            ManifoldTransfer<OperatorType> point_transfer(transfer, M_coarse, M_fine);
-            MassProjectionTransport<OperatorType> proj_mass_transport(transfer, M_coarse, M_fine);
-            FrobeniusProjectionTransport<OperatorType> proj_frobenius_transport(transfer, M_coarse, M_fine);
-            DifferentialTransport<OperatorType> diff_transport(point_transfer, M_coarse, M_fine);
+            if (options_fas.metric_t == MetricKind::NONE) {
+                ExperimentSingleLevel<dim>(o_descent, options_gd).cycle(x0, std::cout);
+                return;
+            }
+            if (options_fas.metric_t == MetricKind::MASS) {
+                o_tilt         = std::make_unique<MassOracle<dim>>(problem_fine, options.beta, options_slv);
+                o_tilt_coarse  = std::make_unique<MassOracle<dim>>(problem_coarse, options.beta, options_slv_coarse);
+                o_coarse_model = std::make_unique<MassCoarseOracleEnergyAdaptive<dim>>(problem_coarse, options.beta, options_slv_coarse);
+            }
+            else if (options_fas.metric_t == MetricKind::FROBENIUS) {
+                o_tilt         = std::make_unique<FrobeniusOracle<dim>>(problem_fine, options.beta, options_slv);
+                o_tilt_coarse  = std::make_unique<FrobeniusOracle<dim>>(problem_coarse, options.beta, options_slv_coarse);
+                o_coarse_model = std::make_unique<FrobeniusCoarseOracleEnergyAdaptive<dim>>(problem_coarse, options.beta, options_slv_coarse);
+            } else {
+                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+            }
 
-            // Operators (mass Galerkin condition)
-            MassTransfer<dim,LinearTransferMatrix<dim>,OperatorType,InverseOpType> mass_transfer(
+            // Manifold transfer depending on Galerkin condition
+            std::unique_ptr<LinearTransferBase>   transfer       = nullptr;
+            std::unique_ptr<ManifoldTransferBase> point_transfer = nullptr;
+
+            if (options_fas.interpol_t == Interpolate::NONE) {
+                transfer       = std::make_unique<LinearTransferMatrix<dim>>(dofs_coarse, dofs_fine, constraints_coarse, constraints_fine);
+                point_transfer = std::make_unique<ManifoldTransfer<OperatorType>>(*transfer, M_coarse, M_fine);
+            }
+            else if (options_fas.interpol_t == Interpolate::MASS) {
+                transfer       = std::make_unique<MassTransfer<dim,LinearTransferMatrix<dim>,OperatorType,InverseOpType>>(
                 dofs_coarse, dofs_fine, constraints_coarse, constraints_fine, M_fine, M_inv_coarse);
-            ManifoldTransfer<OperatorType> mass_point_transfer(mass_transfer, M_coarse, M_fine);
-            MassProjectionTransport<OperatorType> mass_proj_mass_transport(mass_transfer, M_coarse, M_fine);
-            FrobeniusProjectionTransport<OperatorType> mass_proj_frobenius_transport(mass_transfer, M_coarse, M_fine);
-            DifferentialTransport<OperatorType> mass_diff_transport(mass_point_transfer, M_coarse, M_fine);
+                point_transfer = std::make_unique<ManifoldTransfer<OperatorType>>(*transfer, M_coarse, M_fine);
+            }
+            else {
+              throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+            }
 
+            // Vector transport operators
+            std::unique_ptr<VectorTransportBase> vector_transport = nullptr;
+
+            if (options_fas.transport_t == Transport::DIFFERENTIAL) {
+                vector_transport = std::make_unique<DifferentialTransport<OperatorType>>(*point_transfer, M_coarse, M_fine);
+            }
+            else if (options_fas.transport_t == Transport::MASS) {
+                vector_transport = std::make_unique<MassProjectionTransport<OperatorType>>(*transfer, M_coarse, M_fine);
+            }
+            else if (options_fas.transport_t == Transport::FROBENIUS) {
+                vector_transport = std::make_unique<FrobeniusProjectionTransport<OperatorType>>(*transfer, M_coarse, M_fine);
+            }
+            else {
+                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+            }
+
+            ContextMultiLevel<dim> context(
+                o_descent,           // Fine descent oracle (stack-allocated)
+                *o_tilt,             // Fine tilt oracle (heap-allocated)
+                *o_tilt_coarse,      // Coarse tilt oracle (heap-allocated)
+                *o_coarse_model,     // Coarse model qk (heap-allocated)
+                *transfer,           // Linear transfer
+                *point_transfer,     // Point transfer
+                *vector_transport    // Vector transport
+            );
+            ExperimentMultiLevel<dim>(context, options_gd, options_gd_coarse).cycle(x0, std::cout,
+                options_fas.kappa, options_fas.eps, options_fas.coarse_every);
         });
     }
     catch (std::exception& e) {

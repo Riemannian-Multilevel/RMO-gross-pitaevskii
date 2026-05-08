@@ -50,15 +50,12 @@ enum class Potential
     SQUARE
 };
 
-enum class CoarseMetric
+// TODO: Merge CoarseMetric + SmoothKind -> MetricKind
+//       -> use two instances for smoother metric and coarse metric
+enum class MetricKind
 {
     NONE,   // Galerkin condition not fulfilled
     FROBENIUS,
-    MASS
-};
-
-enum class SmoothKind
-{
     MASS,
     ENERGY_ADAPTIVE
 };
@@ -131,11 +128,11 @@ struct FAS_Options
     unsigned coarse_every;  // minimum number of fine steps before coarse step is taken
     bool coarse_energy_adaptive;  // solve coarse model with energy-adaptive gradient descent
 
-    CoarseMetric metric_t;  // type of coarse oracle (shift metric, gradient metric)
+    MetricKind metric_t;    // type of coarse oracle (shift metric, gradient metric)
+    MetricKind smooth_t;    // type of fine oracle (gradient descent on fine level)
     Transport transport_t;  // type of vector transport
     Interpolate interpol_t; // galerkin condition on linear interpolator
                             // should be consistent with metric_t
-    SmoothKind smooth_t;    // type of fine oracle (gradient descent on fine level)
 };
 
 } // namespace gpe
