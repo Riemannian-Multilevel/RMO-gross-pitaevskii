@@ -124,6 +124,12 @@ public:
         vmult_add(dst, src);
     }
 
+    void Tvmult(VectorType &dst, const VectorType &src) const
+    {
+        dst = 0.0;
+        Tvmult_add(dst, src);
+    }
+
     /**
      * @brief Matrix-vector addition: \f$ y = y + Ax \f$.
      * Loops over all stored components and adds their contributions to @p dst.
@@ -138,6 +144,18 @@ public:
             const auto* matrix = pair.second;
 
             matrix->vmult(m_vector, src);
+            dst.add(weight, m_vector);
+        }
+    }
+
+    void Tvmult_add(VectorType &dst, const VectorType &src) const
+    {
+        for (const auto &pair : m_components)
+        {
+            const double weight = pair.first;
+            const auto* matrix = pair.second;
+
+            matrix->Tvmult(m_vector, src);
             dst.add(weight, m_vector);
         }
     }

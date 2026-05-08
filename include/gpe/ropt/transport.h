@@ -466,7 +466,7 @@ public:
      * Version V:  R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
      */
     virtual void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                                    const Vector<double>& v_fine, Vector<double>& dst) const
+                                    const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // 1. Compute M_h * v_fine
         Vector<double> M_v(transfer.n_fine());

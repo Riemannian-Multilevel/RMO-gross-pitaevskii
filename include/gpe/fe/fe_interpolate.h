@@ -312,13 +312,13 @@ public:
 
     void Tfine(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
-        _transfer.Tfine(dst_coarse, src_fine);
+        _transfer.Tfine(src_fine, dst_coarse);
     }
 
     void Tcoarse(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
         Vector<double> MH_inv_v(_transfer.n_coarse());
-        _M_inv_coarse.Tvmult(MH_inv_v, src_coarse);  // symmetric
+        _M_inv_coarse.vmult(MH_inv_v, src_coarse);  // symmetric
 
         Vector<double> TIh_MH_inv_v(_transfer.n_fine());
         _transfer.Tcoarse(MH_inv_v, TIh_MH_inv_v);
