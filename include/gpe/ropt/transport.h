@@ -410,6 +410,215 @@ private:
     const ManifoldTransferBase& point_transfer;
 };
 
+
+/**
+ * @brief Adjoint-based Vector Transport implementing Version II and V Restrictions.
+ *
+ * This class computes the exact mathematical adjoint of the corresponding
+ * prolongation maps in the mass-weighted metric.
+ * * Requires inverse matrix operators to solve the dense mass systems.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+class AdjointRestrictionTransport : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "V2Restr";
+
+    AdjointRestrictionTransport(const LinearTransferBase& I,
+                                const ManifoldTransferBase& pt,
+                                const MatrixType& M_coarse,
+                                const MatrixType& M_fine,
+                                const InverseMatrixType& Minv_coarse)
+        : transfer(I), point_transfer(pt),
+          M_coarse(M_coarse),
+          M_fine(M_fine),
+          Minv_coarse(Minv_coarse)
+    {}
+
+    void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
+                              Vector<double>& dst) const
+    {
+        point_transfer.diff_prolongation(y_coarse, v_coarse, dst);
+    }
+
+    /**
+     * @brief Prolongs a tangent vector by computing the differential of the prolongation map.
+     * This two-step method computes the differential and then performs a corrective
+     * vector transport to the fine target space:
+     * $$\hat{v} = D p(x_H)[v_H] \quad \in T_{p(x_H)} \mathcal{S}_h$$
+     * $$\mathcal{T}_{H \to h}(v_H) = P_{T_y \mathcal{S}_h} (\hat{v})$$
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Differential D_p(x): T_x S_H -> T_p(x) S_h
+        Vector<double> D_px(point_transfer.n_fine());
+        vector_prolongation(y_coarse, v_coarse, D_px);
+
+        // Vector transport T_p(x) S_h -> T_y S_h
+        // TODO: which metric to choose for orthogonal projection?
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
+    }
+
+    /**
+     * @brief Restricts a tangent vector using Version II or Version V.
+     * * Version II: R(v) = (I - \psi \psi^T M_H) M_H^{-1} (I_H^h)^T M_h v
+     * Version V:  R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
+     */
+    virtual void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+                                    const Vector<double>& v_fine, Vector<double>& dst) const
+    {
+        // 1. Compute M_h * v_fine
+        Vector<double> M_v(transfer.n_fine());
+        M_fine.vmult(M_v, v_fine);
+
+        // 2. Apply transpose of prolongation: (I_H^h)^T (M_h * v_fine)
+        // Note: Maps from fine space to coarse space.
+        Vector<double> IT_M_v(transfer.n_coarse());
+        transfer.Tfine(M_v, IT_M_v);
+
+        // 3. Apply inverse coarse mass matrix: M_H^{-1} * IT_M_v
+        Vector<double> w(transfer.n_coarse());
+        Minv_coarse.vmult(w, IT_M_v);
+
+        // 4. Project onto target tangent space T_\psi S_H
+        ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, w, dst);
+    }
+
+protected:
+    const LinearTransferBase& transfer;
+    const ManifoldTransferBase& point_transfer;
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& Minv_coarse;
+};
+
+
+/**
+ * @brief Adjoint-based Vector Transport implementing Version V Restriction.
+ *
+ * Formula: R(v) = (1 / ||I_H^h \psi||_{M_h}) * VersionII(v)
+ * Inherits the base calculation from Version2RestrictionTransport.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+class AdjointRestrictionTransportScaled : public AdjointRestrictionTransport<MatrixType, InverseMatrixType>
+{
+public:
+    static constexpr const char* id = "V5restr";
+    using AdjointRestrictionTransport<MatrixType, InverseMatrixType>::AdjointRestrictionTransport;
+
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+                            const Vector<double>& v_fine, Vector<double>& dst) const final
+    {
+        // 1. Execute the base Version II algorithm to populate 'dst'
+        AdjointRestrictionTransport<MatrixType, InverseMatrixType>::vector_restriction(y_coarse, x_fine, v_fine, dst);
+
+        // 2. Compute the Version V scaling factor: ||I_H^h \psi||_{M_h}
+        // Note: \psi is y_coarse
+        Vector<double> p_psi(this->transfer.n_fine());
+        this->transfer.to_fine_mesh(y_coarse, p_psi); // I_H^h \psi
+
+        Vector<double> M_p_psi(this->transfer.n_fine());
+        this->M_fine.vmult(M_p_psi, p_psi);
+
+        const double n_h = std::sqrt(p_psi * M_p_psi);
+        AssertThrow(n_h > 0, dealii::ExcInternalError("Norm of prolonged base point must be > 0"));
+
+        dst /= n_h;
+    }
+};
+
+/**
+ * @brief Adjoint-based Vector Transport implementing Version III Prolongation.
+ *
+ * Computes the exact adjoint of the restriction map differential.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+class AdjointProlongationTransport : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "V3Prolong";
+
+    AdjointProlongationTransport(const LinearTransferBase& I,
+                                 const ManifoldTransferBase& pt,
+                                 const MatrixType& M_coarse,
+                                 const MatrixType& M_fine,
+                                 const InverseMatrixType& Minv_fine)
+        : transfer(I), point_transfer(pt),
+          M_coarse(M_coarse),
+          M_fine(M_fine),
+          Minv_fine(Minv_fine)
+    {}
+
+    /**
+     * @brief Prolongs a tangent vector using Version III.
+     * * P(v) = (1 / ||I_h^H \phi||_{M_H}) * (I - \phi \phi^T M_h) M_h^{-1} (I_h^H)^T M_H v
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // 1. Compute M_H * v_coarse
+        Vector<double> M_v(transfer.n_coarse());
+        M_coarse.vmult(M_v, v_coarse);
+
+        // 2. Apply transpose of restriction: (I_h^H)^T (M_H * v_coarse)
+        // Note: Maps from coarse space to fine space.
+        Vector<double> IT_M_v(transfer.n_fine());
+        transfer.Tcoarse(M_v, IT_M_v);
+
+        // 3. Apply inverse fine mass matrix: M_h^{-1} * IT_M_v
+        Vector<double> w(transfer.n_fine());
+        Minv_fine.vmult(w, IT_M_v);
+
+        // 4. Project onto target tangent space T_\phi S_h
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, w, dst);
+
+        // 5. Apply Version III scaling factor
+        Vector<double> r_phi(transfer.n_coarse());
+        transfer.to_coarse_mesh(x_fine, r_phi); // I_h^H \phi
+
+        Vector<double> M_r_phi(transfer.n_coarse());
+        M_coarse.vmult(M_r_phi, r_phi);
+
+        const double n_H = std::sqrt(r_phi * M_r_phi);
+        AssertThrow(n_H > 0, dealii::ExcInternalError("Norm of restricted base point must be > 0"));
+
+        dst /= n_H;
+    }
+
+    void vector_restriction(const Vector<double>& x_fine, const Vector<double>& v_fine,
+                            Vector<double>& dst) const
+    {
+        point_transfer.diff_restriction(x_fine, v_fine, dst);
+    }
+
+    /**
+     * @brief Restricts a tangent vector by computing the differential of the restriction map.
+     * This two-step method computes the differential and then performs a corrective
+     * vector transport to the coarse target space:
+     * $$\hat{v} = D r(y_h)[v_h] \quad \in T_{r(y_h)} \mathcal{S}_H$$
+     * $$\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})$$
+     */
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+        const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Differential D_r(y): T_y S_h -> T_r(y) S_H
+        Vector<double> D_ry(point_transfer.n_coarse());
+        vector_restriction(x_fine, v_fine, D_ry);
+
+        // Vector transport T_r(y) S_H -> T_x S_H
+        // TODO: which metric to choose for orthogonal projection?
+        ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, D_ry, dst);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransferBase& point_transfer;
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& Minv_fine;
+};
+
 } // namespace gpe
 
 #endif //GPE_GRID_OPERATORS_H

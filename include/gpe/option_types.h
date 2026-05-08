@@ -64,7 +64,10 @@ enum class Transport
 {
     FROBENIUS,
     MASS,
-    DIFFERENTIAL
+    DIFFERENTIAL,
+    ADJOINT_RESTRICTION,
+    ADJOINT_RESTRICTION_SCALED,
+    ADJOINT_PROLONGATION
 };
 
 enum class Interpolate

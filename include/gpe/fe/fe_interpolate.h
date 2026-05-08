@@ -24,6 +24,18 @@ public:
 
     virtual void to_fine_mesh(const Vector<double>&, Vector<double>&) const = 0;
 
+    // Transpose of to_coarse_mesh() (for matrix implementations)
+    virtual void Tcoarse(const Vector<double>&, Vector<double>&) const
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
+    // Transpose of to_fine_mesh()
+    virtual void Tfine(const Vector<double>&, Vector<double>&) const
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
     virtual unsigned n_coarse() const = 0;
     virtual unsigned n_fine() const = 0;
 };
@@ -133,11 +145,28 @@ public:
         constraints_c.distribute(dst_coarse);
     }
 
+    void Tfine(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
+    {
+        P.Tvmult(dst_coarse, src_fine);
+
+        constraints_c.distribute(dst_coarse);  // needed?
+    }
+
+    void Tcoarse(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
+    {
+        R.Tvmult(dst_fine, src_coarse);
+
+        constraints_f.distribute(dst_fine);
+    }
+
     /** @brief Returns the number of degrees of freedom on the coarse grid. */
     unsigned int n_coarse() const override { return n_c; }
 
     /** @brief Returns the number of degrees of freedom on the fine grid. */
     unsigned int n_fine() const override { return n_f; }
+
+    const SparseMatrix<double>& get_P() { return P; }
+    const SparseMatrix<double>& get_R() { return R; }
 
 private:
     unsigned int n_c;
@@ -254,7 +283,6 @@ template <int dim, typename TransferType, typename MatrixType, typename InverseM
 class MassTransfer : public LinearTransferBase
 {
 public:
-
     MassTransfer(const dealii::DoFHandler<dim>& dof_coarse,
                  const dealii::DoFHandler<dim>& dof_fine,
                  const dealii::AffineConstraints<double>& constraints_coarse,
@@ -280,6 +308,22 @@ public:
     void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
         _transfer.to_fine_mesh(src_coarse, dst_fine);
+    }
+
+    void Tfine(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
+    {
+        _transfer.Tfine(dst_coarse, src_fine);
+    }
+
+    void Tcoarse(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
+    {
+        Vector<double> MH_inv_v(_transfer.n_coarse());
+        _M_inv_coarse.Tvmult(MH_inv_v, src_coarse);  // symmetric
+
+        Vector<double> TIh_MH_inv_v(_transfer.n_fine());
+        _transfer.Tcoarse(MH_inv_v, TIh_MH_inv_v);
+
+        _M_fine.vmult(dst_fine, TIh_MH_inv_v);       // symmetric
     }
 
     unsigned n_coarse() const override { return _transfer.n_coarse(); };
