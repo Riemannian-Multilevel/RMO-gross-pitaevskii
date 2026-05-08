@@ -231,11 +231,11 @@ int main(int argc, char* argv[])
             }
             else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION) {
                 vector_transport = std::make_unique<AdjointRestrictionTransport<OperatorType,InverseOpType>>(
-                    *transfer, *point_transfer, M_coarse, M_fine, M_inv_coarse);
+                    *transfer, M_coarse, M_fine, M_inv_coarse);
             }
             else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION_SCALED) {
                 vector_transport = std::make_unique<AdjointRestrictionTransportScaled<OperatorType,InverseOpType>>(
-                    *transfer, *point_transfer, M_coarse, M_fine, M_inv_coarse);
+                    *transfer, M_coarse, M_fine, M_inv_coarse);
             }
             else if (options_fas.transport_t == Transport::ADJOINT_PROLONGATION) {
                 vector_transport = std::make_unique<AdjointProlongationTransport<OperatorType,InverseOpType>>(
