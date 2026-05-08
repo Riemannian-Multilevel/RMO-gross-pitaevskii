@@ -425,39 +425,27 @@ public:
     static constexpr const char* id = "V2Restr";
 
     AdjointRestrictionTransport(const LinearTransferBase& I,
-                                const ManifoldTransferBase& pt,
                                 const MatrixType& M_coarse,
                                 const MatrixType& M_fine,
                                 const InverseMatrixType& Minv_coarse)
-        : transfer(I), point_transfer(pt),
+        : transfer(I),
           M_coarse(M_coarse),
           M_fine(M_fine),
           Minv_coarse(Minv_coarse)
     {}
 
-    void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
-                              Vector<double>& dst) const
-    {
-        point_transfer.diff_prolongation(y_coarse, v_coarse, dst);
-    }
-
     /**
-     * @brief Prolongs a tangent vector by computing the differential of the prolongation map.
-     * This two-step method computes the differential and then performs a corrective
-     * vector transport to the fine target space:
-     * $$\hat{v} = D p(x_H)[v_H] \quad \in T_{p(x_H)} \mathcal{S}_h$$
-     * $$\mathcal{T}_{H \to h}(v_H) = P_{T_y \mathcal{S}_h} (\hat{v})$$
+     * @brief Version II Prolongation: P(v) = Pi_\phi ( I_H^h v )
      */
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    virtual void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                                     const Vector<double>& v_coarse, Vector<double>& dst) const override
     {
-        // Differential D_p(x): T_x S_H -> T_p(x) S_h
-        Vector<double> D_px(point_transfer.n_fine());
-        vector_prolongation(y_coarse, v_coarse, D_px);
+        // 1. Linear prolongation to ambient space
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v_coarse, Iv);
 
-        // Vector transport T_p(x) S_h -> T_y S_h
-        // TODO: which metric to choose for orthogonal projection?
-        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
+        // 2. Orthogonal projection onto the target tangent space
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
     }
 
     /**
@@ -473,7 +461,6 @@ public:
         M_fine.vmult(M_v, v_fine);
 
         // 2. Apply transpose of prolongation: (I_H^h)^T (M_h * v_fine)
-        // Note: Maps from fine space to coarse space.
         Vector<double> IT_M_v(transfer.n_coarse());
         transfer.Tfine(M_v, IT_M_v);
 
@@ -487,7 +474,6 @@ public:
 
 protected:
     const LinearTransferBase& transfer;
-    const ManifoldTransferBase& point_transfer;
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
     const InverseMatrixType& Minv_coarse;
@@ -507,6 +493,29 @@ public:
     static constexpr const char* id = "V5restr";
     using AdjointRestrictionTransport<MatrixType, InverseMatrixType>::AdjointRestrictionTransport;
 
+    /**
+      * @brief Version V Prolongation: Dp(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
+      */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // 1. Execute base Version II prolongation
+        AdjointRestrictionTransport<MatrixType, InverseMatrixType>::vector_prolongation(x_fine, y_coarse, v_coarse, dst);
+
+        // 2. Compute the version V scaling factor
+        Vector<double> p_psi(this->transfer.n_fine());
+        this->transfer.to_fine_mesh(y_coarse, p_psi);
+
+        Vector<double> M_p_psi(this->transfer.n_fine());
+        this->M_fine.vmult(M_p_psi, p_psi);
+
+        const double n_h = std::sqrt(p_psi * M_p_psi);
+        dst /= n_h;
+    }
+
+    /**
+     * @brief Version V Restriction: R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
+     */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const final
     {
@@ -527,6 +536,7 @@ public:
         dst /= n_h;
     }
 };
+
 
 /**
  * @brief Adjoint-based Vector Transport implementing Version III Prolongation.
