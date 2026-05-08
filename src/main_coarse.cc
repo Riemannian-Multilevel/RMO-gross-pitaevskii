@@ -237,10 +237,6 @@ int main(int argc, char* argv[])
                 vector_transport = std::make_unique<AdjointRestrictionTransportScaled<OperatorType,InverseOpType>>(
                     *transfer, M_coarse, M_fine, M_inv_coarse);
             }
-            else if (options_fas.transport_t == Transport::ADJOINT_PROLONGATION) {
-                vector_transport = std::make_unique<AdjointProlongationTransport<OperatorType,InverseOpType>>(
-                    *transfer, *point_transfer, M_coarse, M_fine, M_inv_fine);
-            }
             else {
                 throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
             }

@@ -67,7 +67,6 @@ enum class Transport
     DIFFERENTIAL,
     ADJOINT_RESTRICTION,
     ADJOINT_RESTRICTION_SCALED,
-    ADJOINT_PROLONGATION
 };
 
 enum class Interpolate
