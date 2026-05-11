@@ -189,6 +189,52 @@ private:
 };
 
 
+// Operator which implements the transpose of a matrix or linear operator
+// vmult(), vmult_add()   <-  Tvmult(), Tvmult_add()
+// Tvmult(), Tvmult_add() <-  vmult(), vmult_add()
+template <typename OperatorType, typename VectorType>
+class TransposeMatrix
+{
+public:
+    TransposeMatrix(const OperatorType& matrix)
+        : m_matrix(matrix)
+    {}
+
+    void vmult_add(VectorType &dst, const VectorType &src) const
+    {
+        m_matrix.Tvmult_add(dst, src);
+    }
+
+    void vmult(VectorType &dst, const VectorType &src) const
+    {
+        m_matrix.Tvmult_add(dst, src);
+    }
+
+    void Tvmult_add(VectorType &dst, const VectorType &src) const
+    {
+        m_matrix.vmult_add(dst, src);
+    }
+
+    void Tvmult(VectorType &dst, const VectorType &src) const
+    {
+        m_matrix.vmult(dst, src);
+    }
+
+    global_dof_index m() const
+    {
+        return m_matrix.m();
+    }
+
+    global_dof_index n() const
+    {
+        return m_matrix.n();
+    }
+
+private:
+    const OperatorType& m_matrix;
+};
+
+
 /**
  * @brief A wrapper class that represents the inverse of a linear operator.
  *
@@ -247,7 +293,7 @@ public:
      * @throws std::invalid_argument If an unsupported SolverMethod is provided.
      */
     template <typename VectorType>
-    void vmult(VectorType &dst, const VectorType &rhs) const
+    void vmult(const OperatorType& matrix, VectorType &dst, const VectorType &rhs) const
     {
         dst = 0.0;
         const double rhs_norm = rhs.l2_norm();
@@ -259,35 +305,37 @@ public:
             case SolverMethod::GMRES:
                 {
                     dealii::SolverGMRES<VectorType> solver(m_control);
-                    solver.solve(m_matrix, dst, rhs, m_precond);
+                    solver.solve(matrix, dst, rhs, m_precond);
                 }
                 break;
             case SolverMethod::MINRES:
                 {
                     dealii::SolverMinRes<VectorType> solver(m_control);
-                    solver.solve(m_matrix, dst, rhs, m_precond);
+                    solver.solve(matrix, dst, rhs, m_precond);
                 }
                 break;
             case SolverMethod::CG:
                 {
                     dealii::SolverCG<VectorType> solver(m_control);
-                    solver.solve(m_matrix, dst, rhs, m_precond);
+                    solver.solve(matrix, dst, rhs, m_precond);
                 }
                 break;
             default:
                 throw std::invalid_argument("Unknown SolverMethod");
         }
+    }
 
-        // catch (dealii::SolverControl::NoConvergence &e) {
-        //     // Log the warning but allow the descent algorithm to continue.
-        //     // A partial solve might still provide a valid descent direction!
-        //     std::cerr << "\n[Warning] Krylov solver did not converge!"
-        //               << "\n  Method:    " << static_cast<int>(method)
-        //               << "\n  Steps:     " << e.last_step
-        //               << "\n  Residual:  " << e.last_residual
-        //               << "\n  Tolerance: " << solver_control.tolerance()
-        //               << std::endl;
-        // }
+    template <typename VectorType>
+    void vmult(VectorType& dst, const VectorType& rhs) const
+    {
+        vmult(m_matrix, dst, rhs);
+    }
+
+    template <typename VectorType>
+    void Tvmult(VectorType& dst, const VectorType& rhs) const
+    {
+        // solve() applies vmult(), so we need to use a vmult() -> Tvmult() wrapper
+        vmult(TransposeMatrix(m_matrix), dst, rhs);
     }
 
     /** @brief Returns the solver control object used in the last solve. */
@@ -309,7 +357,7 @@ private:
 
 
 /**
- * @brief A generic, type-erasing manager for linear solvers and preconditioners.
+ * @brief An orchestrator for linear solvers and preconditioners.
  *
  * This class isolates the deal.II Krylov solver template dispatching from the
  * physical problem definition. It handles both static preconditioners (built once)
@@ -384,23 +432,34 @@ public:
         }
     }
 
-    /** @brief Solves op * dst = src. */
-    void vmult(VectorType& dst, const VectorType& src) const
+    void vmult(const OperatorType& matrix, VectorType& dst, const VectorType& src) const
     {
         // Type erasure: select solve_with template argument, based on preconditioner argument
         switch (m_precond_type) {
             case Precondition::SPARSE_ILU:
-                solve_with(m_op, dst, src, ilu_precond);
+                solve_with(matrix, dst, src, ilu_precond);
                 break;
             case Precondition::DIAGONAL:
-                solve_with(m_op, dst, src, jacobi_precond);
+                solve_with(matrix, dst, src, jacobi_precond);
                 break;
             case Precondition::NONE:
-                solve_with(m_op, dst, src, dealii::PreconditionIdentity());
+                solve_with(matrix, dst, src, dealii::PreconditionIdentity());
                 break;
             default:
                 throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
         }
+    }
+
+    /** @brief Solves op * dst = src. */
+    void vmult(VectorType& dst, const VectorType& src) const
+    {
+        vmult(m_op, dst, src);
+    }
+
+    /** @brief Solves transpose(op) * dst = src. */
+    void Tvmult(VectorType& dst, const VectorType& src) const
+    {
+        vmult(TransposeMatrix(m_op), dst, src);
     }
 
     /** @brief Returns the solver control object used in the last solve. */
