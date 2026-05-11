@@ -4,6 +4,7 @@
 #include <gpe/lac.h>
 #include <gpe/problem/gpe.h>
 #include <gpe/ropt/manifold.h>
+#include <gpe/ropt/transport.h>
 
 namespace gpe
 {
@@ -29,7 +30,8 @@ public:
 };
 
 
-// TODO: refactor into UnitMassSphere (<- Manifold) and GrossPitaevskiiOracle (<- A, M and inverses)
+// TODO: pure abstract base class for OracleBase (store 1 level of discretization) and CoarseOracleBase (store multiple)
+//       refactor into UnitMassSphere (<- Manifold) and GrossPitaevskiiOracle (<- A, M and inverses)
 /**
  * @brief Base Oracle for the Gross-Pitaevskii energy functional.
  * This class translates physical concepts (matrices and assembly) into optimization concepts
@@ -282,36 +284,153 @@ private:
 };
 
 
-// Coarse oracles provide some additional functionality, such as a shift vector (m_w), base coarse point (m_phi)
-// and methods for evaluating a coarse condition
-// TODO: instead of inheriting from OracleBase (which, in its current form, is fixed to a single level of discretization),
-//       define a constructor which allows a fine and coarse level of discretization.
-//       Then, the tilt vector w canm be computed directly inside an (implementation of) CoarseOracleBase.
-template <int dim>
-class CoarseOracleBase : public OracleBase<dim>
+// TODO: Inheritance from OracleBase?  -> retract(), directional_derivative (Armijo line search)
+//       CoarseOracleBase::update necessarily non-const ; OracleBase::update is const
+//
+// The gradient of the coarse model is used to find a descent direction dk.
+// Therefore, CoarseOracleBase should include update(), gradient() and (for line search) value methods.
+// A full approximation / multilevel scheme should build the descent direction based on this:
+//    grad (coarse) -> retract_inv_by_norm -> vector_prolongation
+template <int dim, typename TiltOracle>
+class CoarseOracleBase
 {
 public:
-    static constexpr const char* id = "C";
-    // TODO: abuse of notation: Galerkin condition vs. metric used for the shift w, dot product <w,.> and coarse condition
-    using OracleBase<dim>::OracleBase;
+    CoarseOracleBase(const GrossPitaevskiiProblem<dim>& problem,
+                     const GrossPitaevskiiProblem<dim>& problem_coarse,
+                     const ManifoldTransferBase& point_transfer,
+                     const VectorTransportBase& vector_transport,
+                     double beta, SolverOptions options, SolverOptions options_coarse)
+        : problem(problem), problem_coarse(problem_coarse), beta(beta)
+        , options(options), options_coarse(options_coarse)
+        , n(problem.n_dofs())
+        , n_coarse(problem_coarse.n_dofs())
+        , O(problem, beta, options)
+        , O_coarse(problem_coarse, beta, options_coarse)
+        , point_transfer(point_transfer)
+        , vector_transport(vector_transport)
+        , m_y(n_coarse)
+        , m_y_grad(n_coarse)
+        , m_x_grad(n)
+        , m_x_grad_restr(n_coarse)
+        , m_w(n_coarse)
+    {}
 
-    MetricKind get_metric() const override { return MetricKind::NONE; }
+    virtual ~CoarseOracleBase() = default;
+    virtual MetricKind get_metric() const { return MetricKind::NONE; }
 
-    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    void set_timer(const dealii::Timer& timer_new) const
     {
-        m_w = w_new;
-        m_phi = phi_new;
+        timer = timer_new;
     }
 
-    iteration::State residual(const Vector<double>& x) const final
+    // Compute parameters for coarse model
+    void update(const Vector<double>& x)
     {
-        return {.energy=this->value(x)};
+        AssertDimension(x.size(), n);
+
+        // Update state for fine oracle
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] fine: assemble matrix\n";
+#endif
+        O.update(x);
+
+        // Set base point for coarse model
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
+#endif
+        point_transfer.restriction(x, m_y);
+
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
+#endif
+        O_coarse.update(m_y);  // mutable state (non-linear factor Mpp)
+
+        // Compute coarse M-gradient
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id << "-coarse gradient\n";
+#endif
+        O_coarse.gradient(m_y, m_y_grad);
+
+        // Compute fine M-gradient
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
+#endif
+        O.gradient(x, m_x_grad);
+
+        // Compute restricted gradient
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector restriction\n";
+#endif
+        vector_transport.vector_restriction(m_y, x, m_x_grad, m_x_grad_restr);
+
+        // Compute correction term
+        m_w = m_y_grad;
+        m_w.add(-1.0, m_x_grad_restr);
     }
 
-protected:
-    Vector<double> m_w;
-    Vector<double> m_phi;
+    unsigned gradient(const Vector<double>&, Vector<double>&) const
+    {
+
+    }
+
+    iteration::State rsidual(const Vector<double>&) const
+    {
+
+    }
+
+private:
+    const GrossPitaevskiiProblem<dim>& problem, problem_coarse;
+    double beta;
+    SolverOptions options, options_coarse;
+    unsigned n, n_coarse;
+
+    // Coarse and fine level evaluation for correction vector w
+    TiltOracle O, O_coarse;
+
+    // Operators for transferring solutions and gradients
+    const ManifoldTransferBase& point_transfer;
+    const VectorTransportBase& vector_transport;
+
+    // Coarse model parameters
+    Vector<double> m_y;             // restricted point (base point for coarse model)
+    Vector<double> m_y_grad;        // gradient of restricted point
+    Vector<double> m_x_grad;        // fine gradient
+    Vector<double> m_x_grad_restr;  // restricted gradient
+    Vector<double> m_w;             // correction vector
+
+    // Benchmarking
+    mutable dealii::Timer timer;
 };
+
+// Coarse oracles provide a shift vector (m_w), base coarse point (m_phi)
+// TODO: instead of inheriting from OracleBase (which, in its current form, is fixed to a single level of discretization),
+//       define a constructor which allows a fine and coarse level of discretization.
+//       Then, the tilt vector w can be computed directly inside an (implementation of) CoarseOracleBase.
+// template <int dim>
+// class CoarseOracleBase : public OracleBase<dim>
+// {
+// public:
+//     static constexpr const char* id = "C";
+//     // TODO: abuse of notation: Galerkin condition vs. metric used for the shift w, dot product <w,.> and coarse condition
+//     using OracleBase<dim>::OracleBase;
+//
+//     MetricKind get_metric() const override { return MetricKind::NONE; }
+//
+//     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+//     {
+//         m_w = w_new;
+//         m_phi = phi_new;
+//     }
+//
+//     iteration::State residual(const Vector<double>& x) const final
+//     {
+//         return {.energy=this->value(x)};
+//     }
+//
+// protected:
+//     Vector<double> m_w;
+//     Vector<double> m_phi;
+// };
 
 
 // TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
