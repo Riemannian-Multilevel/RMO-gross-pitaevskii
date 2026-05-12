@@ -1,4 +1,4 @@
-#include <gpe/ropt/manifold.h>
+#include <gpe/main/model.h>
 #include <gpe/ropt/fas.h>
 #include <gpe/problem/oracle_coarse.h>
 #include <gpe/problem/gpe.h>

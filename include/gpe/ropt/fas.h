@@ -137,59 +137,12 @@ inline void coarse_solve(DescentOptions options_gd, Vector<double>& dst)
 }
 
 
-// Compute norms for coarse condition
-// TODO: the norm on the fine level is assumed to be consistent with the norm the coarse level
-//       if CoarseOracle(Base) supports two levels of discretization, this can be moved there
-inline CoarseCond coarse_norm(const Vector<double>& v, const Vector<double>& v_restr)
-{
-    AssertDimension(v.size(),n_fine);
-    AssertDimension(v_restr.size(),n_coarse);
-    CoarseCond cond;
-
-    if (qk.get_metric() == MetricKind::MASS) {
-#ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] fine: M-norm of gradient\n";
-#endif
-        const auto& M_fine = O_fine.get_M();
-
-        Vector<double> Mv(n_fine);
-        M_fine.vmult(Mv, v);
-        cond.norm_fine   = std::sqrt(v*Mv);
-
-#ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: M-norm of restricted gradient\n";
-#endif
-        const auto& M_coarse = O_coarse.get_M();
-
-        Vector<double> Mg_restr(n_coarse);
-        M_coarse.vmult(Mg_restr, v_restr);
-        cond.norm_coarse = std::sqrt(v_restr*Mg_restr);
-    }
-    else if (qk.get_metric() == MetricKind::FROBENIUS) {
-#ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] fine: F-norm of gradient\n";
-#endif
-        cond.norm_fine   = std::sqrt(v*v);
-
-#ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: F-norm of restricted gradient\n";
-#endif
-        cond.norm_coarse = std::sqrt(v_restr*v_restr);
-    }
-    else {
-        throw dealii::ExcNotImplemented("unknown metric for coarse model");
-    }
-
-    return cond;
-}
-
-
 template <int dim>
 class GradientDescent
 {
 public:
     // O_fine: oracle used for computing gradient descent steps on the fine level
-    GradientDescent(const GrossPitaevskiiOracle<dim>& O_fine)
+    GradientDescent(const OracleBase<dim>& O_fine)
         : O_fine(O_fine)
     {}
 
@@ -226,7 +179,7 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    const GrossPitaevskiiOracle<dim>& O_fine;
+    const OracleBase<dim>& O_fine;
 };
 
 

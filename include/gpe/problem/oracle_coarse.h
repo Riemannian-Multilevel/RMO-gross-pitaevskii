@@ -21,6 +21,8 @@ template <int dim, typename TiltOracle>
 class GrossPitaevskiiCoarseOracle : OracleBase
 {
 public:
+    static constexpr int dimension = dim;
+
     struct CoarseState
     {
         Vector<double> y;             // restricted point (base point for coarse model)

@@ -213,7 +213,7 @@ public:
      * @return GrossPitaevskiiProblem<dim> The assembled problem object.
      */
     template <typename Potential>
-    GrossPitaevskiiSystem<dim> problem(Potential&& V) const
+    GrossPitaevskiiSystem<dim> system(Potential&& V) const
     {
         const auto& dof_handler = space.get_dofs();
         const auto& constraints = space.get_constraints();

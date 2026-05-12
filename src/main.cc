@@ -1,9 +1,9 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include <gpe/problem/gpe.h>
+#include <gpe/main/model.h>
 #include <gpe/problem/oracle.h>
-#include <gpe/ropt/descent.h>
+#include <gpe/ropt/manifold.h>
 #include <gpe/option.h>
 #include <gpe/util/util.h>
 
@@ -12,72 +12,6 @@
 
 using namespace gpe;
 using namespace dealii;
-
-
-/**
- * @brief Orchestrator for Gross-Pitaevskii simulations.
- * The @ref EnergySimulator manages the persistent @ref GrossPitaevskiiPackage
- * (discretization) and coordinates the execution of the energy minimization
- * using a given @ref Oracle.
- *
- * @tparam dim The spatial dimension.
- */
-template <int dim>
-class ModelBuilder
-{
-public:
-    /**
-     * @brief Constructor.
-     * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
-     * @param V The potential object.
-     * @param options General options for GPE discretization.
-     * @param n_levels Number of global mesh refinements.
-     */
-    template <typename Potential>
-    ModelBuilder(Potential&& V, const GPE_Options& options, unsigned int n_levels)
-    // discretization
-        : package(options, n_levels)
-    // linear system
-        , problem(package.problem(std::forward<Potential>(V)))
-    // problem parameters
-        , options(options)
-    {}
-
-    // Allow to change the potential without re-discretizing the domain.
-    template <typename Potential>
-    void reinit(Potential&& V)
-    {
-        problem = package.problem(std::forward<Potential>(V));
-    }
-
-    void distribute(Vector<double>& x) const
-    {
-        package.distribute(x);
-    }
-
-    /** @brief Access the discretization package. */
-    const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
-    const GrossPitaevskiiSystem<dim>& get_problem() const { return problem; }
-
-    /** @brief Computation of value and derivatives in ambient space. */
-    auto get_eval(double beta) const
-    {
-        return GrossPitaevskiiFunctional<dim>(problem, beta);
-    }
-
-    unsigned int n_dofs() const { return package.n_dofs(); }
-
-
-private:
-    /** @brief Persistent discretization infrastructure. */
-    GrossPitaevskiiPackage<dim> package;
-
-    /** @brief Assembly and storage of matrices. */
-    GrossPitaevskiiSystem<dim> problem;
-
-    /** @brief Problem configuration options. */
-    GPE_Options options;
-};
 
 
 int main(int argc, char* argv[])
