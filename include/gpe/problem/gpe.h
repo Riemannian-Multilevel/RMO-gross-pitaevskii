@@ -26,8 +26,6 @@ namespace gpe
  *
  * @tparam dim The spatial dimension of the problem.
  */
-// TODO: use stored beta (e.g in options) and setter method to update it?
-//       (consistency between calls of get_operator_A(), value(), directional_derivative())
 template <int dim>
 class GrossPitaevskiiProblem
 {
@@ -86,17 +84,14 @@ public:
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
 
-    // TODO: Euclidean gradient
-
     // Since LinearCombination stores pointers to matrices, these functions are lazy;
     // the (non-linear) terms can be assembled after calling this function.
     auto get_operator_A(const double weight_Mpp,
                         const double weight_A0 = 1.0) const
     {
-        Operator Aop;
-
         // Note: We pass pointers to our internal matrices.
         // The operator is valid as long as this Problem instance exists.
+        OperatorType Aop;
         Aop.add_component(weight_A0, A0);
         Aop.add_component(weight_Mpp, Mpp);
         Aop.reinit(Vector<double>(A0.m()));
@@ -108,47 +103,17 @@ public:
                         const double weight_A0 = 1.0) const
     {
         assemble_nonlinear_term(x);
+
         return get_operator_A(weight_Mpp, weight_A0);
     }
 
     auto get_operator_M(const double weight_M = 1.0) const
     {
-        using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
-        Operator Mop;
-
+        OperatorType Mop;
         Mop.add_component(weight_M, M);
         Mop.reinit(Vector<double>(A0.m()));
 
         return Mop;
-    }
-
-    // TODO: should this be in a separate class? (or objective namespace)
-    /**
-     * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
-     * Computes the energy value:
-     * \f[
-     * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
-     * \f]
-     */
-    // TODO: LinearCombination / get_operator_A()
-    double value(const Vector<double>& x, const double beta) const
-    {
-        auto A = get_operator_A(beta*0.25, 0.5);
-        Vector<double> Ax(x.size());
-        A.vmult(Ax, x);
-
-        return x * Ax;
-    }
-
-    // TODO: same as value(), but with different weights -> LinearCombination / get_operator_A()
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z,
-                                  const double beta) const
-    {
-        auto A = get_operator_A(beta, 1.0);
-        Vector<double> Ax(x.size());
-        A.vmult(Ax, x);
-
-        return Ax * z;
     }
 
     /** @brief Returns the linear operator \f$ A_0 \f$. */
@@ -177,8 +142,71 @@ private:
      * to trigger this assembly within logically @p const methods (like value
      * evaluation or gradient computation).
      */
-    mutable SparseMatrix<double> Mpp; ///< Non-linear interaction matrix (changes every iteration).
+    mutable SparseMatrix<double> Mpp; ///< Non-linear term (changes every iteration).
     SparsityPattern sparsity_pattern;
+};
+
+
+// Class that represents the smooth objective function E(x) in ambient Euclidean space
+template <int dim>
+class GrossPitaevskiiFunctional
+{
+public:
+    GrossPitaevskiiFunctional(const GrossPitaevskiiProblem<dim>& problem, double beta)
+        : problem(problem)
+        , beta(beta)
+        , M(problem.get_operator_M())
+        , A(problem.get_operator_A(beta))
+    {}
+
+    // Assembly of the non-linear matrix for value() / directional_derivative()
+    void update(const Vector<double>& x) const
+    {
+        problem.assemble_nonlinear_term(x);
+    }
+
+    /**
+     * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
+     * Computes the energy value:
+     * \f[
+     * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
+     * \f]
+     */
+    double value(const Vector<double>& x) const
+    {
+        auto A_eval = problem.get_operator_A(beta*0.25, 0.5);
+
+        Vector<double> Ax(x.size());
+        A_eval.vmult(Ax, x);
+
+        return x * Ax;
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const
+    {
+        Vector<double> Ax(x.size());
+        A.vmult(Ax, x);
+
+        return Ax * z;
+    }
+
+    void gradient(const Vector<double>& x, Vector<double>& output) const
+    {
+        A.vmult(output, x);
+    }
+
+    // Accessors
+    unsigned n_dofs() const { return problem.n_dofs(); }
+    double get_beta() const { return beta; }
+
+    const auto& get_M() const { return M; }
+    const auto& get_A() const { return A; }
+    const auto& get_A0() const { return problem.get_A0(); }
+
+private:
+    const GrossPitaevskiiProblem<dim>& problem;
+    double beta;
+    OperatorType M, A;
 };
 
 
@@ -289,106 +317,6 @@ private:
     std::unique_ptr<dealii::Quadrature<dim>>    quadrature; ///< Integration quadrature.
 };
 
-
-/**
- * @brief Orchestrator for Gross-Pitaevskii simulations.
- * The @ref EnergySimulator manages the persistent @ref GrossPitaevskiiPackage
- * (discretization) and coordinates the execution of the energy minimization
- * using a given @ref Oracle.
- *
- * @tparam dim The spatial dimension.
- */
-template <int dim, typename Oracle>
-class GrossPitaevskiiSimulator
-{
-public:
-    static_assert(Oracle::dimension == dim);
-
-    /**
-     * @brief Constructor.
-     * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
-     * @param V The potential object.
-     * @param options General options for GPE discretization.
-     * @param n_levels Number of global mesh refinements.
-     */
-    template <typename Potential>
-    GrossPitaevskiiSimulator(Potential&& V, const GPE_Options& options, unsigned int n_levels)
-        : package(options, n_levels)
-        , problem(package.problem(std::forward<Potential>(V)))
-        , options(options)
-    {}
-
-    // Allow to change the potential without re-discretizing the domain.
-    template <typename Potential>
-    void reinit(Potential&& V)
-    {
-        problem = package.problem(std::forward<Potential>(V));
-    }
-
-    void distribute(Vector<double>& x) const
-    {
-        package.distribute(x);
-    }
-
-    /**
-     * @brief Runs the energy minimization for a given potential.
-     * @param x0
-     * @param beta The interaction strength constant.
-     * @param options_inner
-     * @param options_gd Options for the gradient descent algorithm.
-     */
-    // TODO factor this out to caller, see get_oracle()
-    Vector<double>
-    run(const Vector<double>& x0, double beta,
-        const SolverOptions&  options_inner,
-        const DescentOptions& options_gd, std::ostream& os) const
-    {
-        Assert(x0.size() == package.n_dofs(), dealii::ExcDimensionMismatch(x0.size(), package.n_dofs()));
-        // Create the oracle (light-weight object, references problem matrices)
-        Oracle oracle(problem, beta, options_inner);
-
-        // Termination criterium
-        auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
-        {
-            const double lmb_diff   = std::abs(current.lambda - previous.lambda);
-            const double lmb_factor = 1.0 + std::abs(current.lambda);
-
-            return (lmb_diff < options_gd.tol_lambda * lmb_factor && current.residual < options_gd.tol_residual);
-        };
-
-        // Riemannian gradient descent
-        // Note: the update strategy can be arbitrary complex (e.g. for multilevel algorithms)
-        return gradient_descent(oracle, x0, options_gd, os, conv_check);
-    }
-
-    /** @brief Access the discretization package. */
-    const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
-    const GrossPitaevskiiProblem<dim>& get_problem() const { return problem; }
-
-    unsigned int n_dofs() const { return package.n_dofs(); }
-
-    const dealii::DoFHandler<dim>&
-    get_dofs() const { return package.get_dofs(); }
-
-    const dealii::AffineConstraints<double>&
-    get_constraints() const { return package.get_constraints(); }
-
-    Oracle get_oracle(double beta, SolverOptions options_gd) const
-    {
-        return Oracle(problem, beta, options_gd);
-    }
-
-    auto get_M() const { return problem.get_operator_M(); }
-    auto get_A(double beta) const { return problem.get_operator_A(beta); }
-
-private:
-    /** @brief Persistent discretization infrastructure. */
-    GrossPitaevskiiPackage<dim> package;
-    /** @brief Assembly and storage of matrices. */
-    GrossPitaevskiiProblem<dim> problem;
-    /** @brief Problem configuration options. */
-    GPE_Options options;
-};
 
 }
 

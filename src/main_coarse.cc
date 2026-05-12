@@ -1,6 +1,6 @@
 #include <gpe/ropt/manifold.h>
-#include <gpe/ropt/coarse.h>
-#include <gpe/problem/oracle.h>
+#include <gpe/ropt/fas.h>
+#include <gpe/problem/oracle_coarse.h>
 #include <gpe/problem/gpe.h>
 #include <gpe/option.h>
 

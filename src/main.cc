@@ -3,6 +3,7 @@
 //
 #include <gpe/problem/gpe.h>
 #include <gpe/problem/oracle.h>
+#include <gpe/ropt/descent.h>
 #include <gpe/option.h>
 #include <gpe/util/util.h>
 
@@ -11,6 +12,70 @@
 
 using namespace gpe;
 using namespace dealii;
+
+
+/**
+ * @brief Orchestrator for Gross-Pitaevskii simulations.
+ * The @ref EnergySimulator manages the persistent @ref GrossPitaevskiiPackage
+ * (discretization) and coordinates the execution of the energy minimization
+ * using a given @ref Oracle.
+ *
+ * @tparam dim The spatial dimension.
+ */
+template <int dim, typename Oracle>
+class GrossPitaevskiiContext
+{
+public:
+    static_assert(Oracle::dimension == dim);
+
+    /**
+     * @brief Constructor.
+     * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
+     * @param V The potential object.
+     * @param options General options for GPE discretization.
+     * @param n_levels Number of global mesh refinements.
+     */
+    template <typename Potential>
+    GrossPitaevskiiContext(Potential&& V, const GPE_Options& options, unsigned int n_levels)
+        : package(options, n_levels)
+        , problem(package.problem(std::forward<Potential>(V)))
+        , options(options)
+    {}
+
+    // Allow to change the potential without re-discretizing the domain.
+    template <typename Potential>
+    void reinit(Potential&& V)
+    {
+        problem = package.problem(std::forward<Potential>(V));
+    }
+
+    void distribute(Vector<double>& x) const
+    {
+        package.distribute(x);
+    }
+
+    /** @brief Access the discretization package. */
+    const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
+    const GrossPitaevskiiProblem<dim>& get_problem() const { return problem; }
+
+    Oracle get_oracle(double beta, SolverOptions options_gd) const
+    {
+        return Oracle(problem, beta, options_gd);
+    }
+    unsigned int n_dofs() const { return package.n_dofs(); }
+
+
+private:
+    /** @brief Persistent discretization infrastructure. */
+    GrossPitaevskiiPackage<dim> package;
+
+    /** @brief Assembly and storage of matrices. */
+    GrossPitaevskiiProblem<dim> problem;
+
+    /** @brief Problem configuration options. */
+    GPE_Options options;
+};
+
 
 int main(int argc, char* argv[])
 {
@@ -50,24 +115,30 @@ int main(int argc, char* argv[])
             unsigned int max_level = options_mg.max_level;
 
             for (unsigned int level = min_level; level < max_level; ++level) {
-                // Initialize the orchestrator (Simulator)
-                // This sets up the mesh (Package) and Finite Element space
-                GrossPitaevskiiSimulator<dim, EnergyOracle<dim>> simulator(Square<dim>(), options, level + 1);
+                // Set up the grid (Package) and finite element space
+                GrossPitaevskiiContext<dim, EnergyOracle<dim>> context(Square<dim>(), options, level + 1);
 
                 // Set starting value, sufficiently far from an optimal solution
-                Vector<double> x0(simulator.n_dofs());
+                Vector<double> x0(context.n_dofs());
                 x0 = 1.0;
+                context.distribute(x0);
 
-                // Run the Riemannian Gradient Descent pipeline
-                // Square<dim>() is passed as the Potential V
-                // options_gd contains the solver tolerances and step size
-                // options.beta is the non-linear coupling constant
-                simulator.distribute(x0);
-                auto x = simulator.run(x0, options.beta, options_slv, options_gd, std::cout);
+                // Define oracle
+                auto oracle = context.get_oracle(options.beta, options_slv);
+
+                // Riemannian gradient descent
+                auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
+                {
+                    const double lmb_diff = std::abs(current.lambda - previous.lambda);
+                    const double lmb_factor = 1.0 + std::abs(current.lambda);
+
+                    return (lmb_diff < options_gd.tol_lambda * lmb_factor && current.residual < options_gd.tol_residual);
+                };
+                auto x = gradient_descent(oracle, x0, options_gd, std::cout, conv_check);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
-                output_results(x, simulator.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
+                output_results(x, context.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
             }
         });
     }
