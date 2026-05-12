@@ -97,7 +97,7 @@ public:
     using OperatorType  = LinearCombination<MatrixType, Vector<double>>;
     using InverseOpType = PreconditionInverse<OperatorType, MatrixType>;
 
-    GradientTestBase(const GrossPitaevskiiProblem<dim>& problem, double beta,
+    GradientTestBase(const GrossPitaevskiiSystem<dim>& problem, double beta,
                      SolverOptions options)
         : m_problem(problem)
         , A(problem.get_operator_A(beta))   // all arguments are lazily evaluated
@@ -150,7 +150,7 @@ public:
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
 
 protected:
-    const GrossPitaevskiiProblem<dim>& m_problem;
+    const GrossPitaevskiiSystem<dim>& m_problem;
     OperatorType A, M;
     InverseOpType A_inv, M_inv;
     double m_beta;
@@ -161,7 +161,7 @@ template <int dim>
 class GradientTest : public GradientTestBase<dim>
 {
 public:
-    GradientTest(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+    GradientTest(const GrossPitaevskiiSystem<dim>& problem, double beta, SolverOptions options)
         : GradientTestBase<dim>(problem, beta, options)
     {}
 
@@ -295,7 +295,7 @@ template <int dim>
 class GradientTestCoarse : public GradientTestBase<dim>
 {
 public:
-    GradientTestCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options,
+    GradientTestCoarse(const GrossPitaevskiiSystem<dim>& problem, double beta, SolverOptions options,
                        const Vector<double>& phi,   // base point (restricted point)
                        const Vector<double>& w)     // correction term (restricted gradient difference)
         : GradientTestBase<dim>(problem, beta, options)
@@ -303,7 +303,7 @@ public:
         , m_w(w)
     {}
 
-    GradientTestCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+    GradientTestCoarse(const GrossPitaevskiiSystem<dim>& problem, double beta, SolverOptions options)
         : GradientTestBase<dim>(problem, beta, options)
         , m_phi(problem.n_dofs())
         , m_w(problem.n_dofs())

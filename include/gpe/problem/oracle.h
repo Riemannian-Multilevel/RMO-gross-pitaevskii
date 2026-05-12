@@ -22,89 +22,12 @@ class Square
 public:
     double operator()(const Point<dim>& p) const {
         typename Point<dim>::value_type out = 0.0;
-        
+
         for (unsigned d = 0; d < dim; d++) {
             out += p[d]*p[d];
         }
         return out;
     }
-};
-
-
-// TODO: consolidate with manifold.h (namespace gpe::ellipsoid)
-class ManifoldBase
-{
-public:
-    virtual ~ManifoldBase() = default;
-
-    virtual void retract(const Vector<double>& z, Vector<double>& x, double factor) const = 0;
-    virtual void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const = 0;
-
-    virtual void retract_inv(Vector<double>& v, const Vector<double>& x) const = 0;
-
-    virtual void retract_diff(const Vector<double>& x, const Vector<double>& v,
-        const Vector<double>& w, Vector<double>& output) const = 0;
-
-    virtual void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta,
-        const Vector<double>& u, Vector<double>& output) const = 0;
-
-    virtual void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta,
-        const Vector<double>& u, Vector<double>& output) const = 0;
-};
-
-
-// TODO: consolidate with manifold.h (namespace gpe::ellipsoid)
-template <int dim>
-class UnitMassSphere : ManifoldBase
-{
-public:
-    UnitMassSphere(const OperatorType& M) : M(M) {}
-
-    /**
-     * @brief Retracts a tangent vector back to the unit-mass manifold.
-     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
-     */
-    void retract(const Vector<double>& z, Vector<double>& x,
-                 double factor = 1.0) const override
-    {
-        ellipsoid::retract_by_norm(M, z, x, factor);
-    }
-
-    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output,
-                 double factor = 1.0) const override
-    {
-        output = x;
-        retract(z, output, factor);
-    }
-
-    void retract_diff(const Vector<double>& x, const Vector<double>& v, const Vector<double>& w,
-                      Vector<double>& output) const override
-    {
-        ellipsoid::retract_diff_by_norm(M, x, v, w, output);
-    }
-
-    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
-    {
-        ellipsoid::retract_inv_by_norm(M, v, x);
-    }
-
-    void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
-                          Vector<double>& output) const override
-    {
-        ellipsoid::retract_inv_diff_by_norm(M, x, zeta, u, output);
-    }
-
-    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
-                                  Vector<double>& output) const override
-    {
-        ellipsoid::retract_inv_diff_by_norm_adjoint(M, x, zeta, u, output);
-    }
-
-    // Accessors
-    const auto& get_M() const { return M; }
-
-private:
-    const OperatorType& M;
 };
 
 

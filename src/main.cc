@@ -22,12 +22,10 @@ using namespace dealii;
  *
  * @tparam dim The spatial dimension.
  */
-template <int dim, typename Oracle>
-class GrossPitaevskiiContext
+template <int dim>
+class ModelBuilder
 {
 public:
-    static_assert(Oracle::dimension == dim);
-
     /**
      * @brief Constructor.
      * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
@@ -36,9 +34,12 @@ public:
      * @param n_levels Number of global mesh refinements.
      */
     template <typename Potential>
-    GrossPitaevskiiContext(Potential&& V, const GPE_Options& options, unsigned int n_levels)
+    ModelBuilder(Potential&& V, const GPE_Options& options, unsigned int n_levels)
+    // discretization
         : package(options, n_levels)
+    // linear system
         , problem(package.problem(std::forward<Potential>(V)))
+    // problem parameters
         , options(options)
     {}
 
@@ -56,12 +57,14 @@ public:
 
     /** @brief Access the discretization package. */
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
-    const GrossPitaevskiiProblem<dim>& get_problem() const { return problem; }
+    const GrossPitaevskiiSystem<dim>& get_problem() const { return problem; }
 
-    Oracle get_oracle(double beta, SolverOptions options_gd) const
+    /** @brief Computation of value and derivatives in ambient space. */
+    auto get_eval(double beta) const
     {
-        return Oracle(problem, beta, options_gd);
+        return GrossPitaevskiiFunctional<dim>(problem, beta);
     }
+
     unsigned int n_dofs() const { return package.n_dofs(); }
 
 
@@ -70,7 +73,7 @@ private:
     GrossPitaevskiiPackage<dim> package;
 
     /** @brief Assembly and storage of matrices. */
-    GrossPitaevskiiProblem<dim> problem;
+    GrossPitaevskiiSystem<dim> problem;
 
     /** @brief Problem configuration options. */
     GPE_Options options;
@@ -116,17 +119,21 @@ int main(int argc, char* argv[])
 
             for (unsigned int level = min_level; level < max_level; ++level) {
                 // Set up the grid (Package) and finite element space
-                GrossPitaevskiiContext<dim, EnergyOracle<dim>> context(Square<dim>(), options, level + 1);
+                ModelBuilder<dim> context(Square<dim>(), options, level + 1);
 
                 // Set starting value, sufficiently far from an optimal solution
                 Vector<double> x0(context.n_dofs());
                 x0 = 1.0;
                 context.distribute(x0);
 
-                // Define oracle
-                auto oracle = context.get_oracle(options.beta, options_slv);
+                // Define objective in ambient space
+                auto gp = context.get_eval(options.beta);
+                // Define manifold
+                auto manifold = UnitMassSphere<dim>(gp.get_M());
+                // Define Riemannian metric
+                EnergyOracle<dim> oracle(gp, options_slv);
 
-                // Riemannian gradient descent
+                // Termination criterion for gradient descent
                 auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
                 {
                     const double lmb_diff = std::abs(current.lambda - previous.lambda);
@@ -134,7 +141,7 @@ int main(int argc, char* argv[])
 
                     return (lmb_diff < options_gd.tol_lambda * lmb_factor && current.residual < options_gd.tol_residual);
                 };
-                auto x = gradient_descent(oracle, x0, options_gd, std::cout, conv_check);
+                auto x = gradient_descent(oracle, manifold, x0, options_gd, std::cout, conv_check);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);

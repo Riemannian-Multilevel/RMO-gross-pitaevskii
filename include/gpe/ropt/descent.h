@@ -39,6 +39,7 @@ struct SolverInfo {
 /**
  * @brief Performs the Armijo backtracking line search on the manifold.
  * @param oracle The manifold and objective function interface.
+ * @param manifold
  * @param x [in-out] Current base point.
  * @param eta Search direction (must be a descent direction).
  * @param fx Function value at current point f(x).
@@ -50,6 +51,7 @@ struct SolverInfo {
 //       of the problem state (large sparse matrix term Mpp) is made
 template <typename VectorType, typename OracleType>
 double armijo_line_search(OracleType& oracle,
+                          const ManifoldBase& manifold,
                           VectorType& x,
                           const VectorType& eta,
                           const double fx,
@@ -67,8 +69,7 @@ double armijo_line_search(OracleType& oracle,
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
         step *= alpha;
-        // TODO: pass on ManifoldBase object
-        ellipsoid::retract_by_norm(oracle.get_M(), x, step, x_trial);
+        manifold.retract(step, x, x_trial);
 
         // Evaluate function at the new point
         // TODO: this requires a new assembly of A_x - use matrix-free evaluation
@@ -105,6 +106,7 @@ struct EmptyCheck
 
 //! Riemannian gradient descent for the GPE energy minimization
 //! @param oracle Oracle for function value and (Riemannian) gradient.
+//! @param manifold
 //! @param x0 Starting value.
 //! @param options Parameters for gradient descent, such as step-size.
 //! @param os Output stream for diagnostics.
@@ -113,7 +115,9 @@ struct EmptyCheck
 // TODO: split into cycle() and eval(), compare FullApproximationScheme
 template <typename OracleType, typename CheckType = EmptyCheck>
 Vector<double>
-gradient_descent(OracleType& oracle, const Vector<double>& x0,
+gradient_descent(OracleType& oracle,
+                 const ManifoldBase& manifold,
+                 const Vector<double>& x0,
                  DescentOptions options, std::ostream& os,
                  CheckType check_convergence = {})
 {
@@ -177,14 +181,13 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
             eta *= -1.0;
             double dd = oracle.directional_derivative(x, eta);  // <grad f(x), eta>_x = Df(x)[eta]
             // runs O.retract(), O.update()
-            double h = armijo_line_search(oracle, x, eta, Ex, dd, options);
+            double h = armijo_line_search(oracle, manifold, x, eta, Ex, dd, options);
             //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
             step_size = h;
         }
         else {
-            // TODO: pass on ManifoldBase object
-            ellipsoid::retract_by_norm(oracle.get_M(), g, x, -options.step_size);
+            manifold.retract(g, x, -options.step_size);
             oracle.update(x);
         }
         // ---- End timed section

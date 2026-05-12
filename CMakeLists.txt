@@ -49,13 +49,10 @@ endfunction()
 
 
 # --- Create targets for executables
-add_gpe_executable(main Boost::program_options fmt::fmt)
-add_gpe_executable(main_bench Boost::program_options fmt::fmt)
-
-add_gpe_executable(main_coarse Boost::program_options fmt::fmt)
-target_link_libraries(main_coarse Boost::program_options fmt::fmt)
-
-add_gpe_executable(main_sparsity Boost::program_options fmt::fmt)
+add_gpe_executable(main LINK_LIBS Boost::program_options fmt::fmt)
+add_gpe_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
+add_gpe_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
+add_gpe_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 
 
 # --- Create targets for tests

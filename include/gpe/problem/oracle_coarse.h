@@ -38,8 +38,8 @@ public:
         {}
     };
 
-    GrossPitaevskiiCoarseOracle(const GrossPitaevskiiProblem<dim>& problem,
-                                const GrossPitaevskiiProblem<dim>& problem_coarse,
+    GrossPitaevskiiCoarseOracle(const GrossPitaevskiiSystem<dim>& problem,
+                                const GrossPitaevskiiSystem<dim>& problem_coarse,
                                 const ManifoldTransferBase& point_transfer,
                                 const VectorTransportBase& vector_transport,
                                 double beta, SolverOptions options, SolverOptions options_coarse)
@@ -143,7 +143,7 @@ public:
 
 private:
     // Finite element discretization for fine and coarse mesh
-    const GrossPitaevskiiProblem<dim>& problem, problem_coarse;
+    const GrossPitaevskiiSystem<dim>& problem, problem_coarse;
 
     // Problem parameters for fine and coarse objective
     double beta;
@@ -215,8 +215,8 @@ class MassCoarseOracleEnergyAdaptive : public GrossPitaevskiiCoarseOracle<dim, M
 public:
     static constexpr const char* id = "MCA";
 
-    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem,
-                                   const GrossPitaevskiiProblem<dim>& problem_coarse,
+    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiSystem<dim>& problem,
+                                   const GrossPitaevskiiSystem<dim>& problem_coarse,
                                    const ManifoldTransferBase& point_transfer,
                                    const VectorTransportBase& vector_transport,
                                    double beta, SolverOptions options, SolverOptions options_coarse)
@@ -293,8 +293,8 @@ public:
     static constexpr auto metric = MetricKind::FROBENIUS;
     MetricKind get_metric() const override { return metric; }
 
-    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem,
-                                        const GrossPitaevskiiProblem<dim>& problem_coarse,
+    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiSystem<dim>& problem,
+                                        const GrossPitaevskiiSystem<dim>& problem_coarse,
                                         const ManifoldTransferBase& point_transfer,
                                         const VectorTransportBase& vector_transport,
                                         double beta, SolverOptions options, SolverOptions options_coarse)

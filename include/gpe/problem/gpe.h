@@ -27,7 +27,7 @@ namespace gpe
  * @tparam dim The spatial dimension of the problem.
  */
 template <int dim>
-class GrossPitaevskiiProblem
+class GrossPitaevskiiSystem
 {
 public:
     using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
@@ -46,7 +46,7 @@ public:
      * @param V The external potential object.
      */
     template <typename Potential>
-    GrossPitaevskiiProblem(const dealii::DoFHandler<dim>& dofs,
+    GrossPitaevskiiSystem(const dealii::DoFHandler<dim>& dofs,
                            const dealii::Quadrature<dim>& quad,
                            const dealii::Mapping<dim>& map,
                            const dealii::AffineConstraints<double>& cstr,
@@ -147,69 +147,6 @@ private:
 };
 
 
-// Class that represents the smooth objective function E(x) in ambient Euclidean space
-template <int dim>
-class GrossPitaevskiiFunctional
-{
-public:
-    GrossPitaevskiiFunctional(const GrossPitaevskiiProblem<dim>& problem, double beta)
-        : problem(problem)
-        , beta(beta)
-        , M(problem.get_operator_M())
-        , A(problem.get_operator_A(beta))
-    {}
-
-    // Assembly of the non-linear matrix for value() / directional_derivative()
-    void update(const Vector<double>& x) const
-    {
-        problem.assemble_nonlinear_term(x);
-    }
-
-    /**
-     * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
-     * Computes the energy value:
-     * \f[
-     * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
-     * \f]
-     */
-    double value(const Vector<double>& x) const
-    {
-        auto A_eval = problem.get_operator_A(beta*0.25, 0.5);
-
-        Vector<double> Ax(x.size());
-        A_eval.vmult(Ax, x);
-
-        return x * Ax;
-    }
-
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const
-    {
-        Vector<double> Ax(x.size());
-        A.vmult(Ax, x);
-
-        return Ax * z;
-    }
-
-    void gradient(const Vector<double>& x, Vector<double>& output) const
-    {
-        A.vmult(output, x);
-    }
-
-    // Accessors
-    unsigned n_dofs() const { return problem.n_dofs(); }
-    double get_beta() const { return beta; }
-
-    const auto& get_M() const { return M; }
-    const auto& get_A() const { return A; }
-    const auto& get_A0() const { return problem.get_A0(); }
-
-private:
-    const GrossPitaevskiiProblem<dim>& problem;
-    double beta;
-    OperatorType M, A;
-};
-
-
 /**
  * @brief Factory class to discretize a domain and produce a @ref GrossPitaevskiiProblem.
  * This class handles the setup phase:
@@ -276,12 +213,12 @@ public:
      * @return GrossPitaevskiiProblem<dim> The assembled problem object.
      */
     template <typename Potential>
-    GrossPitaevskiiProblem<dim> problem(Potential&& V) const
+    GrossPitaevskiiSystem<dim> problem(Potential&& V) const
     {
         const auto& dof_handler = space.get_dofs();
         const auto& constraints = space.get_constraints();
 
-        return GrossPitaevskiiProblem<dim>(dof_handler, *quadrature, *mapping, constraints, V);
+        return GrossPitaevskiiSystem<dim>(dof_handler, *quadrature, *mapping, constraints, V);
     }
 
     void distribute(Vector<double>& x) const
@@ -317,6 +254,68 @@ private:
     std::unique_ptr<dealii::Quadrature<dim>>    quadrature; ///< Integration quadrature.
 };
 
+
+// Class that represents the smooth objective function E(x) in ambient Euclidean space
+template <int dim>
+class GrossPitaevskiiFunctional
+{
+public:
+    GrossPitaevskiiFunctional(const GrossPitaevskiiSystem<dim>& problem, double beta)
+        : problem(problem)
+        , beta(beta)
+        , M(problem.get_operator_M())
+        , A(problem.get_operator_A(beta))
+    {}
+
+    // Assembly of the non-linear matrix for value() / directional_derivative()
+    void update(const Vector<double>& x) const
+    {
+        problem.assemble_nonlinear_term(x);
+    }
+
+    /**
+     * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
+     * Computes the energy value:
+     * \f[
+     * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
+     * \f]
+     */
+    double value(const Vector<double>& x) const
+    {
+        auto A_eval = problem.get_operator_A(beta*0.25, 0.5);
+
+        Vector<double> Ax(x.size());
+        A_eval.vmult(Ax, x);
+
+        return x * Ax;
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const
+    {
+        Vector<double> Ax(x.size());
+        A.vmult(Ax, x);
+
+        return Ax * z;
+    }
+
+    void gradient(const Vector<double>& x, Vector<double>& output) const
+    {
+        A.vmult(output, x);
+    }
+
+    // Accessors
+    unsigned n_dofs() const { return problem.n_dofs(); }
+    double get_beta() const { return beta; }
+
+    const auto& get_M() const { return M; }
+    const auto& get_A() const { return A; }
+    const auto& get_A0() const { return problem.get_A0(); }
+
+private:
+    const GrossPitaevskiiSystem<dim>& problem;
+    double beta;
+    OperatorType M, A;
+};
 
 }
 
