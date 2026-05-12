@@ -65,6 +65,10 @@ double armijo_line_search(OracleType& oracle,
     double alpha = options.ls.alpha;
     Vector<double> x_trial(x);
 
+    // Avoid numerical issues when close to the solution
+    const double eps = std::numeric_limits<double>::epsilon();
+    const double noise_tol = 10.0 * eps * std::max(1.0, std::abs(fx));
+
     for (unsigned int ls_iter = 0; ls_iter < options.ls.max_iter; ++ls_iter) {
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
@@ -78,7 +82,7 @@ double armijo_line_search(OracleType& oracle,
 
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
-        if (fx_new <= fx + options.ls.sigma * alpha * dir_deriv) {
+        if (fx_new <= fx + options.ls.sigma * alpha * dir_deriv + noise_tol) {
             x = x_trial;    // step accepted, write x
             return alpha;
         }
