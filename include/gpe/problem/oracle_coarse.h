@@ -10,15 +10,12 @@
 namespace gpe
 {
 
-// The gradient of the coarse model is used to find a descent direction dk.
-// Therefore, CoarseOracleBase should include update(), gradient() and (for line search) value methods.
-// A full approximation / multilevel scheme should build the descent direction based on this:
-//    grad (coarse) -> retract_inv_by_norm -> vector_prolongation
+// Class which implements all needed terms for the Nash coarse model. It assumes an oracle on a fine and coarse
+// level of discretization (implementing Riemannain gradient descent for a certain metric),
+// used to compute a correction vector between coarse and fine gradients.
 // TODO: for a multilevel implementation, O(_coarse) need to be set to previous levels
-//   -> define a seperate constructor taking O, O_coarse as arguments (instead of problem(_coarse) for initialization)
-//      this assumes TiltOracle is a wrapper containing no heavy objects as state
 template <int dim, typename TiltOracle>
-class GrossPitaevskiiCoarseOracle : OracleBase
+class CoarseOracleBase
 {
 public:
     static constexpr int dimension = dim;
@@ -40,19 +37,14 @@ public:
         {}
     };
 
-    GrossPitaevskiiCoarseOracle(const GrossPitaevskiiSystem<dim>& problem,
-                                const GrossPitaevskiiSystem<dim>& problem_coarse,
-                                const ManifoldTransferBase& point_transfer,
-                                const VectorTransportBase& vector_transport,
-                                double beta, SolverOptions options, SolverOptions options_coarse)
-        : problem(problem), problem_coarse(problem_coarse), beta(beta)
-        , options(options), options_coarse(options_coarse)
+    CoarseOracleBase(const TiltOracle& O, const TiltOracle& O_coarse,
+                     const ManifoldTransferBase& point_transfer,
+                     const VectorTransportBase&  vector_transport)
+        : O(O), O_coarse(O_coarse)
 
     // Problem evaluation
-        , n(problem.n_dofs())
-        , n_coarse(problem_coarse.n_dofs())
-        , O(problem, beta, options)
-        , O_coarse(problem_coarse, beta, options_coarse)
+        , n(O.n_dofs())
+        , n_coarse(O_coarse.n_dofs())
 
     // Grid transfer
         , point_transfer(point_transfer)
@@ -60,31 +52,10 @@ public:
 
     // Coarse parameters
         , m_state(n, n_coarse)
-
-    // Linear operators
-        , M_coarse(problem_coarse.get_operator_M())
-        , A_coarse(problem_coarse.get_operator_A(beta))  // or OracleBase::get_operator_A
-        , M_inv_coarse(M_coarse, options_coarse)
-        , A_inv_coarse(A_coarse, options_coarse)
-        , M(problem.get_operator_M())
     {}
 
-    // TODO: conditional define of problem?
-    //   problem.assemble_nonlinear_term(x) -> O.update(x)
-    //   problem_coarse.assemble_nonlinear_term(y) -> O_coarse.update(y)
-    // CoarseOracleBase(const TiltOracle& O, const TiltOracle& O_coarse,
-    //                  const ManifoldTransferBase& point_transfer,
-    //                  const VectorTransportBase& vector_transport,
-    //                  double beta, SolverOptions options, SolverOptions options_coarse)
-    // {}
-
-    void set_timer(const dealii::Timer& timer_new) const
-    {
-        timer = timer_new;
-    }
-
     // Compute parameters for coarse model
-    void update(const Vector<double>& x) override
+    void update(const Vector<double>& x)
     {
         AssertDimension(x.size(), n);
 
@@ -92,7 +63,7 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] fine: assemble matrix\n";
 #endif
-        problem.assemble_nonlinear_term(x);
+        O.update(x);
 
         // Set base point for coarse model
 #ifdef CPU_TIME
@@ -103,7 +74,7 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
 #endif
-        problem_coarse.assemble_nonlinear_term(m_state.y);
+        O_coarse.update(m_state.y);
 
         // Compute coarse M-gradient
 #ifdef CPU_TIME
@@ -128,33 +99,21 @@ public:
         m_state.w.add(-1.0, m_state.x_grad_restr);
     }
 
+    void set_timer(const dealii::Timer& timer_new) const
+    {
+        timer = timer_new;
+    }
+
     const CoarseState& get_state() const
     {
         return m_state;
     }
 
-    double norm(const Vector<double>& v) const override
-    {
-        return TiltOracle::norm(v);
-    }
 
-    iteration::State residual(const Vector<double>& x) const final
-    {
-        return {.energy=value(x)};
-    }
-
-private:
-    // Finite element discretization for fine and coarse mesh
-    const GrossPitaevskiiSystem<dim>& problem, problem_coarse;
-
-    // Problem parameters for fine and coarse objective
-    double beta;
-    SolverOptions options, options_coarse;
-    unsigned n, n_coarse;
-
+protected:
     // Coarse and fine level evaluation for correction vector w
-    // Includes references to matrices/linear operators (A, M)
-    TiltOracle O, O_coarse;
+    const TiltOracle& O, O_coarse;
+    unsigned n, n_coarse;
 
     // Operators for transferring solutions and gradients
     const ManifoldTransferBase& point_transfer;
@@ -162,13 +121,6 @@ private:
 
     // Coarse model parameters
     CoarseState m_state;
-
-    // Linear operators (coarse)
-    OperatorType M_coarse, A_coarse;    // for evaluation value and gradient of coarse model
-    InverseOpType M_inv_coarse, A_inv_coarse;
-
-    // Linear operators (fine)
-    OperatorType M;  // for evaluation of coarse condition
 
     // Benchmarking
     mutable dealii::Timer timer;
@@ -184,12 +136,11 @@ private:
 //           oracle for evaluating gradient of coarse model \grad q_k(y)
 //           metric for \grad q_k(y) can differ from gradient of w and <w, .>_y
 template <int dim>
-class MassCoarseOracle : public GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>
+class MassCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "MC";
 
-    using GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>::GrossPitaevskiiCoarseOracle;
 
     double value(const Vector<double>& x) const final
     {
@@ -204,15 +155,20 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
         coarse::mass::gradient(this->M_coarse, this->M_inv_coarse, this->A_coarse,
-            x, this->m_phi, this->m_w, output);
+            x, this->m_state.y, this->m_state.w, output);
 
         return this->M_inv_coarse.control().last_step();
+    }
+
+    iteration::State residual(const Vector<double>& x) const final
+    {
+        return {.energy=value(x)};
     }
 };
 
 
 template <int dim>
-class MassCoarseOracleEnergyAdaptive : public GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>
+class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "MCA";
@@ -222,20 +178,20 @@ public:
                                    const ManifoldTransferBase& point_transfer,
                                    const VectorTransportBase& vector_transport,
                                    double beta, SolverOptions options, SolverOptions options_coarse)
-        : GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>(problem, problem_coarse,
+        : CoarseOracleBase<dim, MassOracle<dim>>(problem, problem_coarse,
             point_transfer, vector_transport, beta, options, options_coarse)
     {
         this->A_inv_coarse.update_static(this->problem_coarse.get_A0());
     }
 
-    void update(const Vector<double>& x) final
+    void update(const Vector<double>& x) override
     {
-        GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>::update(x); // Calls assembly in parent
+        CoarseOracleBase<dim, MassOracle<dim>>::update(x); // Calls assembly in parent
 
         this->A_inv_coarse.update_dynamic(this->A_coarse.diagonal());
     }
 
-    double value(const Vector<double>& x) const final
+    double value(const Vector<double>& x) const override
     {
         const double energy = this->problem.value(x, this->beta);
 
@@ -246,23 +202,27 @@ public:
      * @brief Computes the coarse model gradient in the A-metric.
      * $$ \nabla_A q_k(x) = \nabla_A E_H(x) - w $$
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         coarse::mass::energy_adaptive_gradient(this->M_coarse, this->A_inv_coarse,
-            x, this->m_phi, this->m_w, output);
+            x, this->m_state.y, this->m_state.w, output);
 
         return this->A_inv_coarse.control().last_step();
+    }
+
+    iteration::State residual(const Vector<double>& x) const override
+    {
+        return {.energy=value(x)};
     }
 };
 
 
 template <int dim>
-class FrobeniusCoarseOracle : public GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>
+class FrobeniusCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "FC";
 
-    using GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>::GrossPitaevskiiCoarseOracle;
 
     double value(const Vector<double>& x) const final
     {
@@ -283,12 +243,17 @@ public:
 
         return 0; // 0 iterations, as no Krylov solver is used
     }
+
+    iteration::State residual(const Vector<double>& x) const final
+    {
+        return {.energy=value(x)};
+    }
 };
 
 
 // TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 template <int dim>
-class FrobeniusCoarseOracleEnergyAdaptive : public GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>
+class FrobeniusCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim, FrobeniusOracle<dim>>
 {
 public:
     static constexpr const char* id = "FCA";
@@ -301,7 +266,7 @@ public:
                                         const VectorTransportBase& vector_transport,
                                         double beta, SolverOptions options, SolverOptions options_coarse)
         // Computes correction vector w in update() method
-        : GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>(problem, problem_coarse,
+        : CoarseOracleBase<dim, FrobeniusOracle<dim>>(problem, problem_coarse,
             point_transfer, vector_transport, beta, options, options_coarse)
     {
         this->A_inv_coarse.update_static(this->problem.get_A0());
@@ -309,7 +274,7 @@ public:
 
     void update(const Vector<double>& x) final
     {
-        GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>::update(x); // Calls assembly in parent
+        CoarseOracleBase<dim, FrobeniusOracle<dim>>::update(x); // Calls assembly in parent
 
         this->A_inv_coarse.update_dynamic(this->A_coarse.diagonal());
     }
@@ -333,6 +298,11 @@ public:
 
         // Return the number of Krylov iterations used by A_inv
         return this->A_inv_coarse.control().last_step();
+    }
+
+    iteration::State residual(const Vector<double>& x) const final
+    {
+        return {.energy=value(x)};
     }
 };
 
