@@ -942,11 +942,11 @@ public:
 };
 
 
-template <int dim>
+template <int dim, typename MatrixType>
 class UnitMassSphere : public ManifoldBase
 {
 public:
-    UnitMassSphere(const OperatorType& M) : M(M) {}
+    UnitMassSphere(const MatrixType& M) : M(M) {}
 
     /**
      * @brief Retracts a tangent vector back to the unit-mass manifold.
@@ -990,7 +990,7 @@ public:
     const auto& get_M() const { return M; }
 
 private:
-    const OperatorType& M;
+    const MatrixType& M;
 };
 
 

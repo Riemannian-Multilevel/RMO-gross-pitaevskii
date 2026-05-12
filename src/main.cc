@@ -63,7 +63,7 @@ int main(int argc, char* argv[])
                 // Define objective in ambient space
                 auto gp = context.get_eval(options.beta);
                 // Define manifold
-                auto manifold = UnitMassSphere<dim>(gp.get_M());
+                auto manifold = UnitMassSphere<dim,SparseMatrix<double>>(context.get_M());
                 // Define Riemannian metric
                 EnergyOracle<dim> oracle(gp, options_slv);
 

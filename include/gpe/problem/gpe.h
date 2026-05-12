@@ -86,6 +86,7 @@ public:
 
     // Since LinearCombination stores pointers to matrices, these functions are lazy;
     // the (non-linear) terms can be assembled after calling this function.
+    // TODO: rename to operator_A() or similar, since this creates a new object? (potential lifetime issues)
     auto get_operator_A(const double weight_Mpp,
                         const double weight_A0 = 1.0) const
     {
@@ -99,6 +100,7 @@ public:
         return Aop;
     }
 
+    // TODO: rename to operator_A() or similar, since this creates a new object? (potential lifetime issues)
     auto get_operator_A(const Vector<double>& x, const double weight_Mpp,
                         const double weight_A0 = 1.0) const
     {
@@ -107,6 +109,7 @@ public:
         return get_operator_A(weight_Mpp, weight_A0);
     }
 
+    // TODO: rename to operator_M() or similar, since this creates a new object? (potential lifetime issues)
     auto get_operator_M(const double weight_M = 1.0) const
     {
         OperatorType Mop;
@@ -261,7 +264,7 @@ class GrossPitaevskiiFunctional
 {
 public:
     GrossPitaevskiiFunctional(const GrossPitaevskiiSystem<dim>& problem, double beta)
-        : problem(problem)
+        : system(problem)
         , beta(beta)
         , M(problem.get_operator_M())
         , A(problem.get_operator_A(beta))
@@ -270,7 +273,7 @@ public:
     // Assembly of the non-linear matrix for value() / directional_derivative()
     void update(const Vector<double>& x) const
     {
-        problem.assemble_nonlinear_term(x);
+        system.assemble_nonlinear_term(x);
     }
 
     /**
@@ -282,7 +285,7 @@ public:
      */
     double value(const Vector<double>& x) const
     {
-        auto A_eval = problem.get_operator_A(beta*0.25, 0.5);
+        auto A_eval = system.get_operator_A(beta*0.25, 0.5);
 
         Vector<double> Ax(x.size());
         A_eval.vmult(Ax, x);
@@ -304,15 +307,15 @@ public:
     }
 
     // Accessors
-    unsigned n_dofs() const { return problem.n_dofs(); }
+    unsigned n_dofs() const { return system.n_dofs(); }
     double get_beta() const { return beta; }
 
     const auto& get_M() const { return M; }
     const auto& get_A() const { return A; }
-    const auto& get_A0() const { return problem.get_A0(); }
+    const auto& get_A0() const { return system.get_A0(); }
 
 private:
-    const GrossPitaevskiiSystem<dim>& problem;
+    const GrossPitaevskiiSystem<dim>& system;
     double beta;
     OperatorType M, A;
 };

@@ -65,6 +65,11 @@ public:
 
     unsigned int n_dofs() const { return package.n_dofs(); }
 
+    // References to sparse matrix stored in GrossPitaevskiiSystem
+    // (system.get_operator_* are factories for LinearCombination objects.)
+    const auto& get_M() const { return system.get_M(); }
+    const auto& get_A(double beta) const { return system.get_A(beta); }
+    const auto& get_A0() const { return system.get_A0(); }
 
 private:
     /** @brief Persistent discretization infrastructure. */
