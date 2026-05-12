@@ -11,9 +11,9 @@ using namespace gpe;
 template <int dim>
 struct ContextMultiLevel
 {
-    ContextMultiLevel(const OracleBase<dim>& O_descent,
-                      const OracleBase<dim>& O_tilt, const OracleBase<dim>& O_tilt_coarse,
-                      CoarseOracleBase<dim>& O_coarse,
+    ContextMultiLevel(const GrossPitaevskiiOracle<dim>& O_descent,
+                      const GrossPitaevskiiOracle<dim>& O_tilt, const GrossPitaevskiiOracle<dim>& O_tilt_coarse,
+                      GrossPitaevskiiCoarseOracle<dim>& O_coarse,
                       const LinearTransferBase& transfer,
                       const ManifoldTransferBase& point_transfer,
                       const VectorTransportBase& vector_transport)
@@ -24,11 +24,11 @@ struct ContextMultiLevel
         , vector_transport(vector_transport)
     {}
 
-    const OracleBase<dim>& O_descent;               // Oracle for gradient descent on fine level
-    const OracleBase<dim>& O_tilt;                  // Oracle for coarse correction term on fine level
-    const OracleBase<dim>& O_tilt_coarse;           // Oracle for coarse correction term on coarse level
+    const GrossPitaevskiiOracle<dim>& O_descent;               // Oracle for gradient descent on fine level
+    const GrossPitaevskiiOracle<dim>& O_tilt;                  // Oracle for coarse correction term on fine level
+    const GrossPitaevskiiOracle<dim>& O_tilt_coarse;           // Oracle for coarse correction term on coarse level
     // TODO: const correctness (update_parameters) - calculation of tilt term inside CoarseOracleBase
-    CoarseOracleBase<dim>& O_coarse;          // Oracle for coarse model
+    GrossPitaevskiiCoarseOracle<dim>& O_coarse;          // Oracle for coarse model
 
     const LinearTransferBase& transfer;             // Linear interpolation with Galerkin condition
     const ManifoldTransferBase& point_transfer;     // Point transfer operator
@@ -40,7 +40,7 @@ struct ContextMultiLevel
 template <int dim>
 struct ExperimentSingleLevel
 {
-    ExperimentSingleLevel(const OracleBase<dim>& O_descent, DescentOptions options)
+    ExperimentSingleLevel(const GrossPitaevskiiOracle<dim>& O_descent, DescentOptions options)
         : m_solver(O_descent), m_options(options)
     {}
 
@@ -179,9 +179,9 @@ int main(int argc, char* argv[])
             EnergyOracle<dim> o_descent(problem_fine, options.beta, options_slv);
 
             // Oracle for correction term
-            std::unique_ptr<OracleBase<dim>>       o_tilt         = nullptr;
-            std::unique_ptr<OracleBase<dim>>       o_tilt_coarse  = nullptr;
-            std::unique_ptr<CoarseOracleBase<dim>> o_coarse_model = nullptr;
+            std::unique_ptr<GrossPitaevskiiOracle<dim>>       o_tilt         = nullptr;
+            std::unique_ptr<GrossPitaevskiiOracle<dim>>       o_tilt_coarse  = nullptr;
+            std::unique_ptr<GrossPitaevskiiCoarseOracle<dim>> o_coarse_model = nullptr;
 
             if (options_fas.metric_t == MetricKind::NONE) {
                 ExperimentSingleLevel<dim>(o_descent, options_gd).cycle(x0, std::cout);

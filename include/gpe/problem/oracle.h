@@ -30,6 +30,106 @@ public:
 };
 
 
+// TODO: consolidate with manifold.h (namespace gpe::ellipsoid)
+class ManifoldBase
+{
+public:
+    virtual ~ManifoldBase() = default;
+
+    virtual void retract(const Vector<double>& z, Vector<double>& x, double factor) const = 0;
+    virtual void retract(const Vector<double>& z, Vector<double>& x, Vector<double>& output, double factor) = 0;
+
+    virtual void retract_inv(Vector<double>& v, const Vector<double>& x) const = 0;
+
+    virtual void retract_diff(const Vector<double>& x, const Vector<double>& v,
+        const Vector<double>& w, Vector<double>& output) const = 0;
+
+    virtual void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta,
+        const Vector<double>& u, Vector<double>& output) const = 0;
+
+    virtual void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta,
+        const Vector<double>& u, Vector<double>& output) const = 0;
+};
+
+
+// TODO: consolidate with manifold.h (namespace gpe::ellipsoid)
+template <int dim>
+class UnitMassSphere : ManifoldBase
+{
+public:
+    UnitMassSphere(const OperatorType& M) : M(M) {}
+
+    /**
+     * @brief Retracts a tangent vector back to the unit-mass manifold.
+     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
+     */
+    void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const override
+    {
+        ellipsoid::retract_by_norm(M, z, x, factor);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x,
+                 Vector<double>& output, double factor = 1.0) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    void retract_diff(const Vector<double>& x, const Vector<double>& v, const Vector<double>& w,
+                      Vector<double>& output) const override
+    {
+        ellipsoid::retract_diff_by_norm(M, x, v, w, output);
+    }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid::retract_inv_by_norm(M, v, x);
+    }
+
+    void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                          Vector<double>& output) const override
+    {
+        ellipsoid::retract_inv_diff_by_norm(M, x, zeta, u, output);
+    }
+
+    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                                  Vector<double>& output) const override
+    {
+        ellipsoid::retract_inv_diff_by_norm_adjoint(M, x, zeta, u, output);
+    }
+
+    // Accessors
+    const auto& get_M() const { return M; }
+
+private:
+    const OperatorType& M;
+};
+
+
+// Basic oracle interface
+class OracleBase
+{
+public:
+    virtual ~OracleBase() = default;
+    // TODO: MetricBase
+    virtual MetricKind get_metric() const { return MetricKind::NONE; }
+
+    virtual void update(const Vector<double>& x) = 0;
+
+    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
+    //       check marker `needs_assembly`
+    virtual double value(const Vector<double>&) const = 0;
+
+    // TODO: Compute directional derivative and Riemannian gradient successively
+    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const = 0;
+
+    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
+    //       check marker `needs_gradient
+    virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
+    virtual iteration::State residual(const Vector<double>&) const = 0;
+};
+
+
 // TODO: pure abstract base class for OracleBase (store 1 level of discretization) and CoarseOracleBase (store multiple)
 //       refactor into UnitMassSphere (<- Manifold) and GrossPitaevskiiOracle (<- A, M and inverses)
 /**
@@ -40,7 +140,7 @@ public:
  * @tparam dim The spatial dimension of the problem.
  */
 template <int dim>
-class OracleBase
+class GrossPitaevskiiOracle : OracleBase
 {
 public:
     static constexpr int dimension = dim;
@@ -53,7 +153,7 @@ public:
     // The discretization GrossPitaevskiiProblem is used to define (references to) the matrices used, being
     //  A, M, A_inv, M_inv, as well as updating the underlying state for new incumbent solutions x -> A_x -> A_x_inv.
     // TODO: separate the problem state from the geometry (retract, ...) and value evaluation (value, gradient, ...)
-    OracleBase(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
+    GrossPitaevskiiOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
         : problem(problem_)
         , beta(beta_)
         , options(options_)
@@ -61,31 +161,13 @@ public:
         , M(problem.get_operator_M())
     {}
 
-    virtual ~OracleBase() = default;
-    virtual MetricKind get_metric() const { return MetricKind::NONE; }
-
     /**
      * @brief Updates the problem state and preconditioner for a new evaluation point.
      */
-    virtual void update(const Vector<double>& x) const
+    void update(const Vector<double>& x) override
     {
-        problem.assemble_nonlinear_term(x);
-    }
-
-    /**
-     * @brief Retracts a tangent vector back to the unit-mass manifold.
-     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
-     */
-    void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const
-    {
-        ellipsoid::retract_by_norm(M, z, x, factor);
-    }
-
-    void retract(const Vector<double>& z, const Vector<double>& x,
-                 Vector<double>& output, double factor = 1.0) const
-    {
-        output = x;
-        retract(z, output, factor);
+        problem.assemble_nonlinear_term(x);  // mutable
+        // No other state but OracleBase assumes non-const method
     }
 
     // Accessors
@@ -96,39 +178,28 @@ public:
     double get_beta() const { return beta; }
     unsigned n_dofs() const { return problem.n_dofs(); }
 
-    // Pure virtual interface
-    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
-    //       check marker `needs_assembly`
-    virtual double value(const Vector<double>&) const = 0;
-
-    // TODO: Compute directional derivative and Riemannian gradient successively
-    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const
-    {
-        throw dealii::ExcNotImplemented();
-    }
-    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
-    //       check marker `needs_gradient
-    virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
-    virtual iteration::State residual(const Vector<double>&) const = 0;
 
 protected:
+    // Finite element discretization
     const GrossPitaevskiiProblem<dim>& problem;
+    // Problem parameters
     double beta;
     SolverOptions options;
-    OperatorType A, M;
 };
 
 
 template <int dim>
-class MassOracle : public OracleBase<dim>
+class MassOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "M";
     static constexpr auto metric = MetricKind::MASS;
 
-    MassOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , M_inv(this->M, options_) // Specialized member
+    MassOracle(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GrossPitaevskiiOracle<dim>(problem, beta, options)
+        , A(this->problem.get_operator_A(beta))
+        , M(this->problem.get_operator_M())
+        , M_inv(M, options) // Specialized member
     {}
 
     MetricKind get_metric() const override { return metric; }
@@ -139,13 +210,12 @@ public:
     */
     double value(const Vector<double>& x) const override
     {
-        return this->problem.value(x, this->beta);
+        return this->problem.value(x, this->beta);  // metric-independent
     }
 
-    // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return this->problem.directional_derivative(x, z, this->beta);
+        return this->problem.directional_derivative(x, z, this->beta);  // metric-independent
     }
 
     /**
@@ -156,42 +226,46 @@ public:
         if (m_res.residual > 0) {
             M_inv.set_tol(m_res.residual*this->options.tol_inner_res);
         }
-        ellipsoid::mass::gradient(M_inv, this->A, this->M, x, output);
+        ellipsoid::mass::gradient(M_inv, A, M, x, output);
         return M_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        m_res = iteration::residual(x, this->A, this->M);
+        m_res = iteration::residual(A, M, x);
         return m_res;
     }
 
 private:
+    OperatorType A, M;
     InverseOpType M_inv;
+
     mutable iteration::State m_res;
 };
 
 
 template <int dim>
-class EnergyOracle : public OracleBase<dim>
+class EnergyOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "A";
     static constexpr auto metric = MetricKind::ENERGY_ADAPTIVE;
+    MetricKind get_metric() const override { return metric; }
 
-    EnergyOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , A_inv(this->A, options_) // Specialized member
+    EnergyOracle(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GrossPitaevskiiOracle<dim>(problem, beta, options)
+        , M(this->problem.get_operator_M())
+        , A(this->problem.get_operator_A(beta))
+        , A_inv(A, options) // Specialized member
     {
         A_inv.update_static(this->problem.get_A0());
     }
 
-    MetricKind get_metric() const override { return metric; }
-
-    void update(const Vector<double>& x) const override
+    // Additional method for updating (Jacobi) preconditioner for new x
+    void update(const Vector<double>& x) override
     {
-        OracleBase<dim>::update(x); // Calls assembly
-        A_inv.update_dynamic(this->A.diagonal());
+        GrossPitaevskiiOracle<dim>::update(x); // Calls assembly in parent class
+        A_inv.update_dynamic(A.diagonal());
     }
 
     /**
@@ -216,46 +290,50 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         if (m_res.residual > 0) {
-            this->A_inv.set_tol(m_res.residual*this->options.tol_inner_res);
+            A_inv.set_tol(m_res.residual*this->options.tol_inner_res);
         }
-        ellipsoid::energy::gradient(this->A_inv, this->M, x, output);
-        return this->A_inv.control().last_step();
+        ellipsoid::energy::gradient(A_inv, M, x, output);
+        return A_inv.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
-        m_res = iteration::residual(x, this->A, this->M);
+        m_res = iteration::residual(A, M, x);  // TODO: less general namespace?
         return m_res;
     }
 
 private:
-    mutable InverseOpType A_inv; // Moved from Base
+    OperatorType M, A;
+    InverseOpType A_inv;
     mutable iteration::State m_res;
 };
 
 
 template <int dim>
-class FrobeniusOracle : public OracleBase<dim>
+class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "F";
-    using OracleBase<dim>::OracleBase;
     static constexpr auto metric = MetricKind::FROBENIUS;
-
     MetricKind get_metric() const override { return metric; }
+
+    FrobeniusOracle(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
+        : GrossPitaevskiiOracle<dim>(problem, beta, options)
+        , M(this->problem.get_operator_M())
+        , A(this->problem.get_operator_A(beta))
+    {}
 
     /**
      * @brief Computes the Gross-Pitaevskii energy functional value.
      */
     double value(const Vector<double>& x) const override
     {
-        return this->problem.value(x, this->beta);
+        return this->problem.value(x, this->beta);  // metric-independent
     }
 
-    // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return this->problem.directional_derivative(x, z, this->beta);
+        return this->problem.directional_derivative(x, z, this->beta);  // metric-independent
     }
 
     /**
@@ -264,7 +342,7 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        ellipsoid::frobenius::gradient(this->A, this->M, x, output);
+        ellipsoid::frobenius::gradient(A, M, x, output);
 
         // F-gradient evaluation does not involve a linear solver.
         return 0;
@@ -275,31 +353,32 @@ public:
      */
     iteration::State residual(const Vector<double>& x) const override
     {
-        m_res = iteration::residual(x, this->A, this->M, false);
+        m_res = iteration::residual(A, M, x, false);
         return m_res;
     }
 
 private:
+    OperatorType M, A;
     mutable iteration::State m_res;
 };
 
 
-// TODO: Inheritance from OracleBase?  -> retract(), directional_derivative (Armijo line search)
-//       CoarseOracleBase::update necessarily non-const ; OracleBase::update is const
-//
 // The gradient of the coarse model is used to find a descent direction dk.
 // Therefore, CoarseOracleBase should include update(), gradient() and (for line search) value methods.
 // A full approximation / multilevel scheme should build the descent direction based on this:
 //    grad (coarse) -> retract_inv_by_norm -> vector_prolongation
+// TODO: for a multilevel implementation, O(_coarse) need to be set to previous levels
+//   -> define a seperate constructor taking O, O_coarse as arguments (instead of problem(_coarse) for initialization)
+//      this assumes TiltOracle is a wrapper containing no heavy objects as state
 template <int dim, typename TiltOracle>
-class CoarseOracleBase
+class GrossPitaevskiiCoarseOracle : OracleBase
 {
 public:
-    CoarseOracleBase(const GrossPitaevskiiProblem<dim>& problem,
-                     const GrossPitaevskiiProblem<dim>& problem_coarse,
-                     const ManifoldTransferBase& point_transfer,
-                     const VectorTransportBase& vector_transport,
-                     double beta, SolverOptions options, SolverOptions options_coarse)
+    GrossPitaevskiiCoarseOracle(const GrossPitaevskiiProblem<dim>& problem,
+                                const GrossPitaevskiiProblem<dim>& problem_coarse,
+                                const ManifoldTransferBase& point_transfer,
+                                const VectorTransportBase& vector_transport,
+                                double beta, SolverOptions options, SolverOptions options_coarse)
         : problem(problem), problem_coarse(problem_coarse), beta(beta)
         , options(options), options_coarse(options_coarse)
         , n(problem.n_dofs())
@@ -315,8 +394,14 @@ public:
         , m_w(n_coarse)
     {}
 
-    virtual ~CoarseOracleBase() = default;
-    virtual MetricKind get_metric() const { return MetricKind::NONE; }
+    // TODO: conditional define of problem?
+    //   problem.assemble_nonlinear_term(x) -> O.update(x)
+    //   problem_coarse.assemble_nonlinear_term(y) -> O_coarse.update(y)
+    // CoarseOracleBase(const TiltOracle& O, const TiltOracle& O_coarse,
+    //                  const ManifoldTransferBase& point_transfer,
+    //                  const VectorTransportBase& vector_transport,
+    //                  double beta, SolverOptions options, SolverOptions options_coarse)
+    // {}
 
     void set_timer(const dealii::Timer& timer_new) const
     {
@@ -324,7 +409,7 @@ public:
     }
 
     // Compute parameters for coarse model
-    void update(const Vector<double>& x)
+    void update(const Vector<double>& x) override
     {
         AssertDimension(x.size(), n);
 
@@ -332,7 +417,7 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] fine: assemble matrix\n";
 #endif
-        O.update(x);
+        problem.assemble_nonlinear_term(x);
 
         // Set base point for coarse model
 #ifdef CPU_TIME
@@ -343,7 +428,7 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
 #endif
-        O_coarse.update(m_y);  // mutable state (non-linear factor Mpp)
+        problem_coarse.assemble_nonlinear_term(m_y);
 
         // Compute coarse M-gradient
 #ifdef CPU_TIME
@@ -368,23 +453,22 @@ public:
         m_w.add(-1.0, m_x_grad_restr);
     }
 
-    unsigned gradient(const Vector<double>&, Vector<double>&) const
+    iteration::State residual(const Vector<double>& x) const final
     {
-
-    }
-
-    iteration::State rsidual(const Vector<double>&) const
-    {
-
+        return {.energy=value(x)};
     }
 
 private:
+    // Finite element discretization for fine and coarse mesh
     const GrossPitaevskiiProblem<dim>& problem, problem_coarse;
+
+    // Problem parameters for fine and coarse objective
     double beta;
     SolverOptions options, options_coarse;
     unsigned n, n_coarse;
 
     // Coarse and fine level evaluation for correction vector w
+    // Includes references to matrices/linear operators (A, M)
     TiltOracle O, O_coarse;
 
     // Operators for transferring solutions and gradients
@@ -402,53 +486,32 @@ private:
     mutable dealii::Timer timer;
 };
 
-// Coarse oracles provide a shift vector (m_w), base coarse point (m_phi)
-// TODO: instead of inheriting from OracleBase (which, in its current form, is fixed to a single level of discretization),
-//       define a constructor which allows a fine and coarse level of discretization.
-//       Then, the tilt vector w can be computed directly inside an (implementation of) CoarseOracleBase.
-// template <int dim>
-// class CoarseOracleBase : public OracleBase<dim>
-// {
-// public:
-//     static constexpr const char* id = "C";
-//     // TODO: abuse of notation: Galerkin condition vs. metric used for the shift w, dot product <w,.> and coarse condition
-//     using OracleBase<dim>::OracleBase;
-//
-//     MetricKind get_metric() const override { return MetricKind::NONE; }
-//
-//     void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
-//     {
-//         m_w = w_new;
-//         m_phi = phi_new;
-//     }
-//
-//     iteration::State residual(const Vector<double>& x) const final
-//     {
-//         return {.energy=this->value(x)};
-//     }
-//
-// protected:
-//     Vector<double> m_w;
-//     Vector<double> m_phi;
-// };
-
 
 // TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 //       moving the computation of m_w here requires both a fine and coarse OracleBase
 //       (-> GrossPitaevskiiProblem for coarse and fine discretizations)
 template <int dim>
-class MassCoarseOracle : public CoarseOracleBase<dim>
+class MassCoarseOracle : public GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>
 {
 public:
     static constexpr const char* id = "MC";
     static constexpr auto metric = MetricKind::MASS;
-
-    MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : CoarseOracleBase<dim>(problem_, beta_, options_)
-        , M_inv(this->M, options_) // Specialized member
-    {}
-
     MetricKind get_metric() const override { return metric; }
+
+    MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem,
+                     const GrossPitaevskiiProblem<dim>& problem_coarse,
+                     const ManifoldTransferBase& point_transfer,
+                     const VectorTransportBase& vector_transport,
+                     double beta, SolverOptions options, SolverOptions options_coarse)
+        // Computes correction vector w in update() method
+        : GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>(
+            problem, problem_coarse, point_transfer, vector_transport, beta, options, options_coarse)
+
+        // Evaluate gradient and value
+        , M_coarse(problem_coarse.get_operator_M())
+        , A_coarse(problem_coarse.get_operator_A(beta))  // or OracleBase::get_operator_A
+        , M_inv_coarse(M_coarse, options_coarse)
+    {}
 
     double value(const Vector<double>& x) const final
     {
@@ -462,44 +525,54 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
-        coarse::mass::gradient(this->M, M_inv, this->A, x, this->m_phi, this->m_w, output);
+        coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse, x, this->m_phi, this->m_w, output);
 
-        return M_inv.control().last_step();
+        return M_inv_coarse.control().last_step();
     }
 
 private:
-    InverseOpType M_inv;
+    OperatorType M_coarse, A_coarse;
+    InverseOpType M_inv_coarse;
 };
 
 
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 template <int dim>
-class MassCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim>
+class MassCoarseOracleEnergyAdaptive : public GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>
 {
 public:
     static constexpr const char* id = "MCA";
     static constexpr auto metric = MetricKind::MASS;
-
-    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : CoarseOracleBase<dim>(problem_, beta_, options_)
-        , A_inv(this->A, options_) // Specialized member
-    {
-        A_inv.update_static(this->problem.get_A0());
-    }
-
     MetricKind get_metric() const override { return metric; }
 
-    void update(const Vector<double>& x) const override
+    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem,
+                                   const GrossPitaevskiiProblem<dim>& problem_coarse,
+                                   const ManifoldTransferBase& point_transfer,
+                                   const VectorTransportBase& vector_transport,
+                                   double beta, SolverOptions options, SolverOptions options_coarse)
+        // Computes correction vector w in update() method
+        : GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>(
+            problem, problem_coarse, point_transfer, vector_transport, beta, options, options_coarse)
+
+        // Evaluate gradient and value
+        , M_coarse(problem_coarse.get_operator_M())
+        , A_coarse(problem_coarse.get_operator_A(beta))  // or OracleBase::get_operator_A
+        , A_inv_coarse(A_coarse, options_coarse)
     {
-        CoarseOracleBase<dim>::update(x); // Calls assembly
-        A_inv.update_dynamic(this->A.diagonal());
+        A_inv_coarse.update_static(this->problem_coarse.get_A0());
+    }
+
+    void update(const Vector<double>& x) final
+    {
+        GrossPitaevskiiCoarseOracle<dim, MassOracle<dim>>::update(x); // Calls assembly in parent
+
+        A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
     double value(const Vector<double>& x) const final
     {
         const double energy = this->problem.value(x, this->beta);
 
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M, energy);
+        return coarse::mass::function_value(x, this->m_phi, this->m_w, M_coarse, energy);
     }
 
     /**
@@ -508,32 +581,44 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
-        coarse::mass::energy_adaptive_gradient(this->M, A_inv, x, this->m_phi, this->m_w, output);
+        coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse, x, this->m_phi, this->m_w, output);
 
-        return this->A_inv.control().last_step();
+        return A_inv_coarse.control().last_step();
     }
 
 private:
-    mutable InverseOpType A_inv;
+    OperatorType M_coarse, A_coarse;
+    InverseOpType A_inv_coarse;
 };
 
 
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 template <int dim>
-class FrobeniusCoarseOracle : public CoarseOracleBase<dim>
+class FrobeniusCoarseOracle : public GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>
 {
 public:
     static constexpr const char* id = "FC";
     static constexpr auto metric = MetricKind::FROBENIUS;
-    using CoarseOracleBase<dim>::CoarseOracleBase;
-
     MetricKind get_metric() const override { return metric; }
+
+    FrobeniusCoarseOracle(const GrossPitaevskiiProblem<dim>& problem,
+                          const GrossPitaevskiiProblem<dim>& problem_coarse,
+                          const ManifoldTransferBase& point_transfer,
+                          const VectorTransportBase& vector_transport,
+                          double beta, SolverOptions options, SolverOptions options_coarse)
+        // Computes correction vector w in update() method
+        : GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>(
+            problem, problem_coarse, point_transfer, vector_transport, beta, options, options_coarse)
+
+        // Evaluate gradient and value
+        , M_coarse(problem_coarse.get_operator_M())
+        , A_coarse(problem_coarse.get_operator_A(beta))
+    {}
 
     double value(const Vector<double>& x) const final
     {
         const double energy = this->problem.value(x, this->beta);
 
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
+        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, M_coarse, energy);
     }
 
     /**
@@ -543,41 +628,54 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
         // Compute the pure Frobenius gradient
-        coarse::frobenius::gradient(this->M, this->A, x, this->m_phi, this->m_w, output);
+        coarse::frobenius::gradient(M_coarse, A_coarse, x, this->m_phi, this->m_w, output);
 
         return 0; // 0 iterations, as no Krylov solver is used
     }
+
+private:
+    OperatorType M_coarse, A_coarse;
 };
 
 
 // TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 template <int dim>
-class FrobeniusCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim>
+class FrobeniusCoarseOracleEnergyAdaptive : public GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>
 {
 public:
     static constexpr const char* id = "FCA";
     static constexpr auto metric = MetricKind::FROBENIUS;
-
-    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : CoarseOracleBase<dim>(problem_, beta_, options_)
-        , A_inv(this->A, options_) // Specialized member
-    {
-            A_inv.update_static(this->problem.get_A0());
-    }
-
     MetricKind get_metric() const override { return metric; }
 
-    void update(const Vector<double>& x) const override
+    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem,
+                                        const GrossPitaevskiiProblem<dim>& problem_coarse,
+                                        const ManifoldTransferBase& point_transfer,
+                                        const VectorTransportBase& vector_transport,
+                                        double beta, SolverOptions options, SolverOptions options_coarse)
+        // Computes correction vector w in update() method
+        : GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>(
+            problem, problem_coarse, point_transfer, vector_transport, beta, options, options_coarse)
+
+        // Evaluate gradient and value
+        , M_coarse(problem_coarse.get_operator_M())
+        , A_coarse(problem_coarse.get_operator_A(beta))
+        , A_inv_coarse(A_coarse, options_coarse)
     {
-        CoarseOracleBase<dim>::update(x); // Calls assembly
-        A_inv.update_dynamic(this->A.diagonal());
+        A_inv_coarse.update_static(this->problem.get_A0());
+    }
+
+    void update(const Vector<double>& x) final
+    {
+        GrossPitaevskiiCoarseOracle<dim, FrobeniusOracle<dim>>::update(x); // Calls assembly in parent
+
+        A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
     double value(const Vector<double>& x) const final
     {
         const double energy = this->problem.value(x, this->beta);
 
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
+        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, M_coarse, energy);
     }
 
     /**
@@ -587,15 +685,16 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
         // Computes the F-gradient and applies the A_inv preconditioner
-        coarse::frobenius::energy_adaptive_gradient(this->M, this->A_inv,this->A,
+        coarse::frobenius::energy_adaptive_gradient(M_coarse, A_inv_coarse,A_coarse,
             x, this->m_phi, this->m_w, output);
 
         // Return the number of Krylov iterations used by A_inv
-        return this->A_inv.control().last_step();
+        return A_inv_coarse.control().last_step();
     }
 
 private:
-    mutable InverseOpType A_inv;
+    OperatorType M_coarse, A_coarse;
+    InverseOpType A_inv_coarse;
 };
 
 } // namespace gpe

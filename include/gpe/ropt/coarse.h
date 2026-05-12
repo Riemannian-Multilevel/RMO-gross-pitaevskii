@@ -56,7 +56,8 @@ CycleInfo cycle_smooth(Oracle& O_fine, Vector<double>& x, const Vector<double>& 
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
 #endif
-        O_fine.retract(eta, x, options_gd.step_size);  // update y
+        // TODO: pass on ManifoldBase object
+        ellipsoid::retract_by_norm(O_fine.get_M(), eta, x, options_gd.step_size);  // update y
 
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
@@ -150,8 +151,8 @@ public:
     //           metric for \grad q_k(y) can differ from gradient of w and <w, .>_y
     // TODO: move computation of w to CoarseOracleBase to avoid mismatches in metric between w and <w,.>
     //       const correctness for CoarseOracleBase
-    CoarseModel(const OracleBase<dim>& O_coarse, const OracleBase<dim>& O_fine,
-                CoarseOracleBase<dim>& qk,
+    CoarseModel(const GrossPitaevskiiOracle<dim>& O_coarse, const GrossPitaevskiiOracle<dim>& O_fine,
+                GrossPitaevskiiCoarseOracle<dim>& qk,
                 const ManifoldTransferBase& point_transfer,
                 const VectorTransportBase& vector_transport)
         : O_coarse(O_coarse), O_fine(O_fine)
@@ -297,10 +298,10 @@ private:
     mutable dealii::Timer timer;
 
     // Function evaluation
-    const OracleBase<dim>& O_coarse;  // coarse objective
-    const OracleBase<dim>& O_fine;    // fine objective
+    const GrossPitaevskiiOracle<dim>& O_coarse;  // coarse objective
+    const GrossPitaevskiiOracle<dim>& O_fine;    // fine objective
     // TODO: const correctness?
-    CoarseOracleBase<dim>& qk;  // coarse objective + linear shift
+    GrossPitaevskiiCoarseOracle<dim>& qk;  // coarse objective + linear shift
 
     // Grid operators
     const ManifoldTransferBase& point_transfer;
@@ -317,7 +318,7 @@ class GradientDescent
 {
 public:
     // O_fine: oracle used for computing gradient descent steps on the fine level
-    GradientDescent(const OracleBase<dim>& O_fine)
+    GradientDescent(const GrossPitaevskiiOracle<dim>& O_fine)
         : O_fine(O_fine)
     {}
 
@@ -354,7 +355,7 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    const OracleBase<dim>& O_fine;
+    const GrossPitaevskiiOracle<dim>& O_fine;
 };
 
 
@@ -369,7 +370,7 @@ public:
     // O_coarse_model:
     //         model used for computing coarse descent steps
     // TODO: const correctness for CoarseModel
-    FullApproximationScheme(const OracleBase<dim>& O_fine, CoarseModel<dim>& O_coarse_model)
+    FullApproximationScheme(const GrossPitaevskiiOracle<dim>& O_fine, CoarseModel<dim>& O_coarse_model)
         : O_fine(O_fine)
         , O_coarse_model(O_coarse_model)
     {
@@ -456,7 +457,7 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    const OracleBase<dim>& O_fine;
+    const GrossPitaevskiiOracle<dim>& O_fine;
     // TODO: const correctness (update_parameters) - compute tilt inside CoarseOracleBase
     CoarseModel<dim>& O_coarse_model;  // encodes both the coarse model, and the method to solve it
 };

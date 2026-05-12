@@ -67,7 +67,8 @@ double armijo_line_search(OracleType& oracle,
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
         step *= alpha;
-        oracle.retract(x, step, x_trial);
+        // TODO: pass on ManifoldBase object
+        ellipsoid::retract_by_norm(oracle.get_M(), x, step, x_trial);
 
         // Evaluate function at the new point
         // TODO: this requires a new assembly of A_x - use matrix-free evaluation
@@ -182,7 +183,8 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
             step_size = h;
         }
         else {
-            oracle.retract(g, x, -options.step_size);
+            // TODO: pass on ManifoldBase object
+            ellipsoid::retract_by_norm(oracle.get_M(), g, x, -options.step_size);
             oracle.update(x);
         }
         // ---- End timed section

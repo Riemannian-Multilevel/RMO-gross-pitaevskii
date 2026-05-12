@@ -37,7 +37,7 @@ struct State
 
 // TODO: x*Mx is only for debugging/diagnostic purposes
 template <typename MatrixType>
-State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M,
+State residual(const MatrixType& A, const MatrixType& M, const Vector<double>& x,
                bool use_m_norm = true)
 {
     State prop;
