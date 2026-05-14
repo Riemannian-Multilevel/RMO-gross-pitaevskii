@@ -187,7 +187,7 @@ public:
         Vector<double> Mw(n_dofs());
         M_coarse.vmult(Mw, coarse_step.w);
 
-        return O_coarse.directional_derivative(x, z) + (Mw * z);
+        return O_coarse.directional_derivative(x, z) - (Mw * z);
     }
 
     /**
@@ -219,6 +219,20 @@ public:
         M_coarse.vmult(Mv, v);
 
         return std::sqrt(v*Mv);
+    }
+
+    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
+    const auto& get_M()  const
+    {
+        return coarse_model.objective_coarse().get_M();
+    }
+    const auto& get_A()  const
+    {
+        return coarse_model.objective_coarse().get_A();
+    }
+    const auto& get_A0() const
+    {
+        return coarse_model.objective_coarse().get_A0();
     }
 
 private:
@@ -270,7 +284,7 @@ public:
         Vector<double> Mw(n_dofs());
         M_coarse.vmult(Mw, coarse_step.w);
 
-        return O_coarse.directional_derivative(x, z) + (Mw * z);
+        return O_coarse.directional_derivative(x, z) - (Mw * z);
     }
 
     /**
@@ -303,6 +317,20 @@ public:
         M_coarse.vmult(Mv, v);
 
         return std::sqrt(v*Mv);
+    }
+
+    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
+    const auto& get_M()  const
+    {
+        return coarse_model.objective_coarse().get_M();
+    }
+    const auto& get_A()  const
+    {
+        return coarse_model.objective_coarse().get_A();
+    }
+    const auto& get_A0() const
+    {
+        return coarse_model.objective_coarse().get_A0();
     }
 
 
@@ -347,7 +375,7 @@ public:
         const auto& O_coarse = coarse_model.objective_coarse();
         const auto& coarse_step = coarse_model.get_state();
 
-        return O_coarse.directional_derivative(x, z) + coarse_step.w * z;
+        return O_coarse.directional_derivative(x, z) - coarse_step.w * z;
     }
 
     /**
@@ -377,6 +405,20 @@ public:
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
+    }
+
+    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
+    const auto& get_M()  const
+    {
+        return coarse_model.objective_coarse().get_M();
+    }
+    const auto& get_A()  const
+    {
+        return coarse_model.objective_coarse().get_A();
+    }
+    const auto& get_A0() const
+    {
+        return coarse_model.objective_coarse().get_A0();
     }
 
 
@@ -426,7 +468,7 @@ public:
         const auto& O_coarse = coarse_model.objective_coarse();
         const auto& coarse_step = coarse_model.get_state();
 
-        return O_coarse.directional_derivative(x, z) + coarse_step.w * z;
+        return O_coarse.directional_derivative(x, z) - coarse_step.w * z;
     }
 
     /**
@@ -458,6 +500,20 @@ public:
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
+    }
+
+    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
+    const auto& get_M()  const
+    {
+        return coarse_model.objective_coarse().get_M();
+    }
+    const auto& get_A()  const
+    {
+        return coarse_model.objective_coarse().get_A();
+    }
+    const auto& get_A0() const
+    {
+        return coarse_model.objective_coarse().get_A0();
     }
 
 
