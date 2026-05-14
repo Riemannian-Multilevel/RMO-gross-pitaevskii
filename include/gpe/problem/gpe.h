@@ -263,11 +263,11 @@ template <int dim>
 class GrossPitaevskiiFunctional
 {
 public:
-    GrossPitaevskiiFunctional(const GrossPitaevskiiSystem<dim>& problem, double beta)
-        : system(problem)
+    GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta)
+        : system(system)
         , beta(beta)
-        , M(problem.get_operator_M())
-        , A(problem.get_operator_A(beta))
+        , M(system.get_operator_M())
+        , A(system.get_operator_A(beta))
     {}
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
@@ -316,6 +316,7 @@ public:
 
 private:
     GrossPitaevskiiSystem<dim>& system;
+
     double beta;
     OperatorType M, A;
 };
