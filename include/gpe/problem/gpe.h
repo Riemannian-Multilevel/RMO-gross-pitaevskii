@@ -79,7 +79,9 @@ public:
      *
      * @param x The current solution vector.
      */
-    void assemble_nonlinear_term(const Vector<double>& x) const
+    // TODO: keep this method non-const so evaluative methods (e.g. value, gradient, ...) cannot accidentally
+    //       call a matrix assembly. Future versions should implement a state pattern
+    void assemble_nonlinear_term(const Vector<double>& x)
     {
         assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
@@ -141,11 +143,9 @@ private:
 
     /** @brief The non-linear matrix is mutable to facilitate "lazy assembly."
      * In the GPE, \f$ M_{pp} \f$ must be recomputed whenever the solution
-     * density \f$ |\phi|^2 \f$ changes. Marking it mutable allows consumers
-     * to trigger this assembly within logically @p const methods (like value
-     * evaluation or gradient computation).
+     * density \f$ |\phi|^2 \f$ changes.
      */
-    mutable SparseMatrix<double> Mpp; ///< Non-linear term (changes every iteration).
+    SparseMatrix<double> Mpp; ///< Non-linear term (changes every iteration).
     SparsityPattern sparsity_pattern;
 };
 
@@ -271,7 +271,7 @@ public:
     {}
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
-    void update(const Vector<double>& x) const
+    void update(const Vector<double>& x)
     {
         system.assemble_nonlinear_term(x);
     }
@@ -315,7 +315,7 @@ public:
     const auto& get_A0() const { return system.get_A0(); }
 
 private:
-    const GrossPitaevskiiSystem<dim>& system;
+    GrossPitaevskiiSystem<dim>& system;
     double beta;
     OperatorType M, A;
 };

@@ -52,6 +52,7 @@ public:
     virtual iteration::State residual(const Vector<double>&) const = 0;
 
     virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
+    virtual unsigned n_dofs() const = 0;
 };
 
 
@@ -62,7 +63,7 @@ public:
     static constexpr const char* id = "M";
     static constexpr int dimension = dim;
 
-    MassOracle(const GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
+    MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : m_func(func)
         , options(options)
         , M(m_func.get_M())
@@ -111,11 +112,31 @@ public:
         return m_res;
     }
 
+    unsigned n_dofs() const override
+    {
+        return m_func.n_dofs();
+    }
+
+    // Domain-specific methods NOT in OracleBase
+    // Called in <Metric>CoarseOracle, which encodes the used fine/coarse oracle as a template parameter
+    const auto& get_M()  const
+    {
+        return m_func.get_M();
+    }
+    const auto& get_A()  const
+    {
+        return m_func.get_A();
+    }
+    const auto& get_A0() const
+    {
+        return m_func.get_A0();
+    }
+
 private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
+    GrossPitaevskiiFunctional<dim>& m_func;
     SolverOptions options;
 
-    const OperatorType& M, A;  // operators owned by GrossPitaevskiiFunctional
+    const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
     InverseOpType M_inv;
 
     mutable iteration::State m_res;
@@ -129,7 +150,7 @@ public:
     static constexpr const char* id = "A";
     static constexpr int dimension = dim;
 
-    EnergyOracle(const GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
+    EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : m_func(func)
         , options(options)
         , M(m_func.get_M())
@@ -187,11 +208,31 @@ public:
         return m_res;
     }
 
+    unsigned n_dofs() const override
+    {
+        return m_func.n_dofs();
+    }
+
+    // Domain-specific methods NOT in OracleBase
+    // Called in <Metric>CoarseOracle, which encodes the used fine/coarse oracle as a template parameter
+    const auto& get_M()  const
+    {
+        return m_func.get_M();
+    }
+    const auto& get_A()  const
+    {
+        return m_func.get_A();
+    }
+    const auto& get_A0() const
+    {
+        return m_func.get_A0();
+    }
+
 private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
+    GrossPitaevskiiFunctional<dim>& m_func;
     SolverOptions options;
 
-    const OperatorType& M, A;  // operators owned by GrossPitaevskiiFunctional
+    const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
     InverseOpType M_inv, A_inv;
 
     mutable iteration::State m_res;
@@ -205,9 +246,8 @@ public:
     static constexpr const char* id = "F";
     static constexpr int dimension = dim;
 
-    FrobeniusOracle(const GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
+    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func)
             : m_func(func)
-            , options(options)
             , M(m_func.get_M())
             , A(m_func.get_A())
     {}
@@ -254,11 +294,29 @@ public:
         return m_res;
     }
 
-private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
-    SolverOptions options;
+    unsigned n_dofs() const override
+    {
+        return m_func.n_dofs();
+    }
 
-    const OperatorType& M, A;  // operators owned by GrossPitaevskiiFunctional
+    // Domain-specific methods NOT in OracleBase
+    // Called in <Metric>CoarseOracle, which encodes the used fine/coarse oracle as a template parameter
+    const auto& get_M()  const
+    {
+        return m_func.get_M();
+    }
+    const auto& get_A()  const
+    {
+        return m_func.get_A();
+    }
+    const auto& get_A0() const
+    {
+        return m_func.get_A0();
+    }
+
+private:
+    GrossPitaevskiiFunctional<dim>& m_func;
+    const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
 
     mutable iteration::State m_res;
 };

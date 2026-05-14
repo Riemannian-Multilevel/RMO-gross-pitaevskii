@@ -13,7 +13,7 @@ namespace gpe
 // Class which implements all needed terms for the Nash coarse model. It assumes an oracle on a fine and coarse
 // level of discretization (implementing Riemannain gradient descent for a certain metric),
 // used to compute a correction vector between coarse and fine gradients.
-// TODO: for a multilevel implementation, O(_coarse) need to be set to previous levels
+// TODO: for a multilevel implementation, O(, O_coarse) need to be set to previous levels
 template <int dim, typename TiltOracle>
 class CoarseOracleBase
 {
@@ -37,9 +37,10 @@ public:
         {}
     };
 
-    CoarseOracleBase(const TiltOracle& O, const TiltOracle& O_coarse,
+    CoarseOracleBase(TiltOracle& O,
+                     TiltOracle& O_coarse,
                      const ManifoldTransferBase& point_transfer,
-                     const VectorTransportBase&  vector_transport)
+                     const VectorTransportBase& vector_transport)
         : O(O), O_coarse(O_coarse)
 
     // Problem evaluation
@@ -84,7 +85,7 @@ public:
 
         // Compute fine M-gradient
 #ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O.id << "-fine gradient\n";
 #endif
         O.gradient(x, m_state.x_grad);
 
@@ -109,10 +110,19 @@ public:
         return m_state;
     }
 
+    const TiltOracle& objective_fine() const
+    {
+        return O;
+    }
+
+    const TiltOracle& objective_coarse() const
+    {
+        return O_coarse;
+    }
 
 protected:
     // Coarse and fine level evaluation for correction vector w
-    const TiltOracle& O, O_coarse;
+    TiltOracle &O, &O_coarse;
     unsigned n, n_coarse;
 
     // Operators for transferring solutions and gradients
@@ -141,29 +151,82 @@ class MassCoarseOracle : public OracleBase
 public:
     static constexpr const char* id = "MC";
 
+    MassCoarseOracle(CoarseOracleBase<dim, MassOracle<dim>>& coarse_model, SolverOptions options)
+        : coarse_model(coarse_model)
+        , options(options)
+        , M_coarse(coarse_model.objective_coarse().get_M())
+        , A_coarse(coarse_model.objective_coarse().get_A())
+        , M_inv_coarse(M_coarse, options)
+    {}
 
-    double value(const Vector<double>& x) const final
+    void update(const Vector<double>& x) override
     {
-        const double energy = this->problem.value(x, this->beta);
+        // Assembly:
+        //   O.update(x) (fine)
+        //   O_coarse.update(x) (coarse)
 
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M_coarse, energy);
+        // Model parameters:
+        //   CoarseOracleBase::CoarseState (restricted gradients)
+        coarse_model.update(x);
+    }
+
+    double value(const Vector<double>& x) const override
+    {
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
+
+        return coarse::mass::function_value(x, coarse_step.y, coarse_step.w,
+            M_coarse, O_coarse.value(x));
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
+
+        Vector<double> Mw(n_dofs());
+        M_coarse.vmult(Mw, coarse_step.w);
+
+        return O_coarse.directional_derivative(x, z) + (Mw * z);
     }
 
     /**
      * @brief Computes the coarse model gradient in the M-metric.
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::gradient(this->M_coarse, this->M_inv_coarse, this->A_coarse,
-            x, this->m_state.y, this->m_state.w, output);
+        const auto& coarse_step = coarse_model.get_state();
 
-        return this->M_inv_coarse.control().last_step();
+        coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse,
+            x, coarse_step.y, coarse_step.w, output);
+
+        return M_inv_coarse.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const final
     {
         return {.energy=value(x)};
     }
+
+    unsigned n_dofs() const override
+    {
+        return coarse_model.objective_coarse().n_dofs();
+    }
+
+    double norm(const Vector<double>& v) const override
+    {
+        Vector<double> Mv(n_dofs());
+        M_coarse.vmult(Mv, v);
+
+        return std::sqrt(v*Mv);
+    }
+
+private:
+    CoarseOracleBase<dim, MassOracle<dim>>& coarse_model;
+    SolverOptions options;
+
+    const OperatorType &M_coarse, &A_coarse;  // operators owned by MassOracle <- GrossPitaevskiiFunctional
+    InverseOpType M_inv_coarse;
 };
 
 
@@ -173,29 +236,41 @@ class MassCoarseOracleEnergyAdaptive : public OracleBase
 public:
     static constexpr const char* id = "MCA";
 
-    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiSystem<dim>& problem,
-                                   const GrossPitaevskiiSystem<dim>& problem_coarse,
-                                   const ManifoldTransferBase& point_transfer,
-                                   const VectorTransportBase& vector_transport,
-                                   double beta, SolverOptions options, SolverOptions options_coarse)
-        : CoarseOracleBase<dim, MassOracle<dim>>(problem, problem_coarse,
-            point_transfer, vector_transport, beta, options, options_coarse)
+    MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, MassOracle<dim>>& coarse_model, SolverOptions options)
+        : coarse_model(coarse_model)
+        , options(options)
+        , M_coarse(coarse_model.objective_coarse().get_M())
+        , A_coarse(coarse_model.objective_coarse().get_A())
+        , A_inv_coarse(A_coarse, options)
     {
-        this->A_inv_coarse.update_static(this->problem_coarse.get_A0());
+        A_inv_coarse.update_static(coarse_model.objective_coarse().get_A0());
     }
 
     void update(const Vector<double>& x) override
     {
-        CoarseOracleBase<dim, MassOracle<dim>>::update(x); // Calls assembly in parent
+        coarse_model.update(x);
 
-        this->A_inv_coarse.update_dynamic(this->A_coarse.diagonal());
+        A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
     double value(const Vector<double>& x) const override
     {
-        const double energy = this->problem.value(x, this->beta);
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
 
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M_coarse, energy);
+        return coarse::mass::function_value(x, coarse_step.y, coarse_step.w,
+            M_coarse, O_coarse.value(x));
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        const MassOracle<dim>& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
+
+        Vector<double> Mw(n_dofs());
+        M_coarse.vmult(Mw, coarse_step.w);
+
+        return O_coarse.directional_derivative(x, z) + (Mw * z);
     }
 
     /**
@@ -204,16 +279,39 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        coarse::mass::energy_adaptive_gradient(this->M_coarse, this->A_inv_coarse,
-            x, this->m_state.y, this->m_state.w, output);
+        const auto& coarse_step = coarse_model.get_state();
 
-        return this->A_inv_coarse.control().last_step();
+        coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse,
+            x, coarse_step.y, coarse_step.w, output);
+
+        return A_inv_coarse.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const override
     {
         return {.energy=value(x)};
     }
+
+    unsigned n_dofs() const override
+    {
+        return coarse_model.objective_coarse().n_dofs();
+    }
+
+    double norm(const Vector<double>& v) const override
+    {
+        Vector<double> Mv(n_dofs());
+        M_coarse.vmult(Mv, v);
+
+        return std::sqrt(v*Mv);
+    }
+
+
+private:
+    CoarseOracleBase<dim, MassOracle<dim>>& coarse_model;
+    SolverOptions options;
+
+    const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
+    InverseOpType A_inv_coarse;
 };
 
 
@@ -223,67 +321,112 @@ class FrobeniusCoarseOracle : public OracleBase
 public:
     static constexpr const char* id = "FC";
 
+    FrobeniusCoarseOracle(CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model, SolverOptions options)
+        : coarse_model(coarse_model)
+        , options(options)
+        , M_coarse(coarse_model.objective_coarse().get_M())
+        , A_coarse(coarse_model.objective_coarse().get_A())
+    {}
 
-    double value(const Vector<double>& x) const final
+    void update(const Vector<double>& x) override
     {
-        const double energy = this->problem.value(x, this->beta);
+        coarse_model.update(x);
+    }
 
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M_coarse, energy);
+    double value(const Vector<double>& x) const override
+    {
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
+
+        return coarse::frobenius::function_value(x, coarse_step.y, coarse_step.w,
+            M_coarse, O_coarse.value(x));
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
+
+        return O_coarse.directional_derivative(x, z) + coarse_step.w * z;
     }
 
     /**
      * @brief Computes the coarse model gradient in the F-metric.
      * $$ \nabla_F q_k(\zeta) = \Pi_{\zeta, F}\left(A_\zeta \zeta - \frac{1}{\phi^\top M\zeta}w\right) $$
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        // Compute the pure Frobenius gradient
-        coarse::frobenius::gradient(this->M_coarse, this->A_coarse,
-            x, this->m_phi, this->m_w, output);
+        const auto& coarse_step = coarse_model.get_state();
 
-        return 0; // 0 iterations, as no Krylov solver is used
+        // Compute the pure Frobenius gradient
+        coarse::frobenius::gradient(M_coarse, A_coarse, x, coarse_step.y, coarse_step.w, output);
+
+        return 0;  // 0 iterations, as no Krylov solver is used
     }
 
-    iteration::State residual(const Vector<double>& x) const final
+    iteration::State residual(const Vector<double>& x) const override
     {
         return {.energy=value(x)};
     }
+
+    unsigned n_dofs() const override
+    {
+        return coarse_model.objective_coarse().n_dofs();
+    }
+
+    double norm(const Vector<double>& v) const override
+    {
+        return std::sqrt(v*v);
+    }
+
+
+private:
+    CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model;
+    SolverOptions options;
+
+    const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
 };
 
 
 // TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 template <int dim>
-class FrobeniusCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim, FrobeniusOracle<dim>>
+class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "FCA";
-    static constexpr auto metric = MetricKind::FROBENIUS;
-    MetricKind get_metric() const override { return metric; }
 
-    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiSystem<dim>& problem,
-                                        const GrossPitaevskiiSystem<dim>& problem_coarse,
-                                        const ManifoldTransferBase& point_transfer,
-                                        const VectorTransportBase& vector_transport,
-                                        double beta, SolverOptions options, SolverOptions options_coarse)
-        // Computes correction vector w in update() method
-        : CoarseOracleBase<dim, FrobeniusOracle<dim>>(problem, problem_coarse,
-            point_transfer, vector_transport, beta, options, options_coarse)
+    FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model, SolverOptions options)
+        : coarse_model(coarse_model)
+        , options(options)
+        , M_coarse(coarse_model.objective_coarse().get_M())
+        , A_coarse(coarse_model.objective_coarse().get_A())
+        , A_inv_coarse(A_coarse, options)
     {
-        this->A_inv_coarse.update_static(this->problem.get_A0());
+        A_inv_coarse.update_static(coarse_model.objective_coarse().get_A0());
     }
 
-    void update(const Vector<double>& x) final
+    void update(const Vector<double>& x) override
     {
-        CoarseOracleBase<dim, FrobeniusOracle<dim>>::update(x); // Calls assembly in parent
+        coarse_model.update(x);
 
-        this->A_inv_coarse.update_dynamic(this->A_coarse.diagonal());
+        A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
-    double value(const Vector<double>& x) const final
+    double value(const Vector<double>& x) const override
     {
-        const double energy = this->problem.value(x, this->beta);
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
 
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M_coarse, energy);
+        return coarse::frobenius::function_value(x, coarse_step.y, coarse_step.w,
+            M_coarse, O_coarse.value(x));
+    }
+
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        const auto& O_coarse = coarse_model.objective_coarse();
+        const auto& coarse_step = coarse_model.get_state();
+
+        return O_coarse.directional_derivative(x, z) + coarse_step.w * z;
     }
 
     /**
@@ -292,18 +435,38 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
+        const auto& coarse_step = coarse_model.get_state();
+
         // Computes the F-gradient and applies the A_inv preconditioner
-        coarse::frobenius::energy_adaptive_gradient(this->M_coarse, this->A_inv_coarse,this->A_coarse,
-            x, this->m_phi, this->m_w, output);
+        coarse::frobenius::energy_adaptive_gradient(M_coarse, A_inv_coarse,A_coarse,
+            x, coarse_step.y, coarse_step.w, output);
 
         // Return the number of Krylov iterations used by A_inv
-        return this->A_inv_coarse.control().last_step();
+        return A_inv_coarse.control().last_step();
     }
 
     iteration::State residual(const Vector<double>& x) const final
     {
         return {.energy=value(x)};
     }
+
+    unsigned n_dofs() const override
+    {
+        return coarse_model.objective_coarse().n_dofs();
+    }
+
+    double norm(const Vector<double>& v) const override
+    {
+        return std::sqrt(v*v);
+    }
+
+
+private:
+    CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model;
+    SolverOptions options;
+
+    const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
+    InverseOpType A_inv_coarse;
 };
 
 } // namespace gpe

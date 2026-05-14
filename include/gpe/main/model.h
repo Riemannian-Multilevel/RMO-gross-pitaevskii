@@ -57,8 +57,10 @@ public:
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
     const GrossPitaevskiiSystem<dim>& get_problem() const { return system; }
 
-    /** @brief Computation of value and derivatives in ambient space. */
-    auto get_eval(double beta) const
+    /** @brief Computation of value and derivatives in ambient space.
+     * Non-const so calls to GrossPitaevskiiSystem::update() can propagate
+     */
+    auto get_eval(double beta)
     {
         return GrossPitaevskiiFunctional<dim>(system, beta);
     }

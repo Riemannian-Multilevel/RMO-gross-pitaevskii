@@ -721,8 +721,8 @@ double directional_derivative(const Vector<double>& zeta,
  * @param M Mass matrix
  * @param M_inv Operator representing M^-1 (must support vmult)
  * @param A Operator representing A_zeta (must support vmult)
- * @param zeta Coarse approximation (base point)
- * @param phi Fine grid restriction
+ * @param zeta Coarse variable (argument of the function)
+ * @param phi Fine grid restriction (base point)
  * @param w Restricted residual
  * @param dst Output vector
  */
@@ -756,7 +756,7 @@ void gradient(const MatrixType& M,
  * @param M Mass matrix (M_coarse)
  * @param A_inv Linear operator or InverseMatrix wrapper representing A_zeta^-1
  * @param zeta The coarse approximation (y)
- * @param phi The restricted fine grid approximation (base point)
+ * @param phi Fine grid restriction (base point)
  * @param w The restricted residual/gradient
  * @param dst Output vector
  */
@@ -764,7 +764,8 @@ void gradient(const MatrixType& M,
 //       tag- or class-based metric selection
 template <typename MatrixType, typename InverseMatrixType>
 void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_inv,
-                              const Vector<double>& zeta, const Vector<double>& phi,
+                              const Vector<double>& zeta,
+                              const Vector<double>& phi,
                               const Vector<double>& w,
                               Vector<double>& dst)
 {
@@ -783,6 +784,7 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
 } // namespace coarse::mass
 
 
+// TODO: Doxygen documentation for functions in this namespace
 namespace coarse::frobenius
 {
 
