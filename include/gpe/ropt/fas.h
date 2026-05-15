@@ -168,39 +168,36 @@ inline void coarse_solve(CoarseModelType& q_k,
                          const ManifoldBase& coarse_manifold,
                          const VectorTransportBase& vector_transport,
                          DescentOptions options_gd,
-                         Vector<double>& dst)
+                         Vector<double>& dst,
+                         const dealii::Timer& timer)
 {
     const auto& state = fas.get_state();
     Vector<double> zk = state.y;
 
-    // 1. Find zk such that qk(zk) < qk(state.y)
-    // Note: Assuming gradient_descent takes (oracle, manifold, start_point, ...)
 #ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: " << q_k.id << "-gradient descent\n";
+    std::cerr << "[" << timer.cpu_time() << "] coarse: " << CoarseModelType::id << "-gradient descent\n";
 #endif
     zk = gradient_descent(q_k, coarse_manifold, zk, options_gd, std::cerr);
 
-    // 2. Compute the search direction: v_coarse = Retract_inv(y, zk)
-    // zk is overwritten to hold the ambient tangent vector
 #ifdef CPU_TIME
     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
 #endif
     coarse_manifold.retract_inv(zk, state.y);
 
-    // 3. Prolongate the tangent vector back to the fine space -> dst
 #ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: " << vector_transport.id << "-vector prolongation\n";
+    // Assuming vector_transport has an id, or fall back to a generic string
+    std::cerr << "[" << timer.cpu_time() << "] coarse: vector prolongation\n";
 #endif
     vector_transport.vector_prolongation(x, state.y, zk, dst);
 }
 
 
 // TODO: convergence check (cf. EnergySimulator::run)
-template <int dim, typename FineOracleType, typename CoarseOracleType, typename CoarseModelType>
+template <int dim, typename FineOracleType, typename CoarseObjectiveType, typename CoarseModelType>
 class FullApproximationScheme
 {
 public:
-    using FASManager = CoarseOracleBase<dim, FineOracleType, CoarseOracleType>;
+    using FASManager = CoarseOracleBase<dim, FineOracleType, CoarseObjectiveType>;
 
     FullApproximationScheme(FineOracleType& O_fine,
                             FASManager& fas,
@@ -213,6 +210,7 @@ public:
         , coarse_manifold(coarse_manifold)
         , vector_transport(vector_transport)
     {
+        // Bind the timer to the FAS manager so it can log its internal grid transfers
         fas.set_timer(timer);
     }
 
@@ -226,8 +224,6 @@ public:
         Vector<double> dk(x.size());
 
         bool check_coarse_cond = true;
-
-        // Tracks if the Oracles reflect the current mathematical state of 'x'
         bool is_updated = false;
 
         for (unsigned i = 0; i < options_gd.max_iter; i++) {
@@ -239,7 +235,7 @@ public:
             // ---------------------------------------------------------
             if (check_coarse_cond && (i == 0 || i % coarse_every == 0)) {
 
-                // q_k.update(x) safely updates both the FAS manager AND the fine oracle.
+                // Safely updates both the FAS manager AND the fine oracle.
                 q_k.update(x);
                 is_updated = true;
 
@@ -268,7 +264,7 @@ public:
             // ---------------------------------------------------------
             if (do_coarse_step) {
                 // --- COARSE STEP ---
-                coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, options_gd_coarse, dk);
+                coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, options_gd_coarse, dk, timer);
 
                 CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
                 info.iter      = i;
@@ -281,13 +277,17 @@ public:
                 is_updated = false;
             } else {
                 // --- FINE STEP ---
-
-                // Only trigger the expensive assembly if x changed since the last update
                 if (!is_updated) {
+#ifdef CPU_TIME
+                    std::cerr << "[" << timer.cpu_time() << "] fine: assemble matrix\n";
+#endif
                     O_fine.update(x);
                     is_updated = true;
                 }
 
+#ifdef CPU_TIME
+                std::cerr << "[" << timer.cpu_time() << "] fine: gradient evaluation\n";
+#endif
                 auto lac_iter = O_fine.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
