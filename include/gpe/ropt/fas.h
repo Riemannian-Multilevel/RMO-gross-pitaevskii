@@ -216,27 +216,35 @@ public:
         fas.set_timer(timer);
     }
 
-    void cycle(const Vector<double>& x0, std::ostream& os,
+    void cycle(Vector<double>& x, std::ostream& os,
                DescentOptions options_gd, DescentOptions options_gd_coarse,
                double kappa, double eps, unsigned coarse_every = 1)
     {
         timer.reset();
 
-        Vector<double> x(x0);
-        O_fine.update(x);
         Vector<double> x_grad(x.size());
         Vector<double> dk(x.size());
 
         bool check_coarse_cond = true;
 
+        // Tracks if the Oracles reflect the current mathematical state of 'x'
+        bool is_updated = false;
+
         for (unsigned i = 0; i < options_gd.max_iter; i++) {
+
+            bool do_coarse_step = false;
+
+            // ---------------------------------------------------------
+            // 1. Evaluate Coarse Condition
+            // ---------------------------------------------------------
             if (check_coarse_cond && (i == 0 || i % coarse_every == 0)) {
-                // 1. Setup the coarse model and FAS orchestrator
-                // q_k.update(x) forwards to fas.update(x)
+
+                // q_k.update(x) safely updates both the FAS manager AND the fine oracle.
                 q_k.update(x);
+                is_updated = true;
+
                 const auto& state = fas.get_state();
 
-                // 2. Evaluate coarse condition norms directly via the Oracles
                 double norm_fine   = O_fine.norm(state.x_grad);
                 double norm_coarse = fas.objective_coarse().norm(state.x_grad_restr);
 
@@ -244,34 +252,42 @@ public:
                 convergence_table.add_value("grad_restr_norm", norm_coarse);
 
                 if (norm_coarse <= eps) {
-                    check_coarse_cond = false;  // stop coarse condition once threshold was reached
+                    check_coarse_cond = false;
                 }
 
                 if (norm_coarse >= kappa * norm_fine && norm_coarse > eps) {
-                    // --- COARSE STEP ---
-                    coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, options_gd_coarse, dk);
-
-                    // Proceed with line search / smoothing using dk
-                    CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
-                    info.iter      = i;
-                    info.coarse    = true;
-                    info.lac_iter  = 0;
-
-                    cycle_eval(O_fine, x, convergence_table, info);
-                } else {
-                    goto fine_step;
+                    do_coarse_step = true;
                 }
             } else {
                 convergence_table.add_value("grad_restr_norm", 0);
                 convergence_table.add_value("grad_norm", 0);
-    fine_step:
+            }
+
+            // ---------------------------------------------------------
+            // 2. Execute Step (Coarse or Fine)
+            // ---------------------------------------------------------
+            if (do_coarse_step) {
+                // --- COARSE STEP ---
+                coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, options_gd_coarse, dk);
+
+                CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
+                info.iter      = i;
+                info.coarse    = true;
+                info.lac_iter  = 0;
+
+                cycle_eval(O_fine, x, convergence_table, info);
+
+                // x was modified by smoothing! The oracles are now stale.
+                is_updated = false;
+            } else {
                 // --- FINE STEP ---
-                if (i > 0) {
+
+                // Only trigger the expensive assembly if x changed since the last update
+                if (!is_updated) {
                     O_fine.update(x);
+                    is_updated = true;
                 }
-#ifdef CPU_TIME
-                std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
-#endif
+
                 auto lac_iter = O_fine.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
@@ -282,6 +298,9 @@ public:
                 info.lac_iter  = lac_iter;
 
                 cycle_eval(O_fine, x, convergence_table, info);
+
+                // x was modified by smoothing! The oracles are now stale.
+                is_updated = false;
             }
         }
 

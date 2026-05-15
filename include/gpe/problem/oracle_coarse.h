@@ -14,7 +14,7 @@ namespace gpe
 // level of discretization (implementing Riemannain gradient descent for a certain metric),
 // used to compute a correction vector between coarse and fine gradients.
 // TODO: for a multilevel implementation, O(, O_coarse) need to be set to previous levels
-template <int dim, typename TiltOracleFine, typename TiltOracleCoarse>
+template <int dim, typename FineOracleType, typename CoarseOracleType>
 class CoarseOracleBase
 {
 public:
@@ -37,8 +37,8 @@ public:
         {}
     };
 
-    CoarseOracleBase(TiltOracleFine& O,
-                     TiltOracleCoarse& O_coarse,
+    CoarseOracleBase(FineOracleType& O,
+                     CoarseOracleType& O_coarse,
                      const ManifoldTransferBase& point_transfer,
                      const VectorTransportBase& vector_transport)
         : O(O), O_coarse(O_coarse)
@@ -110,20 +110,20 @@ public:
         return m_state;
     }
 
-    const TiltOracleFine& objective_fine() const
+    const FineOracleType& objective_fine() const
     {
         return O;
     }
 
-    const TiltOracleCoarse& objective_coarse() const
+    const CoarseOracleType& objective_coarse() const
     {
         return O_coarse;
     }
 
 protected:
     // Coarse and fine level evaluation for correction vector w
-    TiltOracleFine &O;
-    TiltOracleCoarse &O_coarse;
+    FineOracleType &O;
+    CoarseOracleType &O_coarse;
     unsigned n, n_coarse;
 
     // Operators for transferring solutions and gradients
