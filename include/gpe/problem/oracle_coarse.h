@@ -112,7 +112,7 @@ public:
 
     const FineOracleType& objective_fine() const { return O; }
     FineOracleType& objective_fine() { return O; }
-    
+
     const CoarseOracleType& objective_coarse() const { return O_coarse; }
     CoarseOracleType& objective_coarse() { return O_coarse; }
 

@@ -32,6 +32,17 @@ struct CycleInfo
 };
 
 
+class SolverBase
+{
+public:
+    virtual ~SolverBase() = default;
+
+    // Both FAS and GradientDescent must implement this interface.
+    // Note: 'x' must be non-const so the solver can mutate the initial guess
+    virtual void cycle(Vector<double>& x, std::ostream& os) = 0;
+};
+
+
 // Implementation of smoothing steps
 template <typename Oracle>
 CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
@@ -112,22 +123,23 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
     convergence_table.write_text(os, format);
 }
 
+
 template <int dim>
-class GradientDescent
+class GradientDescent : public SolverBase
 {
 public:
     // O_fine: oracle used for computing gradient descent steps on the fine level
-    GradientDescent(OracleBase& O_fine, const ManifoldBase& manifold)
+    GradientDescent(OracleBase& O_fine, const ManifoldBase& manifold, DescentOptions options_gd)
         : O_fine(O_fine)
         , manifold(manifold)
+        , options_gd(options_gd)
     {}
 
-    void cycle(const Vector<double>& x0, std::ostream& os, DescentOptions options_gd)
+    void cycle(Vector<double>& x, std::ostream& os) override
     {
         timer.restart();
 
-        // 0. Initialize oracle and coarse model
-        Vector<double> x(x0);
+        // x is updated in-place
         O_fine.update(x);
         Vector<double> x_grad(x.size());
         Vector<double> dk(x.size());
@@ -157,6 +169,7 @@ private:
     dealii::Timer timer;
     OracleBase& O_fine;
     const ManifoldBase& manifold;
+    DescentOptions options_gd;
 };
 
 
@@ -168,7 +181,7 @@ inline void coarse_solve(CoarseModelType& q_k,
                          const Vector<double>& x,
                          const ManifoldBase& coarse_manifold,
                          const VectorTransportBase& vector_transport,
-                         DescentOptions options_gd,
+                         SolverBase& coarse_solver,
                          Vector<double>& dst,
                          [[maybe_unused]] dealii::Timer& timer)
 {
@@ -178,7 +191,9 @@ inline void coarse_solve(CoarseModelType& q_k,
 #ifdef CPU_TIME
     std::cerr << "[" << timer.cpu_time() << "] coarse: " << CoarseModelType::id << "-gradient descent\n";
 #endif
-    zk = gradient_descent(q_k, coarse_manifold, zk, options_gd, std::cerr);
+    // Delegate the solve to whatever solver is assigned to this level
+    coarse_solver.cycle(zk, std::cerr);
+    //zk = gradient_descent(q_k, coarse_manifold, zk, options_gd, std::cerr);
 
 #ifdef CPU_TIME
     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -194,7 +209,7 @@ inline void coarse_solve(CoarseModelType& q_k,
 
 // Decouple Descent Oracle from the FAS Manager, and add the fine manifold
 template <int dim, typename DescentOracleType, typename FASManagerType, typename CoarseModelType>
-class FullApproximationScheme
+class FullApproximationScheme : public SolverBase
 {
 public:
     FullApproximationScheme(DescentOracleType& O_fine,
@@ -202,20 +217,24 @@ public:
                             CoarseModelType& q_k,
                             const ManifoldBase& fine_manifold,
                             const ManifoldBase& coarse_manifold,
-                            const VectorTransportBase& vector_transport)
+                            const VectorTransportBase& vector_transport,
+                            SolverBase& coarse_solver, // Reference to the next level
+                            DescentOptions options_gd,
+                            FAS_Options options_fas)
         : O_fine(O_fine)
         , fas(fas)
         , q_k(q_k)
-        , fine_manifold(fine_manifold)     // <--- ADDED
+        , fine_manifold(fine_manifold)
         , coarse_manifold(coarse_manifold)
         , vector_transport(vector_transport)
+        , coarse_solver(coarse_solver)
+        , options_gd(options_gd)
+        , options_fas(options_fas)
     {
         fas.set_timer(timer);
     }
 
-    void cycle(Vector<double>& x, std::ostream& os,
-               DescentOptions options_gd, DescentOptions options_gd_coarse,
-               double kappa, double eps, unsigned coarse_every = 1)
+    void cycle(Vector<double>& x, std::ostream& os) override
     {
         // Clear and start the clock
         timer.restart();
@@ -229,7 +248,7 @@ public:
 
             bool do_coarse_step = false;
 
-            if (check_coarse_cond && (i == 0 || i % coarse_every == 0)) {
+            if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
                 fas.update(x);
                 is_updated = true;
                 const auto& state = fas.get_state();
@@ -240,8 +259,8 @@ public:
                 convergence_table.add_value("grad_norm", norm_fine);
                 convergence_table.add_value("grad_restr_norm", norm_coarse);
 
-                if (norm_coarse <= eps) { check_coarse_cond = false; }
-                if (norm_coarse >= kappa * norm_fine && norm_coarse > eps) {
+                if (norm_coarse <= options_fas.eps) { check_coarse_cond = false; }
+                if (norm_coarse >= options_fas.kappa * norm_fine && norm_coarse > options_fas.eps) {
                     do_coarse_step = true;
                 }
             } else {
@@ -250,7 +269,7 @@ public:
             }
 
             if (do_coarse_step) {
-                coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, options_gd_coarse, dk, timer);
+                coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, coarse_solver, dk, timer);
 
                 // 3. Pass fine_manifold into cycle_smooth
                 CycleInfo info = cycle_smooth(O_fine, fine_manifold, x, dk, timer, options_gd);
@@ -300,6 +319,10 @@ private:
     const ManifoldBase& fine_manifold;     // <--- ADDED
     const ManifoldBase& coarse_manifold;
     const VectorTransportBase& vector_transport;
+
+    SolverBase& coarse_solver;
+    DescentOptions options_gd;
+    FAS_Options options_fas;
 };
 
 
