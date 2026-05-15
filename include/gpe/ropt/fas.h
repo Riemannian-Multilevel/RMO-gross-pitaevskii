@@ -5,8 +5,10 @@
 #ifndef GPE_MAIN_COARSE_H
 #define GPE_MAIN_COARSE_H
 
+#include <deal.II/numerics/data_postprocessor.h>
 #include <gpe/lac.h>
 #include <gpe/problem/oracle.h>
+#include <gpe/problem/oracle_coarse.h>
 #include <gpe/ropt/transport.h>
 
 namespace gpe
@@ -32,8 +34,10 @@ struct CycleInfo
 
 // Implementation of smoothing steps
 template <typename Oracle>
-CycleInfo cycle_smooth(Oracle& O_fine, Vector<double>& x, const Vector<double>& eta,
-                       dealii::Timer& timer, DescentOptions options_gd)
+CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
+                       Vector<double>& x, const Vector<double>& eta,
+                       dealii::Timer& timer,
+                       DescentOptions options_gd)
 {
     timer.start();
     double step_size = options_gd.step_size;
@@ -56,8 +60,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, Vector<double>& x, const Vector<double>& 
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
 #endif
-        // TODO: pass on ManifoldBase object
-        ellipsoid::retract_by_norm(O_fine.get_M(), eta, x, options_gd.step_size);  // update y
+        manifold.retract(eta, x, options_gd.step_size);   // update y
 
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;
@@ -116,7 +119,7 @@ class GradientDescent
 {
 public:
     // O_fine: oracle used for computing gradient descent steps on the fine level
-    GradientDescent(const OracleBase<dim>& O_fine)
+    GradientDescent(OracleBase<dim>& O_fine)
         : O_fine(O_fine)
     {}
 
@@ -153,90 +156,102 @@ public:
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
-    const OracleBase<dim>& O_fine;
+    OracleBase<dim>& O_fine;
 };
 
+
 // TODO: Use cycle_fine() for consistency instead of gradient_descent()
-inline void coarse_solve(DescentOptions options_gd, Vector<double>& dst)
+template <typename CoarseModelType>
+inline void coarse_solve(CoarseModelType& q_k,
+                         const CoarseOracleBase<CoarseModelType::dimension, auto, auto>& fas,
+                         const Vector<double>& x,
+                         const ManifoldBase& coarse_manifold,
+                         const VectorTransportBase& vector_transport,
+                         DescentOptions options_gd,
+                         Vector<double>& dst)
 {
-    Vector<double> zk(n_coarse);
+    const auto& state = fas.get_state();
+    Vector<double> zk = state.y;
 
-    // Find zk such that qk(zk) < qk(x)
+    // 1. Find zk such that qk(zk) < qk(state.y)
+    // Note: Assuming gradient_descent takes (oracle, manifold, start_point, ...)
 #ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: " << qk.id << "-gradient descent\n";
+    std::cerr << "[" << timer.cpu_time() << "] coarse: " << q_k.id << "-gradient descent\n";
 #endif
-    zk = gradient_descent(qk, step.y, options_gd, std::cerr);
+    zk = gradient_descent(q_k, coarse_manifold, zk, options_gd, std::cerr);
 
-    // Compute the search direction, zk <- L_x(zk)
-    // FIXME? use separate variable to hold ambient tangent vector L_x(zk)
+    // 2. Compute the search direction: v_coarse = Retract_inv(y, zk)
+    // zk is overwritten to hold the ambient tangent vector
 #ifdef CPU_TIME
     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
 #endif
-    ellipsoid::retract_inv_by_norm(M_coarse, zk, step.y);
+    coarse_manifold.retract_inv(zk, state.y);
 
+    // 3. Prolongate the tangent vector back to the fine space -> dst
 #ifdef CPU_TIME
     std::cerr << "[" << timer.cpu_time() << "] coarse: " << vector_transport.id << "-vector prolongation\n";
 #endif
-    vector_transport.vector_prolongation(step.x, step.y, zk, dst);
+    vector_transport.vector_prolongation(x, state.y, zk, dst);
 }
 
+
 // TODO: convergence check (cf. EnergySimulator::run)
-template <int dim>
+template <int dim, typename FineOracleType, typename CoarseOracleType, typename CoarseModelType>
 class FullApproximationScheme
 {
 public:
-    // TODO: to support recursion, we need to be able to take arbitrary Oracles at levels 0...{n-1}
-    // O_fine: oracle used for computing gradient descent steps on the fine level
-    //         independent from oracles used in CoarseModel (w, <w,.> and corresponding objectives)
-    // O_coarse_model:
-    //         model used for computing coarse descent steps
-    // TODO: const correctness for CoarseModel
-    FullApproximationScheme(const GrossPitaevskiiOracle<dim>& O_fine, CoarseModel<dim>& O_coarse_model)
+    using FASManager = CoarseOracleBase<dim, FineOracleType, CoarseOracleType>;
+
+    FullApproximationScheme(FineOracleType& O_fine,
+                            FASManager& fas,
+                            CoarseModelType& q_k,
+                            const ManifoldBase& coarse_manifold,
+                            const VectorTransportBase& vector_transport)
         : O_fine(O_fine)
-        , O_coarse_model(O_coarse_model)
+        , fas(fas)
+        , q_k(q_k)
+        , coarse_manifold(coarse_manifold)
+        , vector_transport(vector_transport)
     {
-        O_coarse_model.set_timer(timer);
+        fas.set_timer(timer);
     }
 
-    // TODO: move options to constructor for common cycle() interface?
     void cycle(const Vector<double>& x0, std::ostream& os,
                DescentOptions options_gd, DescentOptions options_gd_coarse,
                double kappa, double eps, unsigned coarse_every = 1)
     {
         timer.reset();
 
-        // 0. Initialize oracle and coarse model
         Vector<double> x(x0);
         O_fine.update(x);
         Vector<double> x_grad(x.size());
         Vector<double> dk(x.size());
 
-        // FIXME: abstraction leak - implement coarse criterion in CoarseModel
         bool check_coarse_cond = true;
 
         for (unsigned i = 0; i < options_gd.max_iter; i++) {
-            // Compute coarse condition
             if (check_coarse_cond && (i == 0 || i % coarse_every == 0)) {
-                // TODO: If the coarse model is evaluated in the A-gradient (or the fine objected solved
-                //       in the M-metric), this step results in negligible additional effort.
-                //       Metric-free formulation of the coarse condition?
-                auto coarse_step = O_coarse_model.setup(x);
-                auto coarse_cond = O_coarse_model.norm(coarse_step.x_grad, coarse_step.x_grad_restr);
+                // 1. Setup the coarse model and FAS orchestrator
+                // q_k.update(x) forwards to fas.update(x)
+                q_k.update(x);
+                const auto& state = fas.get_state();
 
-                // Norm of fine (M-)gradient
-                convergence_table.add_value("grad_norm", coarse_cond.norm_fine);
-                // Norm of restricted (M-)gradient
-                convergence_table.add_value("grad_restr_norm", coarse_cond.norm_coarse);
+                // 2. Evaluate coarse condition norms directly via the Oracles
+                double norm_fine   = O_fine.norm(state.x_grad);
+                double norm_coarse = fas.objective_coarse().norm(state.x_grad_restr);
 
-                if (coarse_cond.norm_coarse <= eps) {
-                    check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
+                convergence_table.add_value("grad_norm", norm_fine);
+                convergence_table.add_value("grad_restr_norm", norm_coarse);
+
+                if (norm_coarse <= eps) {
+                    check_coarse_cond = false;  // stop coarse condition once threshold was reached
                 }
 
-                if (coarse_cond.norm_coarse >= kappa*coarse_cond.norm_fine && coarse_cond.norm_coarse > eps) {
-                    // Coarse step
-                    O_coarse_model.solve(coarse_step, options_gd_coarse, dk);
+                if (norm_coarse >= kappa * norm_fine && norm_coarse > eps) {
+                    // --- COARSE STEP ---
+                    coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, options_gd_coarse, dk);
 
-                    // TODO: debug step for checking descent direction (to gradient of corresponding fine oracle)
+                    // Proceed with line search / smoothing using dk
                     CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
                     info.iter      = i;
                     info.coarse    = true;
@@ -250,7 +265,10 @@ public:
                 convergence_table.add_value("grad_restr_norm", 0);
                 convergence_table.add_value("grad_norm", 0);
     fine_step:
-                // Update gradient
+                // --- FINE STEP ---
+                if (i > 0) {
+                    O_fine.update(x);
+                }
 #ifdef CPU_TIME
                 std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
 #endif
@@ -258,7 +276,6 @@ public:
                 dk  = x_grad;
                 dk *= -1.0;
 
-                // Evaluate directional derivative in A-norm
                 CycleInfo info = cycle_smooth(O_fine, x, dk, timer, options_gd);
                 info.iter      = i;
                 info.coarse    = false;
@@ -267,6 +284,7 @@ public:
                 cycle_eval(O_fine, x, convergence_table, info);
             }
         }
+
         convergence_table.set_precision("grad_restr_norm", 4);
         convergence_table.set_precision("grad_norm", 4);
         convergence_table.set_scientific("grad_restr_norm", true);
@@ -277,11 +295,16 @@ public:
 
 private:
     dealii::ConvergenceTable convergence_table;
-    dealii::Timer timer;
-    const GrossPitaevskiiOracle<dim>& O_fine;
-    // TODO: const correctness (update_parameters) - compute tilt inside CoarseOracleBase
-    CoarseModel<dim>& O_coarse_model;  // encodes both the coarse model, and the method to solve it
+    mutable dealii::Timer timer;
+
+    FineOracleType& O_fine;
+    FASManager& fas;
+    CoarseModelType& q_k;
+
+    const ManifoldBase& coarse_manifold;
+    const VectorTransportBase& vector_transport;
 };
+
 
 } // namespace gpe
 

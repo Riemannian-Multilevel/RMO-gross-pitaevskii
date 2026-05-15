@@ -151,6 +151,7 @@ class MassCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "MC";
+    static constexpr int dimension = dim;
 
     MassCoarseOracle(CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model, SolverOptions options)
         : coarse_model(coarse_model)
@@ -160,14 +161,13 @@ public:
         , M_inv_coarse(M_coarse, options)
     {}
 
+    // Assembly:
+    //   O.update(x) (fine)
+    //   O_coarse.update(x) (coarse)
+    // Model parameters:
+    //   CoarseOracleBase::CoarseState (restricted gradients)
     void update(const Vector<double>& x) override
     {
-        // Assembly:
-        //   O.update(x) (fine)
-        //   O_coarse.update(x) (coarse)
-
-        // Model parameters:
-        //   CoarseOracleBase::CoarseState (restricted gradients)
         coarse_model.update(x);
     }
 
@@ -250,6 +250,7 @@ class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "MCA";
+    static constexpr int dimension = dim;
 
     MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model,
                                    SolverOptions options)
@@ -350,6 +351,7 @@ class FrobeniusCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "FC";
+    static constexpr int dimension = dim;
 
     FrobeniusCoarseOracle(CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model,
                           SolverOptions options)
@@ -439,6 +441,7 @@ class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "FCA";
+    static constexpr int dimension = dim;
 
     FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model,
                                         SolverOptions options)
