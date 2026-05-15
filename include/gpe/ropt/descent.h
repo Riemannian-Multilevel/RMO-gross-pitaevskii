@@ -134,7 +134,7 @@ gradient_descent(OracleType& oracle,
 
     // Define the timer
     dealii::Timer timer;
-    timer.reset();
+    timer.restart();
 
     Vector x(x0);
     dealii::ConvergenceTable convergence_table;

@@ -55,7 +55,8 @@ public:
 
     /** @brief Access the discretization package. */
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
-    const GrossPitaevskiiSystem<dim>& get_problem() const { return system; }
+    const GrossPitaevskiiSystem<dim>& get_system() const { return system; }
+    GrossPitaevskiiSystem<dim>& get_system() { return system; }
 
     /** @brief Computation of value and derivatives in ambient space.
      * Non-const so calls to GrossPitaevskiiSystem::update() can propagate

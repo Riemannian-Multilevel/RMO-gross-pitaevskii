@@ -1,50 +1,25 @@
+#include <gpe/lac.h>
 #include <gpe/main/model.h>
 #include <gpe/ropt/fas.h>
 #include <gpe/problem/oracle_coarse.h>
 #include <gpe/problem/gpe.h>
 #include <gpe/option.h>
+#include <gpe/ropt/manifold.h> // Assuming this is where UnitMassSphere lives
 
 using namespace dealii;
 using namespace gpe;
 
-
-template <int dim>
-struct ContextMultiLevel
-{
-    ContextMultiLevel(const GrossPitaevskiiOracle<dim>& O_descent,
-                      const GrossPitaevskiiOracle<dim>& O_tilt, const GrossPitaevskiiOracle<dim>& O_tilt_coarse,
-                      CoarseOracleBase<dim>& O_coarse,
-                      const LinearTransferBase& transfer,
-                      const ManifoldTransferBase& point_transfer,
-                      const VectorTransportBase& vector_transport)
-        : O_descent(O_descent)
-        , O_tilt(O_tilt), O_tilt_coarse(O_tilt_coarse)
-        , O_coarse(O_coarse)
-        , transfer(transfer), point_transfer(point_transfer)
-        , vector_transport(vector_transport)
-    {}
-
-    const GrossPitaevskiiOracle<dim>& O_descent;               // Oracle for gradient descent on fine level
-    const GrossPitaevskiiOracle<dim>& O_tilt;                  // Oracle for coarse correction term on fine level
-    const GrossPitaevskiiOracle<dim>& O_tilt_coarse;           // Oracle for coarse correction term on coarse level
-    // TODO: const correctness (update_parameters) - calculation of tilt term inside CoarseOracleBase
-    CoarseOracleBase<dim>& O_coarse;          // Oracle for coarse model
-
-    const LinearTransferBase& transfer;             // Linear interpolation with Galerkin condition
-    const ManifoldTransferBase& point_transfer;     // Point transfer operator
-    const VectorTransportBase& vector_transport;    // Vector transport operatorf
-};
-
-
-// Reference problem using energy adaptive gradient descent
-template <int dim>
+// -------------------------------------------------------------------------
+// Single Level Experiment
+// -------------------------------------------------------------------------
+template <int dim, typename DescentOracleType>
 struct ExperimentSingleLevel
 {
-    ExperimentSingleLevel(const GrossPitaevskiiOracle<dim>& O_descent, DescentOptions options)
-        : m_solver(O_descent), m_options(options)
+    ExperimentSingleLevel(DescentOracleType& O_descent, const ManifoldBase& manifold, DescentOptions options)
+        : m_solver(O_descent, manifold), m_options(options)
     {}
 
-    void cycle(const Vector<double>& x0, std::ostream& os)
+    void cycle(Vector<double>& x0, std::ostream& os)
     {
         m_solver.cycle(x0, os, m_options);
     }
@@ -54,38 +29,46 @@ private:
     DescentOptions m_options;
 };
 
-
-template <int dim>
-struct ExperimentMultiLevel
+// -------------------------------------------------------------------------
+// Template Dispatcher for Multilevel Experiments
+// -------------------------------------------------------------------------
+// This replaces ContextMultiLevel and directly wires the FAS architecture
+template <int dim, typename DescentOracleType, typename TiltFineType, typename TiltCoarseType, template<int, typename> class CoarseModelType>
+void run_multilevel_experiment(
+    DescentOracleType& o_descent,
+    TiltFineType& o_tilt_fine,
+    TiltCoarseType& o_tilt_coarse,
+    const ManifoldTransferBase& point_transfer,
+    const VectorTransportBase& vector_transport,
+    const ManifoldBase& fine_manifold,
+    const ManifoldBase& coarse_manifold,
+    SolverOptions options_slv_coarse,
+    DescentOptions options_gd,
+    DescentOptions options_gd_coarse,
+    FAS_Options options_fas,
+    Vector<double>& x0)
 {
-    ExperimentMultiLevel(ContextMultiLevel<dim> ctx,
-                         DescentOptions options,
-                         DescentOptions options_coarse)
-        : model(ctx.O_tilt_coarse, ctx.O_tilt, ctx.O_coarse, ctx.point_transfer, ctx.vector_transport)
-        , solver(ctx.O_descent, model)
-        , m_options(options)
-        , m_options_coarse(options_coarse)
-    {}
+    // Build the FAS State Manager
+    CoarseOracleBase<dim, TiltFineType, TiltCoarseType> fas(
+        o_tilt_fine, o_tilt_coarse, point_transfer, vector_transport);
 
-    void cycle(const Vector<double>& x0, std::ostream& os,
-               double kappa, double eps, unsigned coarse_every)
-    {
-        solver.cycle(x0, os, m_options, m_options_coarse, kappa, eps, coarse_every);
-    }
+    // Build the Surrogate Model (q_k)
+    CoarseModelType<dim, TiltFineType> q_k(fas, options_slv_coarse);
 
-private:
-    CoarseModel<dim> model;
-    FullApproximationScheme<dim> solver;
-    DescentOptions m_options;
-    DescentOptions m_options_coarse;
-};
+    // Use decltype(fas) to easily pass the complex FAS manager type to the scheme!
+    FullApproximationScheme<dim, DescentOracleType, decltype(fas), CoarseModelType<dim, TiltFineType>> solver(
+        o_descent, fas, q_k, fine_manifold, coarse_manifold, vector_transport);
+
+    // Run the Cycle
+    solver.cycle(x0, std::cout, options_gd, options_gd_coarse,
+                 options_fas.kappa, options_fas.eps, options_fas.coarse_every);
+}
+
 
 void cat_file(std::string filename)
 {
     std::ifstream inFile(filename);
-
     if (inFile) {
-        // Use rdbuf() to send the file buffer directly to cout
         std::cout << inFile.rdbuf();
     } else {
         std::cerr << "Error: Could not open file for reading.\n";
@@ -100,8 +83,6 @@ int main(int argc, char* argv[])
     MG_Options     options_mg{};
     FAS_Options    options_fas{};
 
-
-    // TODO: add configuration file (cf. boost tutorial)
     try {
         po::options_description all("Allowed options");
         all.add_options()("help", "produce help message");
@@ -126,23 +107,18 @@ int main(int argc, char* argv[])
         apply_inner_options(vm, options_slv);
         apply_fas_options(vm, options_fas);
 
-
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
             SolverOptions options_slv_coarse = options_slv;
-            // TODO: reduce tolerance for coarse level
 
             DescentOptions options_gd_coarse = options_gd;
-            // TODO: heuristic: take steps UNTIL armijo line search fails OR max_iter encountered
             options_gd_coarse.max_iter    = 4;
             options_gd_coarse.step_size   = 1.0;
             options_gd_coarse.line_search = false;
 
-            // Default potential
             Square<dim> V;
 
-            // Default refinement for coarse and fine grid
             const int min_i = options_mg.min_level;
             const int min_i_def = 8;
             const int max_i = options_mg.max_level;
@@ -151,56 +127,34 @@ int main(int argc, char* argv[])
             const int n_coarse_levels = (min_i == 0 ? min_i_def : min_i);
             const int n_fine_levels = (max_i == levels_i ? max_i_def : max_i);
 
-            // TODO: support more than 2 levels
             AssertThrow(n_fine_levels - n_coarse_levels == 1,
                 dealii::ExcNotImplemented("only 2 levels are supported"));
 
+            // Setup coarse and fine physics
+            ModelBuilder<dim> builder_coarse(V, options, n_coarse_levels);
+            ModelBuilder<dim> builder_fine(V, options, n_fine_levels);
 
-            // Set up discretization for fine and coarse level
-            GrossPitaevskiiSimulator<dim, EnergyOracle<dim>> GP_coarse(V, options, n_coarse_levels);
-            const auto& problem_coarse = GP_coarse.get_problem();
-            const auto& dofs_coarse = GP_coarse.get_dofs();
-            const auto& constraints_coarse = GP_coarse.get_constraints();
-            const auto& M_coarse = GP_coarse.get_M();
+            // 1. Build the Functionals (Bridges Physics to Oracles)
+            auto obj_coarse = builder_coarse.get_eval(options.beta);
+            auto obj_fine   = builder_fine.get_eval(options.beta);
+
+            // 2. Extract OperatorTypes (LinearCombinations) from the Functionals
+            const auto& M_coarse = obj_coarse.get_M();
+            const auto& M_fine   = obj_fine.get_M();
+
             auto M_inv_coarse = InverseOpType(M_coarse, options_slv_coarse);
+            auto M_inv_fine   = InverseOpType(M_fine, options_slv);
 
-            GrossPitaevskiiSimulator<dim, EnergyOracle<dim>> GP_fine(V, options, n_fine_levels);
-            const auto& problem_fine = GP_fine.get_problem();
-            const auto& dofs_fine = GP_fine.get_dofs();
-            const auto& constraints_fine = GP_fine.get_constraints();
-            const auto& M_fine = GP_fine.get_M();
-            auto M_inv_fine = InverseOpType(M_fine, options_slv);
+            const auto& dofs_coarse = builder_coarse.get_package().get_dofs();
+            const auto& constraints_coarse = builder_coarse.get_package().get_constraints();
+            const auto& dofs_fine = builder_fine.get_package().get_dofs();
+            const auto& constraints_fine = builder_fine.get_package().get_constraints();
 
-            // Starting values (non-zero) and cycle
-            Vector<double> x0(GP_fine.n_dofs());
+            Vector<double> x0(builder_fine.n_dofs());
             x0 = 1.0;
+            builder_fine.distribute(x0);
 
-            // Oracle for fine level descent
-            EnergyOracle<dim> o_descent(problem_fine, options.beta, options_slv);
-
-            // Oracle for correction term
-            std::unique_ptr<GrossPitaevskiiOracle<dim>>       o_tilt         = nullptr;
-            std::unique_ptr<GrossPitaevskiiOracle<dim>>       o_tilt_coarse  = nullptr;
-            std::unique_ptr<CoarseOracleBase<dim>> o_coarse_model = nullptr;
-
-            if (options_fas.metric_t == MetricKind::NONE) {
-                ExperimentSingleLevel<dim>(o_descent, options_gd).cycle(x0, std::cout);
-                return;
-            }
-            if (options_fas.metric_t == MetricKind::MASS) {
-                o_tilt         = std::make_unique<MassOracle<dim>>(problem_fine, options.beta, options_slv);
-                o_tilt_coarse  = std::make_unique<MassOracle<dim>>(problem_coarse, options.beta, options_slv_coarse);
-                o_coarse_model = std::make_unique<MassCoarseOracleEnergyAdaptive<dim>>(problem_coarse, options.beta, options_slv_coarse);
-            }
-            else if (options_fas.metric_t == MetricKind::FROBENIUS) {
-                o_tilt         = std::make_unique<FrobeniusOracle<dim>>(problem_fine, options.beta, options_slv);
-                o_tilt_coarse  = std::make_unique<FrobeniusOracle<dim>>(problem_coarse, options.beta, options_slv_coarse);
-                o_coarse_model = std::make_unique<FrobeniusCoarseOracleEnergyAdaptive<dim>>(problem_coarse, options.beta, options_slv_coarse);
-            } else {
-                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-            }
-
-            // Manifold transfer depending on Galerkin condition
+            // --- TRANSFER AND TRANSPORT OPERATORS ---
             std::unique_ptr<LinearTransferBase>   transfer       = nullptr;
             std::unique_ptr<ManifoldTransferBase> point_transfer = nullptr;
 
@@ -217,7 +171,6 @@ int main(int argc, char* argv[])
               throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
             }
 
-            // Vector transport operators
             std::unique_ptr<VectorTransportBase> vector_transport = nullptr;
 
             if (options_fas.transport_t == Transport::DIFFERENTIAL) {
@@ -241,17 +194,42 @@ int main(int argc, char* argv[])
                 throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
             }
 
-            ContextMultiLevel<dim> context(
-                o_descent,           // Fine descent oracle (stack-allocated)
-                *o_tilt,             // Fine tilt oracle (heap-allocated)
-                *o_tilt_coarse,      // Coarse tilt oracle (heap-allocated)
-                *o_coarse_model,     // Coarse model qk (heap-allocated)
-                *transfer,           // Linear transfer
-                *point_transfer,     // Point transfer
-                *vector_transport    // Vector transport
-            );
-            ExperimentMultiLevel<dim>(context, options_gd, options_gd_coarse).cycle(x0, std::cout,
-                options_fas.kappa, options_fas.eps, options_fas.coarse_every);
+            // --- ORACLE AND SOLVER DISPATCH ---
+            // Pass the functional 'obj_fine', NOT the raw system 'problem_fine'
+            EnergyOracle<dim> o_descent(obj_fine, options_slv);
+
+            // Build BOTH Manifolds (require OperatorType in template signature)
+            UnitMassSphere<dim, OperatorType> fine_manifold(M_fine);
+            UnitMassSphere<dim, OperatorType> coarse_manifold(M_coarse);
+
+            if (options_fas.metric_t == MetricKind::NONE) {
+                ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent, fine_manifold, options_gd).cycle(x0, std::cout);
+            }
+            else if (options_fas.metric_t == MetricKind::MASS) {
+                // Pass the functionals
+                MassOracle<dim> o_tilt_fine(obj_fine, options_slv);
+                MassOracle<dim> o_tilt_coarse(obj_coarse, options_slv_coarse);
+
+                run_multilevel_experiment<dim, EnergyOracle<dim>, MassOracle<dim>, MassOracle<dim>, MassCoarseOracleEnergyAdaptive>(
+                    o_descent, o_tilt_fine, o_tilt_coarse,
+                    *point_transfer, *vector_transport,
+                    fine_manifold, coarse_manifold,
+                    options_slv_coarse, options_gd, options_gd_coarse, options_fas, x0);
+            }
+            else if (options_fas.metric_t == MetricKind::FROBENIUS) {
+                // FrobeniusOracle's constructor only takes the functional
+                FrobeniusOracle<dim> o_tilt_fine(obj_fine);
+                FrobeniusOracle<dim> o_tilt_coarse(obj_coarse);
+
+                run_multilevel_experiment<dim, EnergyOracle<dim>, FrobeniusOracle<dim>, FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive>(
+                    o_descent, o_tilt_fine, o_tilt_coarse,
+                    *point_transfer, *vector_transport,
+                    fine_manifold, coarse_manifold,
+                    options_slv_coarse, options_gd, options_gd_coarse, options_fas, x0);
+            }
+            else {
+                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+            }
         });
     }
     catch (std::exception& e) {
@@ -263,4 +241,3 @@ int main(int argc, char* argv[])
         return 1;
     }
 }
-

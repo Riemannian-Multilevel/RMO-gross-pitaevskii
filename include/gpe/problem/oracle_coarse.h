@@ -110,15 +110,11 @@ public:
         return m_state;
     }
 
-    const FineOracleType& objective_fine() const
-    {
-        return O;
-    }
-
-    const CoarseOracleType& objective_coarse() const
-    {
-        return O_coarse;
-    }
+    const FineOracleType& objective_fine() const { return O; }
+    FineOracleType& objective_fine() { return O; }
+    
+    const CoarseOracleType& objective_coarse() const { return O_coarse; }
+    CoarseOracleType& objective_coarse() { return O_coarse; }
 
 protected:
     // Coarse and fine level evaluation for correction vector w
@@ -168,7 +164,7 @@ public:
     //   CoarseOracleBase::CoarseState (restricted gradients)
     void update(const Vector<double>& x) override
     {
-        coarse_model.update(x);
+        coarse_model.objective_coarse().update(x);
     }
 
     double value(const Vector<double>& x) const override
@@ -265,7 +261,7 @@ public:
 
     void update(const Vector<double>& x) override
     {
-        coarse_model.update(x);
+        coarse_model.objective_coarse().update(x);
 
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
@@ -363,7 +359,7 @@ public:
 
     void update(const Vector<double>& x) override
     {
-        coarse_model.update(x);
+        coarse_model.objective_coarse().update(x);
     }
 
     double value(const Vector<double>& x) const override
@@ -456,7 +452,7 @@ public:
 
     void update(const Vector<double>& x) override
     {
-        coarse_model.update(x);
+        coarse_model.objective_coarse().update(x);
 
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }

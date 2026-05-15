@@ -16,17 +16,17 @@ public:
     virtual ~ManifoldTransferBase() = default;
 
     // Mandatory operations
-    virtual void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const = 0;
+    virtual void restriction(const Vector<double>&, Vector<double>&) const = 0;
 
-    virtual void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const = 0;
+    virtual void prolongation(const Vector<double>&, Vector<double>&) const = 0;
 
     // Optional operations
-    virtual void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const
+    virtual void diff_restriction(const Vector<double>&, const Vector<double>&, Vector<double>&) const
     {
         throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
     }
 
-    virtual void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const
+    virtual void diff_prolongation(const Vector<double>&, const Vector<double>&, Vector<double>&) const
     {
         throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
     }
