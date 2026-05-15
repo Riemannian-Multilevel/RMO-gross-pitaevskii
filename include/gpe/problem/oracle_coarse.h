@@ -14,7 +14,7 @@ namespace gpe
 // level of discretization (implementing Riemannain gradient descent for a certain metric),
 // used to compute a correction vector between coarse and fine gradients.
 // TODO: for a multilevel implementation, O(, O_coarse) need to be set to previous levels
-template <int dim, typename TiltOracle>
+template <int dim, typename TiltOracleFine, typename TiltOracleCoarse>
 class CoarseOracleBase
 {
 public:
@@ -37,8 +37,8 @@ public:
         {}
     };
 
-    CoarseOracleBase(TiltOracle& O,
-                     TiltOracle& O_coarse,
+    CoarseOracleBase(TiltOracleFine& O,
+                     TiltOracleCoarse& O_coarse,
                      const ManifoldTransferBase& point_transfer,
                      const VectorTransportBase& vector_transport)
         : O(O), O_coarse(O_coarse)
@@ -110,19 +110,20 @@ public:
         return m_state;
     }
 
-    const TiltOracle& objective_fine() const
+    const TiltOracleFine& objective_fine() const
     {
         return O;
     }
 
-    const TiltOracle& objective_coarse() const
+    const TiltOracleCoarse& objective_coarse() const
     {
         return O_coarse;
     }
 
 protected:
     // Coarse and fine level evaluation for correction vector w
-    TiltOracle &O, &O_coarse;
+    TiltOracleFine &O;
+    TiltOracleCoarse &O_coarse;
     unsigned n, n_coarse;
 
     // Operators for transferring solutions and gradients
@@ -145,13 +146,13 @@ protected:
 // this:     oracle for evaluating coarse model q_k(y) = E_c(y) + <w, .>_y
 //           oracle for evaluating gradient of coarse model \grad q_k(y)
 //           metric for \grad q_k(y) can differ from gradient of w and <w, .>_y
-template <int dim>
+template <int dim, typename FineOracleType>
 class MassCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "MC";
 
-    MassCoarseOracle(CoarseOracleBase<dim, MassOracle<dim>>& coarse_model, SolverOptions options)
+    MassCoarseOracle(CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model, SolverOptions options)
         : coarse_model(coarse_model)
         , options(options)
         , M_coarse(coarse_model.objective_coarse().get_M())
@@ -236,7 +237,7 @@ public:
     }
 
 private:
-    CoarseOracleBase<dim, MassOracle<dim>>& coarse_model;
+    CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by MassOracle <- GrossPitaevskiiFunctional
@@ -244,13 +245,14 @@ private:
 };
 
 
-template <int dim>
+template <int dim, typename FineOracleType>
 class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "MCA";
 
-    MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, MassOracle<dim>>& coarse_model, SolverOptions options)
+    MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model,
+                                   SolverOptions options)
         : coarse_model(coarse_model)
         , options(options)
         , M_coarse(coarse_model.objective_coarse().get_M())
@@ -335,7 +337,7 @@ public:
 
 
 private:
-    CoarseOracleBase<dim, MassOracle<dim>>& coarse_model;
+    CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
@@ -343,13 +345,14 @@ private:
 };
 
 
-template <int dim>
+template <int dim, typename FineOracleType>
 class FrobeniusCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "FC";
 
-    FrobeniusCoarseOracle(CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model, SolverOptions options)
+    FrobeniusCoarseOracle(CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model,
+                          SolverOptions options)
         : coarse_model(coarse_model)
         , options(options)
         , M_coarse(coarse_model.objective_coarse().get_M())
@@ -423,7 +426,7 @@ public:
 
 
 private:
-    CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model;
+    CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
@@ -431,13 +434,14 @@ private:
 
 
 // TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
-template <int dim>
+template <int dim, typename FineOracleType>
 class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "FCA";
 
-    FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model, SolverOptions options)
+    FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model,
+                                        SolverOptions options)
         : coarse_model(coarse_model)
         , options(options)
         , M_coarse(coarse_model.objective_coarse().get_M())
@@ -518,7 +522,7 @@ public:
 
 
 private:
-    CoarseOracleBase<dim, FrobeniusOracle<dim>>& coarse_model;
+    CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional

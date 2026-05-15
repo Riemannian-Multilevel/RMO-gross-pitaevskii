@@ -111,32 +111,6 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
     convergence_table.write_text(os, format);
 }
 
-
-// TODO: Use cycle_fine() for consistency instead of gradient_descent()
-inline void coarse_solve(DescentOptions options_gd, Vector<double>& dst)
-{
-    Vector<double> zk(n_coarse);
-
-    // Find zk such that qk(zk) < qk(x)
-#ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: " << qk.id << "-gradient descent\n";
-#endif
-    zk = gradient_descent(qk, step.y, options_gd, std::cerr);
-
-    // Compute the search direction, zk <- L_x(zk)
-    // FIXME? use separate variable to hold ambient tangent vector L_x(zk)
-#ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
-#endif
-    ellipsoid::retract_inv_by_norm(M_coarse, zk, step.y);
-
-#ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: " << vector_transport.id << "-vector prolongation\n";
-#endif
-    vector_transport.vector_prolongation(step.x, step.y, zk, dst);
-}
-
-
 template <int dim>
 class GradientDescent
 {
@@ -182,6 +156,29 @@ private:
     const OracleBase<dim>& O_fine;
 };
 
+// TODO: Use cycle_fine() for consistency instead of gradient_descent()
+inline void coarse_solve(DescentOptions options_gd, Vector<double>& dst)
+{
+    Vector<double> zk(n_coarse);
+
+    // Find zk such that qk(zk) < qk(x)
+#ifdef CPU_TIME
+    std::cerr << "[" << timer.cpu_time() << "] coarse: " << qk.id << "-gradient descent\n";
+#endif
+    zk = gradient_descent(qk, step.y, options_gd, std::cerr);
+
+    // Compute the search direction, zk <- L_x(zk)
+    // FIXME? use separate variable to hold ambient tangent vector L_x(zk)
+#ifdef CPU_TIME
+    std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
+#endif
+    ellipsoid::retract_inv_by_norm(M_coarse, zk, step.y);
+
+#ifdef CPU_TIME
+    std::cerr << "[" << timer.cpu_time() << "] coarse: " << vector_transport.id << "-vector prolongation\n";
+#endif
+    vector_transport.vector_prolongation(step.x, step.y, zk, dst);
+}
 
 // TODO: convergence check (cf. EnergySimulator::run)
 template <int dim>
