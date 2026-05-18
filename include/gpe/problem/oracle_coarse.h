@@ -192,6 +192,11 @@ public:
     {
         const auto& coarse_step = coarse_model.get_state();
 
+        auto res = residual(x);
+        if (res.residual > 0) {
+            M_inv_coarse.set_tol(res.residual * options.tol_inner_res);
+        }
+
         coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse,
             x, coarse_step.y, coarse_step.w, output);
 
@@ -289,6 +294,11 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         const auto& coarse_step = coarse_model.get_state();
+
+        auto res = residual(x);
+        if (res.residual > 0) {
+            A_inv_coarse.set_tol(res.residual * options.tol_inner_res);
+        }
 
         coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse,
             x, coarse_step.y, coarse_step.w, output);
@@ -479,6 +489,11 @@ public:
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
         const auto& coarse_step = coarse_model.get_state();
+
+        auto res = residual(x);
+        if (res.residual > 0) {
+            A_inv_coarse.set_tol(res.residual * options.tol_inner_res);
+        }
 
         // Computes the F-gradient and applies the A_inv preconditioner
         coarse::frobenius::energy_adaptive_gradient(M_coarse, A_inv_coarse,A_coarse,
