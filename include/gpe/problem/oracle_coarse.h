@@ -181,10 +181,8 @@ public:
         const auto& O_coarse = coarse_model.objective_coarse();
         const auto& coarse_step = coarse_model.get_state();
 
-        Vector<double> Mw(n_dofs());
-        M_coarse.vmult(Mw, coarse_step.w);
-
-        return O_coarse.directional_derivative(x, z) - (Mw * z);
+        return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w,
+            z, M_coarse, A_coarse);
     }
 
     /**
@@ -277,13 +275,11 @@ public:
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        const MassOracle<dim>& O_coarse = coarse_model.objective_coarse();
+        const auto& O_coarse = coarse_model.objective_coarse();
         const auto& coarse_step = coarse_model.get_state();
 
-        Vector<double> Mw(n_dofs());
-        M_coarse.vmult(Mw, coarse_step.w);
-
-        return O_coarse.directional_derivative(x, z) - (Mw * z);
+        return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w,
+            z, M_coarse, A_coarse);
     }
 
     /**
@@ -376,7 +372,8 @@ public:
         const auto& O_coarse = coarse_model.objective_coarse();
         const auto& coarse_step = coarse_model.get_state();
 
-        return O_coarse.directional_derivative(x, z) - coarse_step.w * z;
+        return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w,
+            z, M_coarse, A_coarse);
     }
 
     /**
@@ -471,7 +468,8 @@ public:
         const auto& O_coarse = coarse_model.objective_coarse();
         const auto& coarse_step = coarse_model.get_state();
 
-        return O_coarse.directional_derivative(x, z) - coarse_step.w * z;
+        return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w,
+            z, M_coarse, A_coarse);
     }
 
     /**
