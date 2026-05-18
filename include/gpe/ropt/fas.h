@@ -40,6 +40,7 @@ public:
     // Both FAS and GradientDescent must implement this interface.
     // Note: 'x' must be non-const so the solver can mutate the initial guess
     virtual void cycle(Vector<double>& x, std::ostream& os) = 0;
+    virtual void cycle(Vector<double>& x) = 0;
 };
 
 
@@ -135,9 +136,10 @@ public:
         , options_gd(options_gd)
     {}
 
-    void cycle(Vector<double>& x, std::ostream& os) override
+    void cycle(Vector<double>& x) override
     {
         timer.restart();
+        convergence_table.clear();
 
         // x is updated in-place
         O_fine.update(x);
@@ -161,12 +163,19 @@ public:
 
             cycle_eval(O_fine, x, convergence_table, info);
         }
+        timer.stop();
+    }
+
+    void cycle(Vector<double>& x, std::ostream& os) override
+    {
+        cycle(x);
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
+
     OracleBase& O_fine;
     const ManifoldBase& manifold;
     DescentOptions options_gd;
@@ -183,7 +192,8 @@ inline void coarse_solve(CoarseModelType& q_k,
                          const VectorTransportBase& vector_transport,
                          SolverBase& coarse_solver,
                          Vector<double>& dst,
-                         [[maybe_unused]] dealii::Timer& timer)
+                         [[maybe_unused]] dealii::Timer& timer,
+                         std::ostream* os = nullptr)
 {
     const auto& state = fas.get_state();
     Vector<double> zk = state.y;
@@ -192,7 +202,11 @@ inline void coarse_solve(CoarseModelType& q_k,
     std::cerr << "[" << timer.cpu_time() << "] coarse: " << CoarseModelType::id << "-gradient descent\n";
 #endif
     // Delegate the solve to whatever solver is assigned to this level
-    coarse_solver.cycle(zk, std::cerr);
+    if (os) {
+        coarse_solver.cycle(zk, *os);
+    } else {
+        coarse_solver.cycle(zk);
+    }
     //zk = gradient_descent(q_k, coarse_manifold, zk, options_gd, std::cerr);
 
 #ifdef CPU_TIME
@@ -234,10 +248,11 @@ public:
         fas.set_timer(timer);
     }
 
-    void cycle(Vector<double>& x, std::ostream& os) override
+    void cycle(Vector<double>& x) override
     {
         // Clear and start the clock
         timer.restart();
+        convergence_table.clear();
 
         Vector<double> x_grad(x.size());
         Vector<double> dk(x.size());
@@ -263,7 +278,8 @@ public:
                 if (norm_coarse >= options_fas.kappa * norm_fine && norm_coarse > options_fas.eps) {
                     do_coarse_step = true;
                 }
-            } else {
+            }
+            else {
                 convergence_table.add_value("grad_restr_norm", 0);
                 convergence_table.add_value("grad_norm", 0);
             }
@@ -273,13 +289,15 @@ public:
 
                 // 3. Pass fine_manifold into cycle_smooth
                 CycleInfo info = cycle_smooth(O_fine, fine_manifold, x, dk, timer, options_gd);
+                is_updated = false;
+
                 info.iter      = i;
                 info.coarse    = true;
                 info.lac_iter  = 0;
 
                 cycle_eval(O_fine, x, convergence_table, info);
-                is_updated = false;
-            } else {
+            }
+            else {
                 if (!is_updated) {
                     O_fine.update(x);
                     is_updated = true;
@@ -291,14 +309,22 @@ public:
 
                 // 3. Pass fine_manifold into cycle_smooth
                 CycleInfo info = cycle_smooth(O_fine, fine_manifold, x, dk, timer, options_gd);
+                is_updated = false;
+
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = lac_iter;
 
                 cycle_eval(O_fine, x, convergence_table, info);
-                is_updated = false;
+
             }
         }
+        timer.stop();
+    }
+
+    void cycle(Vector<double>& x, std::ostream& os) override
+    {
+        cycle(x);
 
         convergence_table.set_precision("grad_restr_norm", 4);
         convergence_table.set_precision("grad_norm", 4);
