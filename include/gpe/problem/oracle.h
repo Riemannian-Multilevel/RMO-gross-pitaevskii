@@ -55,73 +55,109 @@ public:
 };
 
 
-template <int dim>
-class MassOracle : public OracleBase
+class Residual
 {
 public:
-    static constexpr const char* id = "M";
-    static constexpr int dimension = dim;
+    virtual ~Residual() = default;
 
-    MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
-        : m_func(func)
-        , options(options)
-        , M(m_func.get_M())
-        , A(m_func.get_A())
-        , M_inv(m_func.get_M(), options)
+    double residual(const Vector<double>& x) const
+    {
+        // If the cache is empty, compute and store it
+        if (m_residual < 0) {
+            const auto r = residual_vector(x);
+            m_residual = norm(r);
+        }
+        AssertThrow(m_residual >= 0, dealii::ExcInternalError("residual must be positive"));
+
+        // Otherwise, just return the cached value
+        return m_residual;
+    }
+
+    void reinit() const { m_residual = -1.0; }  // invalidate cached value
+
+protected:
+    mutable double m_residual = -1.0;
+
+    virtual double norm(const Vector<double>& x) const = 0;
+    virtual Vector<double> residual_vector(const Vector<double>& x) const = 0;
+};
+
+
+template <int dim>
+class GrossPitaevskiiResidual : public Residual
+{
+public:
+    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
+        : m_func(m_func)
     {}
 
+protected:
+    double norm(const Vector<double>& x) const override
+    {
+        EnergyNorm norm(m_func.get_M());
+
+        return norm(x);
+    }
+
+    Vector<double> residual_vector(const Vector<double>& x) const override
+    {
+        Vector<double> Mx(x.size());
+        m_func.get_M().vmult(Mx, x);
+
+        const double mass = x * Mx;             // should be ~ 1 (energy constraint)
+        AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
+
+        Vector<double> Ax(x.size());         // A x
+        m_func.get_A().vmult(Ax, x);
+
+        const double lambda = x * Ax / mass;    // Rayleigh quotient (x'Ax / x'Mx)
+
+        Vector<double> r(Ax);
+        r.add(-lambda, Mx);                     // r = A x - lambda M x
+
+        return r;
+    }
+
+private:
+    const GrossPitaevskiiFunctional<dim>& m_func;
+};
+
+
+// Metric-aware wrapper for GrossPitaevskii energy evaluation
+template <int dim>
+class GrossPitaevskiiOracle : public OracleBase
+{
+public:
+    static constexpr int dimension = dim;
+
+    GrossPitaevskiiOracle(GrossPitaevskiiFunctional<dim>& func)
+        : m_func(func)
+        , m_res_func(func)
+    {}
+
+    virtual ~GrossPitaevskiiOracle() = default;
+
+    // Common lifecycle management
     void update(const Vector<double>& x) override
     {
         m_func.update(x);
-        // Invalidate the residual when the evaluation point changes
-        m_func_res = -1.0;
+        m_res_func.reinit();
     }
 
+    // Common metric-independent GP evaluation
     double value(const Vector<double>& x) const override
     {
-        return m_func.value(x);  // metric-independent
+        return m_func.value(x);
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return m_func.directional_derivative(x, z);  // metric-independent
+        return m_func.directional_derivative(x, z);
     }
 
-    // Lazy evaluation for residual
     double residual(const Vector<double>& x) const
     {
-        // The residual is evaluated in the M-norm regardless of the metric chosen for the Riemannian gradient
-        const auto norm = EnergyNorm(M);
-
-        // If the cache is empty, compute and store it
-        if (m_func_res < 0) {
-            m_func_res = norm(m_func.residual(x));
-        }
-        AssertThrow(m_func_res >= 0, "residual must be positive");
-
-        // Otherwise, just return the cached value
-        return m_func_res;
-    }
-
-    /* @brief Computes the Riemannian gradient in the M-metric. */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
-    {
-        m_func_res = this->residual(x);
-
-        if (m_func_res > 0) {
-            M_inv.set_tol(m_func_res * options.tol_inner_res);
-        }
-        ellipsoid::mass::gradient(M_inv, A, M, x, output);
-
-        return this->M_inv.control().last_step();
-    }
-
-    double norm(const Vector<double>& v) const override
-    {
-        Vector<double> Mv(m_func.n_dofs());
-        M.vmult(Mv, v);
-
-        return std::sqrt(v*Mv);
+        return m_res_func.residual(x);
     }
 
     unsigned n_dofs() const override
@@ -129,83 +165,92 @@ public:
         return m_func.n_dofs();
     }
 
-    // Domain-specific methods NOT in OracleBase
-    // Called in <Metric>CoarseOracle, which encodes the used fine/coarse oracle as a template parameter
-    const auto& get_M()  const
+    // Methods to be defined in child classes (metric-dependent)
+    double norm(const Vector<double>& x) const override
     {
-        return m_func.get_M();
-    }
-    const auto& get_A()  const
-    {
-        return m_func.get_A();
-    }
-    const auto& get_A0() const
-    {
-        return m_func.get_A0();
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
 
-private:
+    unsigned gradient(const Vector<double>&, Vector<double>&) const override
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
+    // Shared domain-specific accessors
+    const auto& get_M()  const { return m_func.get_M(); }
+    const auto& get_A()  const { return m_func.get_A(); }
+    const auto& get_A0() const { return m_func.get_A0(); }
+
+protected:
     GrossPitaevskiiFunctional<dim>& m_func;
-    SolverOptions options;
-
-    const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
-    InverseOpType M_inv;
-
-    mutable double m_func_res = -1.0;
+    const GrossPitaevskiiResidual<dim> m_res_func;
 };
 
 
 template <int dim>
-class EnergyOracle : public OracleBase
+class MassOracle : public GrossPitaevskiiOracle<dim>
+{
+public:
+    static constexpr const char* id = "M";
+
+    MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
+        : GrossPitaevskiiOracle<dim>(func)
+        , options(options)
+        , M_inv(this->get_M(), options)
+    {}
+
+    void update(const Vector<double>& x) override
+    {
+        GrossPitaevskiiOracle<dim>::update(x);
+    }
+
+    /* @brief Computes the Riemannian gradient in the M-metric. */
+    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    {
+        const double x_residual = this->residual(x);
+
+        if (x_residual > 0) {
+            M_inv.set_tol(x_residual * options.tol_inner_res);
+        }
+        ellipsoid::mass::gradient(M_inv, this->get_A(), this->get_M(), x, output);
+
+        return this->M_inv.control().last_step();
+    }
+
+    double norm(const Vector<double>& v) const override
+    {
+        EnergyNorm norm(this->get_M());
+
+        return norm(v);
+    }
+
+private:
+    SolverOptions options;
+    InverseOpType M_inv;
+};
+
+
+template <int dim>
+class EnergyOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "A";
     static constexpr int dimension = dim;
 
     EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
-        : m_func(func)
+        : GrossPitaevskiiOracle<dim>(func)
         , options(options)
-        , M(m_func.get_M())
-        , A(m_func.get_A())
-        , M_inv(m_func.get_M(), options)
-        , A_inv(m_func.get_A(), options)
+        , M_inv(this->get_M(), options)
+        , A_inv(this->get_A(), options)
     {
-        A_inv.update_static(m_func.get_A0());
+        A_inv.update_static(this->get_A0());
     }
 
     void update(const Vector<double>& x) override
     {
-        m_func.update(x);
-        m_func_res = -1.0;
+        GrossPitaevskiiOracle<dim>::update(x);
 
-        A_inv.update_dynamic(A.diagonal());
-    }
-
-    double value(const Vector<double>& x) const override
-    {
-        return m_func.value(x);
-    }
-
-    // Metric-free implementation
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_func.directional_derivative(x, z);
-    }
-
-    // Lazy evaluation for residual
-    double residual(const Vector<double>& x) const
-    {
-        // The residual is evaluated in the M-norm regardless of the metric chosen for the Riemannian gradient
-        const auto norm = EnergyNorm(M);
-
-        // If the cache is empty, compute and store it
-        if (m_func_res < 0) {
-            m_func_res = norm(m_func.residual(x));
-        }
-        AssertThrow(m_func_res >= 0, "residual must be positive");
-
-        // Otherwise, just return the cached value
-        return m_func_res;
+        A_inv.update_dynamic(this->get_A().diagonal());
     }
 
     /**
@@ -214,98 +259,42 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        m_func_res = this->residual(x);
+        const double x_residual = this->residual(x);
 
-        if (m_func_res > 0) {
-            A_inv.set_tol(m_func_res * this->options.tol_inner_res);
+        if (x_residual > 0) {
+            A_inv.set_tol(x_residual * this->options.tol_inner_res);
         }
-        ellipsoid::energy::gradient(A_inv, M, x, output);
+        ellipsoid::energy::gradient(A_inv, this->get_M(), x, output);
 
         return A_inv.control().last_step();
     }
 
-    double norm(const Vector<double>& v) const override
+    double norm(const Vector<double>& x) const override
     {
-        Vector<double> Av(m_func.n_dofs());
-        A.vmult(Av, v);
+        EnergyNorm norm(this->get_A());
 
-        return std::sqrt(v*Av);
-    }
-
-    unsigned n_dofs() const override
-    {
-        return m_func.n_dofs();
-    }
-
-    // Domain-specific methods NOT in OracleBase
-    // Called in <Metric>CoarseOracle, which encodes the used fine/coarse oracle as a template parameter
-    const auto& get_M()  const
-    {
-        return m_func.get_M();
-    }
-    const auto& get_A()  const
-    {
-        return m_func.get_A();
-    }
-    const auto& get_A0() const
-    {
-        return m_func.get_A0();
+        return norm(x);
     }
 
 private:
-    GrossPitaevskiiFunctional<dim>& m_func;
     SolverOptions options;
-
-    const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
     InverseOpType M_inv, A_inv;
-
-    mutable double m_func_res = -1.0;
 };
 
 
 template <int dim>
-class FrobeniusOracle : public OracleBase
+class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "F";
-    static constexpr int dimension = dim;
 
-    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func)
-            : m_func(func)
-            , M(m_func.get_M())
-            , A(m_func.get_A())
+    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions)
+        : GrossPitaevskiiOracle<dim>(func)
     {}
 
     void update(const Vector<double>& x) override
     {
-        m_func.update(x);
-        m_func_res = -1.0;
-    }
-
-    double value(const Vector<double>& x) const override
-    {
-        return m_func.value(x);  // metric-independent
-    }
-
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_func.directional_derivative(x, z);  // metric-independent
-    }
-
-    // Lazy evaluation for residual
-    double residual(const Vector<double>& x) const
-    {
-        // The residual is evaluated in the M-norm regardless of the metric chosen for the Riemannian gradient
-        const auto norm = EnergyNorm(M);
-
-        // If the cache is empty, compute and store it
-        if (m_func_res < 0) {
-            m_func_res = norm(m_func.residual(x));
-        }
-        AssertThrow(m_func_res >= 0, "residual must be positive");
-
-        // Otherwise, just return the cached value
-        return m_func_res;
+        GrossPitaevskiiOracle<dim>::update(x);
     }
 
     /**
@@ -314,10 +303,6 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        // TODO: strictly not required for Frobenius gradient (no matrix inversion with adjutable tolerance.)
-        //       compute here anyway for consistency with EnergyOracle/MassOracle.
-        m_func_res = this->residual(x);
-
         ellipsoid::frobenius::gradient(this->A, this->M, x, output);
 
         // F-gradient evaluation does not involve a linear solver.
@@ -328,32 +313,6 @@ public:
     {
         return std::sqrt(v*v);
     }
-
-    unsigned n_dofs() const override
-    {
-        return m_func.n_dofs();
-    }
-
-    // Domain-specific methods NOT in OracleBase
-    // Called in <Metric>CoarseOracle, which encodes the used fine/coarse oracle as a template parameter
-    const auto& get_M()  const
-    {
-        return m_func.get_M();
-    }
-    const auto& get_A()  const
-    {
-        return m_func.get_A();
-    }
-    const auto& get_A0() const
-    {
-        return m_func.get_A0();
-    }
-
-private:
-    GrossPitaevskiiFunctional<dim>& m_func;
-    const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
-
-    mutable double m_func_res = -1.0;
 };
 
 } // namespace gpe

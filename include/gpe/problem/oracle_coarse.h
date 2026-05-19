@@ -110,37 +110,6 @@ public:
         return m_state;
     }
 
-    Vector<double> residual(const Vector<double>& x) const
-    {
-        const auto& A_coarse = O_coarse.get_A();
-        const auto& M_coarse = O_coarse.get_M();
-
-        // Mass
-        Vector<double> Mx(x.size());
-        M_coarse.vmult(Mx, x);
-        const double mass = x * Mx;
-        AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
-
-        // Inverse retraction
-        Vector<double> u(x.size());
-        ellipsoid::retract_inv_diff_by_norm_adjoint(M_coarse, m_state.y, x, m_state.w, u);
-
-        Vector<double> Mu(x.size());
-        M_coarse.vmult(Mu, u);
-
-        // Lambda = x^T A x - x^T M u
-        Vector<double> Ax(x.size());
-        A_coarse.vmult(Ax, x);
-        const double lambda = (x * Ax - x * Mu) / mass;
-
-        // r = (Ax - Mu) - Lambda * Mx
-        Vector<double> r(Ax);
-        r.add(-1.0, Mu);
-        r.add(-lambda, Mx);
-
-        return r;
-    }
-
     const FineOracleType& objective_fine() const { return O; }
     FineOracleType& objective_fine() { return O; }
 
@@ -163,6 +132,57 @@ protected:
 
     // Benchmarking
     mutable dealii::Timer timer;
+};
+
+
+template <int dim>
+class GrossPitaevskiiCoarseResidual : public Residual
+{
+public:
+    GrossPitaevskiiCoarseResidual(const GrossPitaevskiiFunctional<dim>& m_func)
+        : m_func(m_func)
+    {}
+
+protected:
+    double norm(const Vector<double>& x) const override
+    {
+        EnergyNorm norm(m_func.get_M());
+
+        return norm(x);
+    }
+
+    Vector<double> residual_vector(const Vector<double>& x) const override
+    {
+        const auto& M_coarse = O_coarse.get_M();
+
+        // 1. Get the base Euclidean residual from the functional (A x - lambda_base M x)
+        Vector<double> r_base = O_coarse.residual_vector(x);
+
+        // 2. Compute the gradient of the tilt term: u = (D_invRet_phi)^*[w]
+        Vector<double> u(x.size());
+        ellipsoid::retract_inv_diff_by_norm_adjoint(M_coarse, m_state.y, x, m_state.w, u);
+
+        // For the Mass-metric tilt, the gradient is M * u
+        Vector<double> Mu(x.size());
+        M_coarse.vmult(Mu, u);
+
+        // 3. Compute the shift in the eigenvalue caused by the tilt
+        // lambda_shift = - (x^T M u) / (x^T M x)
+        Vector<double> Mx(x.size());
+        M_coarse.vmult(Mx, x);
+        const double mass = x * Mx;
+        const double lambda_shift = -(x * Mu) / mass;
+
+        // 4. The final coarse residual is: r_base - grad_tilt - lambda_shift * Mx
+        Vector<double> r = r_base;
+        r.add(-1.0, Mu);
+        r.add(-lambda_shift, Mx);
+
+        return r;
+    }
+
+private:
+    const GrossPitaevskiiFunctional<dim>& m_func;
 };
 
 
@@ -226,7 +246,7 @@ public:
 
         // If the cache is empty, compute and store it
         if (m_res < 0) {
-            auto r = coarse_model.residual(x);
+            auto r = coarse_model.residual_vector(x);
             m_res = norm(r);
         }
         AssertThrow(m_res >= 0, "residual must be positive");
@@ -344,7 +364,7 @@ public:
 
         // If the cache is empty, compute and store it
         if (m_res < 0) {
-            auto r = coarse_model.residual(x);
+            auto r = coarse_model.residual_vector(x);
             m_res = norm(r);
         }
         AssertThrow(m_res >= 0, "residual must be positive");
