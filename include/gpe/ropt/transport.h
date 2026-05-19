@@ -248,8 +248,10 @@ public:
      * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
      * where $I_H^h$ is the standard linear prolongation operator.
      */
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& x_fine,
+                             [[maybe_unused]] const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse,
+                             Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -265,8 +267,10 @@ public:
      * $$\mathcal{T}_{h \to H}(v) = P_{T_x \mathcal{S}_H} (I_h^H v)$$
      * where $I_h^H$ is the standard linear restriction operator.
      */
-    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    void vector_restriction(const Vector<double>& y_coarse,
+                            [[maybe_unused]] const Vector<double>& x_fine,
+                            const Vector<double>& v_fine,
+                            Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
@@ -296,8 +300,10 @@ public:
         : M_coarse(M_coarse), M_fine(M_fine), transfer(I)
     {}
 
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& x_fine,
+                             [[maybe_unused]] const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse,
+                             Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -307,8 +313,10 @@ public:
         ellipsoid::frobenius::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
     }
 
-    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    void vector_restriction(const Vector<double>& y_coarse,
+                            [[maybe_unused]] const Vector<double>& x_fine,
+                            const Vector<double>& v_fine,
+                            Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
@@ -437,8 +445,10 @@ public:
     /**
      * @brief Version II Prolongation: P(v) = Pi_\phi ( I_H^h v )
      */
-    virtual void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                                     const Vector<double>& v_coarse, Vector<double>& dst) const override
+    virtual void vector_prolongation(const Vector<double>& x_fine,
+                                     [[maybe_unused]] const Vector<double>& y_coarse,
+                                     const Vector<double>& v_coarse,
+                                     Vector<double>& dst) const override
     {
         // 1. Linear prolongation to ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -453,8 +463,10 @@ public:
      * * Version II: R(v) = (I - \psi \psi^T M_H) M_H^{-1} (I_H^h)^T M_h v
      * Version V:  R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
      */
-    virtual void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                                    const Vector<double>& v_fine, Vector<double>& dst) const override
+    virtual void vector_restriction(const Vector<double>& y_coarse,
+                                    [[maybe_unused]] const Vector<double>& x_fine,
+                                    const Vector<double>& v_fine,
+                                    Vector<double>& dst) const override
     {
         // 1. Compute M_h * v_fine
         Vector<double> M_v(transfer.n_fine());

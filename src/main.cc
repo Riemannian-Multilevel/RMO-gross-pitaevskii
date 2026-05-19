@@ -45,7 +45,7 @@ int main(int argc, char* argv[])
 
         // TODO: use multiresolution if multilevel=true
         //       timer carried on across levels
-        with_dimension(options.dimension, [&]<typename T0>(T0 D)
+        with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
             unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
@@ -68,14 +68,7 @@ int main(int argc, char* argv[])
                 EnergyOracle<dim> oracle(gp, options_slv);
 
                 // Termination criterion for gradient descent
-                auto conv_check = [&options_gd](const iteration::State& current, const iteration::State& previous)
-                {
-                    const double lmb_diff = std::abs(current.lambda - previous.lambda);
-                    const double lmb_factor = 1.0 + std::abs(current.lambda);
-
-                    return (lmb_diff < options_gd.tol_lambda * lmb_factor && current.residual < options_gd.tol_residual);
-                };
-                auto x = gradient_descent(oracle, manifold, x0, options_gd, std::cout, conv_check);
+                auto x = gradient_descent(oracle, manifold, x0, options_gd, std::cout);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);

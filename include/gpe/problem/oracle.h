@@ -32,6 +32,7 @@ public:
 
 
 // Basic oracle interface
+// TODO: include residual(x)?
 class OracleBase
 {
 public:
@@ -166,7 +167,7 @@ public:
     }
 
     // Methods to be defined in child classes (metric-dependent)
-    double norm(const Vector<double>& x) const override
+    double norm(const Vector<double>&) const override
     {
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
@@ -240,7 +241,6 @@ public:
     EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : GrossPitaevskiiOracle<dim>(func)
         , options(options)
-        , M_inv(this->get_M(), options)
         , A_inv(this->get_A(), options)
     {
         A_inv.update_static(this->get_A0());
@@ -278,7 +278,7 @@ public:
 
 private:
     SolverOptions options;
-    InverseOpType M_inv, A_inv;
+    InverseOpType A_inv;
 };
 
 
@@ -303,7 +303,7 @@ public:
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        ellipsoid::frobenius::gradient(this->A, this->M, x, output);
+        ellipsoid::frobenius::gradient(this->get_A(), this->get_M(), x, output);
 
         // F-gradient evaluation does not involve a linear solver.
         return 0;

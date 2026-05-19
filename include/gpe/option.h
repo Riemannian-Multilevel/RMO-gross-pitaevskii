@@ -11,7 +11,7 @@ namespace gpe
 namespace po = boost::program_options;
 
 BOOST_DESCRIBE_STRUCT(DescentOptions, (),
-    (tol_lambda, tol_residual, step_size, max_iter, line_search, ls));
+    (tol_residual, step_size, max_iter, line_search, ls));
 BOOST_DESCRIBE_STRUCT(DescentOptions::LineSearchOptions, (),
     (max_iter, alpha, beta, sigma, min));
 BOOST_DESCRIBE_STRUCT(SolverOptions, (),
@@ -125,8 +125,6 @@ inline po::options_description descent_cli_options() {
             "maximum number of iterations")
         ("tol-residual", po::value<double>()->default_value(1e-4),
             "tolerance for M-residual")
-        // ("tol-lambda", po::value<double>()->default_value(1e-8),
-        //     "tolerance for rayleigh quotient")
         ("step-size", po::value<double>()->default_value(1.0),
             "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
@@ -148,7 +146,6 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
-    options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.line_search  = vm["line-search"].as<bool>();
     options_rgd.ls.max_iter  = vm["ls-max-iter"].as<int>();
     options_rgd.ls.alpha     = vm["ls-alpha"].as<double>();

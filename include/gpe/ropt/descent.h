@@ -156,8 +156,6 @@ gradient_descent(OracleType& oracle,
             break;
         }
 
-        // ---- Timed section
-        timer.start();
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
         lac_iter = oracle.gradient(x, g);
@@ -170,7 +168,7 @@ gradient_descent(OracleType& oracle,
             eta *= -1.0;
             double dd = oracle.directional_derivative(x, eta);  // <grad f(x), eta>_x = Df(x)[eta]
             // runs O.retract(), O.update()
-            double h = armijo_line_search(oracle, manifold, x, eta, Ex, dd, options);
+            double h = armijo_line_search(oracle, manifold, x, eta, energy, dd, options);
             //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
             step_size = h;
