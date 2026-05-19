@@ -49,7 +49,6 @@ public:
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
-    virtual iteration::State residual(const Vector<double>&) const = 0;
 
     virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
     virtual unsigned n_dofs() const = 0;
@@ -74,6 +73,8 @@ public:
     void update(const Vector<double>& x) override
     {
         m_func.update(x);
+        // Invalidate the residual when the evaluation point changes
+        m_func_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
@@ -86,11 +87,29 @@ public:
         return m_func.directional_derivative(x, z);  // metric-independent
     }
 
+    // Lazy evaluation for residual
+    double residual(const Vector<double>& x) const
+    {
+        // The residual is evaluated in the M-norm regardless of the metric chosen for the Riemannian gradient
+        const auto norm = EnergyNorm(M);
+
+        // If the cache is empty, compute and store it
+        if (m_func_res < 0) {
+            m_func_res = norm(m_func.residual(x));
+        }
+        AssertThrow(m_func_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_func_res;
+    }
+
     /* @brief Computes the Riemannian gradient in the M-metric. */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        if (m_res.residual > 0) {
-            M_inv.set_tol(m_res.residual * options.tol_inner_res);
+        m_func_res = this->residual(x);
+
+        if (m_func_res > 0) {
+            M_inv.set_tol(m_func_res * options.tol_inner_res);
         }
         ellipsoid::mass::gradient(M_inv, A, M, x, output);
 
@@ -103,13 +122,6 @@ public:
         M.vmult(Mv, v);
 
         return std::sqrt(v*Mv);
-    }
-
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        m_res = iteration::residual(A, M, x);
-
-        return m_res;
     }
 
     unsigned n_dofs() const override
@@ -139,7 +151,7 @@ private:
     const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
     InverseOpType M_inv;
 
-    mutable iteration::State m_res;
+    mutable double m_func_res = -1.0;
 };
 
 
@@ -164,6 +176,7 @@ public:
     void update(const Vector<double>& x) override
     {
         m_func.update(x);
+        m_func_res = -1.0;
 
         A_inv.update_dynamic(A.diagonal());
     }
@@ -179,14 +192,32 @@ public:
         return m_func.directional_derivative(x, z);
     }
 
+    // Lazy evaluation for residual
+    double residual(const Vector<double>& x) const
+    {
+        // The residual is evaluated in the M-norm regardless of the metric chosen for the Riemannian gradient
+        const auto norm = EnergyNorm(M);
+
+        // If the cache is empty, compute and store it
+        if (m_func_res < 0) {
+            m_func_res = norm(m_func.residual(x));
+        }
+        AssertThrow(m_func_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_func_res;
+    }
+
     /**
      * @brief Computes the Riemannian gradient in the A-metric.
      * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        if (m_res.residual > 0) {
-            A_inv.set_tol(m_res.residual*this->options.tol_inner_res);
+        m_func_res = this->residual(x);
+
+        if (m_func_res > 0) {
+            A_inv.set_tol(m_func_res * this->options.tol_inner_res);
         }
         ellipsoid::energy::gradient(A_inv, M, x, output);
 
@@ -199,13 +230,6 @@ public:
         A.vmult(Av, v);
 
         return std::sqrt(v*Av);
-    }
-
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        m_res = iteration::residual(A, M, x);  // TODO: less general namespace?
-
-        return m_res;
     }
 
     unsigned n_dofs() const override
@@ -235,7 +259,7 @@ private:
     const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
     InverseOpType M_inv, A_inv;
 
-    mutable iteration::State m_res;
+    mutable double m_func_res = -1.0;
 };
 
 
@@ -255,6 +279,7 @@ public:
     void update(const Vector<double>& x) override
     {
         m_func.update(x);
+        m_func_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
@@ -267,12 +292,32 @@ public:
         return m_func.directional_derivative(x, z);  // metric-independent
     }
 
+    // Lazy evaluation for residual
+    double residual(const Vector<double>& x) const
+    {
+        // The residual is evaluated in the M-norm regardless of the metric chosen for the Riemannian gradient
+        const auto norm = EnergyNorm(M);
+
+        // If the cache is empty, compute and store it
+        if (m_func_res < 0) {
+            m_func_res = norm(m_func.residual(x));
+        }
+        AssertThrow(m_func_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_func_res;
+    }
+
     /**
      * @brief Computes the Riemannian gradient in the F-metric.
      * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        // TODO: strictly not required for Frobenius gradient (no matrix inversion with adjutable tolerance.)
+        //       compute here anyway for consistency with EnergyOracle/MassOracle.
+        m_func_res = this->residual(x);
+
         ellipsoid::frobenius::gradient(this->A, this->M, x, output);
 
         // F-gradient evaluation does not involve a linear solver.
@@ -282,16 +327,6 @@ public:
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
-    }
-
-    /**
-     * @brief Evaluates the current optimization state.
-     */
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        m_res = iteration::residual(this->A, this->M, x, false);
-
-        return m_res;
     }
 
     unsigned n_dofs() const override
@@ -318,7 +353,7 @@ private:
     GrossPitaevskiiFunctional<dim>& m_func;
     const OperatorType &M, &A;  // operators owned by GrossPitaevskiiFunctional
 
-    mutable iteration::State m_res;
+    mutable double m_func_res = -1.0;
 };
 
 } // namespace gpe

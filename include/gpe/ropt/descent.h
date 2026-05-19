@@ -100,13 +100,6 @@ double armijo_line_search(OracleType& oracle,
     return options.ls.min;  // TODO: throw exception that can be caught
 }
 
-struct EmptyCheck
-{
-    bool operator()(iteration::State, iteration::State)
-    {
-        return false;
-    }
-};
 
 //! Riemannian gradient descent for the GPE energy minimization
 //! @param oracle Oracle for function value and (Riemannian) gradient.
@@ -114,23 +107,17 @@ struct EmptyCheck
 //! @param x0 Starting value.
 //! @param options Parameters for gradient descent, such as step-size.
 //! @param os Output stream for diagnostics.
-//! @param check_convergence Strategy for verifying if gradient descent converged.
 //! @return
 // TODO: split into cycle() and eval(), compare FullApproximationScheme
-template <typename OracleType, typename CheckType = EmptyCheck>
+template <typename OracleType>
 Vector<double>
 gradient_descent(OracleType& oracle,
                  const ManifoldBase& manifold,
                  const Vector<double>& x0,
-                 DescentOptions options, std::ostream& os,
-                 CheckType check_convergence = {})
+                 DescentOptions options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
     Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
-
-    // Keep track of states locally
-    iteration::State current_state;
-    iteration::State previous_state;
 
     // Define the timer
     dealii::Timer timer;
@@ -140,18 +127,16 @@ gradient_descent(OracleType& oracle,
     dealii::ConvergenceTable convergence_table;
     oracle.update(x);
 
-    current_state = oracle.residual(x);
-    double Ex = oracle.value(x);
-    current_state.energy = Ex;
+    // TODO: "residual" class returned by Oracle (values + criterion)
+    double residual = oracle.residual(x);
+    double energy   = oracle.value(x);
     unsigned int lac_iter = 0;  // number of iterations in inner solver taken
 
     // TODO: move to function.h
     convergence_table.add_value("iter", 0);
     convergence_table.add_value("lac_iter", lac_iter);
-    convergence_table.add_value("mass", current_state.mass);
-    convergence_table.add_value("lambda", current_state.lambda);
-    convergence_table.add_value("residual", current_state.residual);
-    convergence_table.add_value("energy", current_state.energy);
+    convergence_table.add_value("residual", residual);
+    convergence_table.add_value("energy", energy);
     convergence_table.add_value("step",0);
     convergence_table.add_value("elapsed", 0);  // does not include setup time
 
@@ -165,7 +150,7 @@ gradient_descent(OracleType& oracle,
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
-        if (check_convergence(current_state, previous_state)) {
+        if (residual < options.tol_residual) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break;
@@ -194,24 +179,19 @@ gradient_descent(OracleType& oracle,
             manifold.retract(g, x, -options.step_size);
             oracle.update(x);
         }
-        // ---- End timed section
-        timer.stop();
 
-        current_state = oracle.residual(x);
-        Ex = oracle.value(x);
-        current_state.energy = Ex;
+        residual = oracle.residual(x);  // assumed to be computed by OracleType::gradient(x)
+        energy   = oracle.value(x);
+
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", current_state.mass);
-        convergence_table.add_value("lambda", current_state.lambda);
-        convergence_table.add_value("residual", current_state.residual);
-        convergence_table.add_value("energy", current_state.energy);
+        convergence_table.add_value("residual", residual);
+        convergence_table.add_value("energy", energy);
         convergence_table.add_value("step",step_size);
         convergence_table.add_value("elapsed",timer.cpu_time());
-
-        // Store current state for the next iteration's delta check
-        previous_state = current_state;
     }
+    // ---- End timed section
+    timer.stop();
 
     std::cerr << std::endl << std::endl;
     convergence_table.set_precision("mass", 2);

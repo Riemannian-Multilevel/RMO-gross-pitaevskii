@@ -125,8 +125,8 @@ inline po::options_description descent_cli_options() {
             "maximum number of iterations")
         ("tol-residual", po::value<double>()->default_value(1e-4),
             "tolerance for M-residual")
-        ("tol-lambda", po::value<double>()->default_value(1e-8),
-            "tolerance for rayleigh quotient")
+        // ("tol-lambda", po::value<double>()->default_value(1e-8),
+        //     "tolerance for rayleigh quotient")
         ("step-size", po::value<double>()->default_value(1.0),
             "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),

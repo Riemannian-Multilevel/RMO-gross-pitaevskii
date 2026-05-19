@@ -110,11 +110,43 @@ public:
         return m_state;
     }
 
+    Vector<double> residual(const Vector<double>& x) const
+    {
+        const auto& A_coarse = O_coarse.get_A();
+        const auto& M_coarse = O_coarse.get_M();
+
+        // Mass
+        Vector<double> Mx(x.size());
+        M_coarse.vmult(Mx, x);
+        const double mass = x * Mx;
+        AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
+
+        // Inverse retraction
+        Vector<double> u(x.size());
+        ellipsoid::retract_inv_diff_by_norm_adjoint(M_coarse, m_state.y, x, m_state.w, u);
+
+        Vector<double> Mu(x.size());
+        M_coarse.vmult(Mu, u);
+
+        // Lambda = x^T A x - x^T M u
+        Vector<double> Ax(x.size());
+        A_coarse.vmult(Ax, x);
+        const double lambda = (x * Ax - x * Mu) / mass;
+
+        // r = (Ax - Mu) - Lambda * Mx
+        Vector<double> r(Ax);
+        r.add(-1.0, Mu);
+        r.add(-lambda, Mx);
+
+        return r;
+    }
+
     const FineOracleType& objective_fine() const { return O; }
     FineOracleType& objective_fine() { return O; }
 
     const CoarseOracleType& objective_coarse() const { return O_coarse; }
     CoarseOracleType& objective_coarse() { return O_coarse; }
+
 
 protected:
     // Coarse and fine level evaluation for correction vector w
@@ -165,6 +197,8 @@ public:
     void update(const Vector<double>& x) override
     {
         coarse_model.objective_coarse().update(x);
+        // Invalidate cached value
+        m_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
@@ -185,27 +219,39 @@ public:
             z, M_coarse, A_coarse);
     }
 
+    // Lazy evaluation for residual
+    double residual(const Vector<double>& x) const
+    {
+        EnergyNorm norm(M_coarse);
+
+        // If the cache is empty, compute and store it
+        if (m_res < 0) {
+            auto r = coarse_model.residual(x);
+            m_res = norm(r);
+        }
+        AssertThrow(m_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_res;
+    }
+
     /**
-     * @brief Computes the coarse model gradient in the M-metric.
-     */
+  * @brief Computes the coarse model gradient in the M-metric.
+  */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        const auto& coarse_step = coarse_model.get_state();
+        const double residual = this->residual(x);
 
-        auto res = residual(x);
-        if (res.residual > 0) {
-            M_inv_coarse.set_tol(res.residual * options.tol_inner_res);
+        if (residual > 0) {
+            M_inv_coarse.set_tol(residual * options.tol_inner_res);
         }
+
+        const auto& coarse_step = coarse_model.get_state();
 
         coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse,
             x, coarse_step.y, coarse_step.w, output);
 
         return M_inv_coarse.control().last_step();
-    }
-
-    iteration::State residual(const Vector<double>& x) const final
-    {
-        return {.energy=value(x)};
     }
 
     unsigned n_dofs() const override
@@ -241,6 +287,8 @@ private:
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by MassOracle <- GrossPitaevskiiFunctional
     InverseOpType M_inv_coarse;
+
+    mutable double m_res = -1.0;
 };
 
 
@@ -267,6 +315,8 @@ public:
         coarse_model.objective_coarse().update(x);
 
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
+        // Invalidate cached value
+        m_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
@@ -287,28 +337,40 @@ public:
             z, M_coarse, A_coarse);
     }
 
+    // Lazy evaluation for residual
+    double residual(const Vector<double>& x) const
+    {
+        EnergyNorm norm(M_coarse);
+
+        // If the cache is empty, compute and store it
+        if (m_res < 0) {
+            auto r = coarse_model.residual(x);
+            m_res = norm(r);
+        }
+        AssertThrow(m_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_res;
+    }
+
     /**
      * @brief Computes the coarse model gradient in the A-metric.
      * $$ \nabla_A q_k(x) = \nabla_A E_H(x) - w $$
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        const auto& coarse_step = coarse_model.get_state();
+        const double residual = this->residual(x);
 
-        auto res = residual(x);
-        if (res.residual > 0) {
-            A_inv_coarse.set_tol(res.residual * options.tol_inner_res);
+        if (residual > 0) {
+            A_inv_coarse.set_tol(residual * options.tol_inner_res);
         }
+
+        const auto& coarse_step = coarse_model.get_state();
 
         coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse,
             x, coarse_step.y, coarse_step.w, output);
 
         return A_inv_coarse.control().last_step();
-    }
-
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        return {.energy=value(x)};
     }
 
     unsigned n_dofs() const override
@@ -345,6 +407,8 @@ private:
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
     InverseOpType A_inv_coarse;
+
+    mutable double m_res = -1.0;
 };
 
 
@@ -366,6 +430,8 @@ public:
     void update(const Vector<double>& x) override
     {
         coarse_model.objective_coarse().update(x);
+        // Invalidate cached value
+        m_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
@@ -386,23 +452,37 @@ public:
             z, M_coarse, A_coarse);
     }
 
+    double residual(const Vector<double>& x) const
+    {
+        EnergyNorm norm(M_coarse);
+
+        // If the cache is empty, compute and store it
+        if (m_res < 0) {
+            auto r = coarse_model.residual(x);
+            m_res = norm(r);
+        }
+        AssertThrow(m_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_res;
+    }
+
     /**
      * @brief Computes the coarse model gradient in the F-metric.
      * $$ \nabla_F q_k(\zeta) = \Pi_{\zeta, F}\left(A_\zeta \zeta - \frac{1}{\phi^\top M\zeta}w\right) $$
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        // TODO: strictly not required for Frobenius gradient (no matrix inversion with adjutable tolerance.)
+        //       compute here anyway for consistency with EnergyOracle/MassOracle.
+        const double residual = this->residual(x);
+
         const auto& coarse_step = coarse_model.get_state();
 
         // Compute the pure Frobenius gradient
         coarse::frobenius::gradient(M_coarse, A_coarse, x, coarse_step.y, coarse_step.w, output);
 
         return 0;  // 0 iterations, as no Krylov solver is used
-    }
-
-    iteration::State residual(const Vector<double>& x) const override
-    {
-        return {.energy=value(x)};
     }
 
     unsigned n_dofs() const override
@@ -435,6 +515,7 @@ private:
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
+    mutable double m_res = -1.0;
 };
 
 
@@ -462,6 +543,8 @@ public:
         coarse_model.objective_coarse().update(x);
 
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
+        // Invalidate cached value
+        m_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
@@ -482,30 +565,41 @@ public:
             z, M_coarse, A_coarse);
     }
 
+    double residual(const Vector<double>& x) const
+    {
+        EnergyNorm norm(M_coarse);
+
+        // If the cache is empty, compute and store it
+        if (m_res < 0) {
+            auto r = coarse_model.residual(x);
+            m_res = norm(r);
+        }
+        AssertThrow(m_res >= 0, "residual must be positive");
+
+        // Otherwise, just return the cached value
+        return m_res;
+    }
+
     /**
      * @brief Computes the coarse model gradient in the energy-adaptive metric.
      * $$ \nabla_A q_k(\zeta) = \tilde{A}_\zeta^{-1} \left( \nabla_F q_k(\zeta) \right) $$
      */
     unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
     {
-        const auto& coarse_step = coarse_model.get_state();
+        const double residual = this->residual(x);
 
-        auto res = residual(x);
-        if (res.residual > 0) {
-            A_inv_coarse.set_tol(res.residual * options.tol_inner_res);
+        if (residual > 0) {
+            A_inv_coarse.set_tol(residual * options.tol_inner_res);
         }
 
         // Computes the F-gradient and applies the A_inv preconditioner
+        const auto& coarse_step = coarse_model.get_state();
+
         coarse::frobenius::energy_adaptive_gradient(M_coarse, A_inv_coarse,A_coarse,
             x, coarse_step.y, coarse_step.w, output);
 
         // Return the number of Krylov iterations used by A_inv
         return A_inv_coarse.control().last_step();
-    }
-
-    iteration::State residual(const Vector<double>& x) const final
-    {
-        return {.energy=value(x)};
     }
 
     unsigned n_dofs() const override
@@ -539,6 +633,8 @@ private:
 
     const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
     InverseOpType A_inv_coarse;
+
+    mutable double m_res = -1.0;
 };
 
 } // namespace gpe

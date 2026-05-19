@@ -30,6 +30,40 @@ using dealii::types::global_dof_index;
 using dealii::SolverControl;
 
 
+// Class representing the symmetric positive definite dot product <u, Av> with induced norm sqrt(<u, Au>)
+template <typename MatrixType>
+class EnergyNorm
+{
+public:
+    explicit EnergyNorm(const MatrixType& matrix)
+        : matrix(matrix)
+    {
+        AssertDimension(matrix.n(), matrix.m());
+    }
+
+    double operator()(const Vector<double>& u, const Vector<double>& v) const
+    {
+        AssertDimension(u.size(), v.size());
+
+        Vector<double> m_v(v.size());
+        matrix.vmult(m_v, v);
+
+        return u * m_v;
+    }
+
+    double operator()(const Vector<double>& x) const
+    {
+        Vector<double> m_x(x.size());
+        matrix.vmult(m_x, x);
+
+        return std::sqrt(x*m_x);
+    }
+
+private:
+    const MatrixType& matrix;
+};
+
+
 /**
  * @brief A lightweight alternative to dealii::LinearOperator.
  *
@@ -341,6 +375,7 @@ public:
     /** @brief Returns the solver control object used in the last solve. */
     const SolverControl& control() const { return m_control; }
 
+
 private:
     const OperatorType &m_matrix;  // TODO: m_oper?
     const PrecondType &m_precond;
@@ -466,6 +501,7 @@ public:
     const SolverControl& control() const { return m_control; }
 
     void set_tol(double tol) const { m_tol = tol; }
+
 
 private:
     template <typename VectorType, typename PrecondType>

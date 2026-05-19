@@ -17,52 +17,6 @@ struct TangentVector
 };
 
 
-namespace iteration
-{
-// Termination criteria for energy function minimization
-// TODO: make this generic?
-struct State
-{
-    double energy{0};
-    double mass{0};
-    double lambda{0};
-    double residual{0};
-};
-
-
-// TODO: x*Mx is only for debugging/diagnostic purposes
-template <typename MatrixType>
-State residual(const MatrixType& A, const MatrixType& M, const Vector<double>& x,
-               bool use_m_norm = true)
-{
-    State prop;
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-    prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
-
-    Vector<double> Ax(x.size()); // A x
-    A.vmult(Ax, x);
-    prop.lambda = x * Ax / prop.mass;  // Rayleigh quotient (x'Ax / x'Mx)
-
-    Vector<double> r(Ax);
-    r.add(-prop.lambda, Mx);        // r = A x - lambda M x
-
-    // TODO: use enum for setting norm at runtime
-    prop.residual = 0.0;
-    if (use_m_norm) {
-        Vector<double> Mr(r.size());
-        M.vmult(Mr, r);
-        prop.residual = std::sqrt(r * Mr);
-    }
-    else {
-        prop.residual = r.l2_norm();
-    }
-    return prop;
-}
-
-} // namespace iteration
-
-
 // Functions for GPE minimization
 // Note: due to compartmentalizing as functions, some values are necessarily computed anew.
 namespace ellipsoid

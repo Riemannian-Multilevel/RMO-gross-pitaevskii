@@ -263,6 +263,7 @@ template <int dim>
 class GrossPitaevskiiFunctional
 {
 public:
+
     GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta)
         : system(system)
         , beta(beta)
@@ -306,6 +307,24 @@ public:
         A.vmult(output, x);
     }
 
+    Vector<double> residual(const Vector<double>& x) const
+    {
+        Vector<double> Mx(x.size());
+        M.vmult(Mx, x);
+
+        const double mass = x * Mx;             // should be ~ 1 (energy constraint)
+        AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
+
+        Vector<double> Ax(x.size());         // A x
+        A.vmult(Ax, x);
+        const double lambda = x * Ax / mass;    // Rayleigh quotient (x'Ax / x'Mx)
+
+        Vector<double> r(Ax);
+        r.add(-lambda, Mx);                     // r = A x - lambda M x
+
+        return r;
+    }
+
     // Accessors
     unsigned n_dofs() const { return system.n_dofs(); }
     double get_beta() const { return beta; }
@@ -313,6 +332,7 @@ public:
     const auto& get_M() const { return M; }
     const auto& get_A() const { return A; }
     const auto& get_A0() const { return system.get_A0(); }
+
 
 private:
     GrossPitaevskiiSystem<dim>& system;
