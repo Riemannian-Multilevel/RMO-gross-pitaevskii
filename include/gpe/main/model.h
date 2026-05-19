@@ -55,6 +55,8 @@ public:
 
     /** @brief Access the discretization package. */
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
+    const dealii::DoFHandler<dim>& get_dofs() const { return package.get_dofs(); }
+
     const GrossPitaevskiiSystem<dim>& get_system() const { return system; }
     GrossPitaevskiiSystem<dim>& get_system() { return system; }
 
@@ -64,6 +66,11 @@ public:
     auto get_eval(double beta)
     {
         return GrossPitaevskiiFunctional<dim>(system, beta);
+    }
+
+    auto get_eval()
+    {
+        return GrossPitaevskiiFunctional<dim>(system, options.beta);
     }
 
     unsigned int n_dofs() const { return package.n_dofs(); }

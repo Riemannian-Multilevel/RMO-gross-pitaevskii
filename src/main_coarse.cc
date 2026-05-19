@@ -22,7 +22,7 @@ struct ExperimentSingleLevel
         : m_solver(O_descent, manifold, options), m_options(options)
     {}
 
-    void cycle(Vector<double>& x0, std::ostream& os)
+    void run(Vector<double>& x0, std::ostream& os)
     {
         m_solver.cycle(x0, os);
     }
@@ -31,71 +31,6 @@ private:
     GradientDescent<dim> m_solver;
     DescentOptions m_options;
 };
-
-// -------------------------------------------------------------------------
-// Template Dispatcher for 3-Level Experiments
-// -------------------------------------------------------------------------
-template <int dim, typename DescentOracleType, typename TiltType, template<int, typename> class CoarseModelType>
-void run_3level_experiment(DescentOracleType& o_descent_2,
-                           TiltType& o_tilt_2, TiltType& o_tilt_1, TiltType& o_tilt_0,
-                           const ManifoldTransferBase& pt_21, const VectorTransportBase& vt_21,
-                           const ManifoldTransferBase& pt_10, const VectorTransportBase& vt_10,
-                           const ManifoldBase& manifold_2, const ManifoldBase& manifold_1, const ManifoldBase& manifold_0,
-                           SolverOptions options_slv_coarse,
-                           DescentOptions options_gd, DescentOptions options_gd_coarse, FAS_Options options_fas,
-                           Vector<double>& x0)
-{
-    // Build the FAS State Managers (Bridges 2->1 and 1->0)
-    using FASManagerType = CoarseOracleBase<dim, TiltType, TiltType>;
-    FASManagerType fas_21(o_tilt_2, o_tilt_1, pt_21, vt_21);
-    FASManagerType fas_10(o_tilt_1, o_tilt_0, pt_10, vt_10);
-
-    // Build the Surrogate Models (q_k)
-    CoarseModelType<dim, TiltType> q_2(fas_21, options_slv_coarse);
-    CoarseModelType<dim, TiltType> q_1(fas_10, options_slv_coarse);
-
-    // Level 0: Gradient Descent (minimizing q_1)
-    GradientDescent<dim> solver_0(q_1, manifold_0, options_gd_coarse);
-
-    // Level 1: FAS (minimizing q_2, using solver_0 for coarse steps)
-    FullApproximationScheme<dim, CoarseModelType<dim, TiltType>, FASManagerType, CoarseModelType<dim, TiltType>>
-        solver_1(q_2, fas_10, q_1, manifold_1, manifold_0, vt_10, solver_0, options_gd_coarse, options_fas);
-
-    // Level 2: FAS (minimizing true objective, using solver_1 for coarse steps)
-    FullApproximationScheme<dim, DescentOracleType, FASManagerType, CoarseModelType<dim, TiltType>>
-        solver_2(o_descent_2, fas_21, q_2, manifold_2, manifold_1, vt_21, solver_1, options_gd, options_fas);
-
-    // Run the Top-Level Cycle
-    solver_2.cycle(x0, std::cout);
-}
-
-
-template <int dim, typename DescentOracleType, typename TiltType, template<int, typename> class CoarseModelType>
-void run_2level_experiment(DescentOracleType& o_descent_1,
-                           TiltType& o_tilt_1, TiltType& o_tilt_0,
-                           const ManifoldTransferBase& pt_10, const VectorTransportBase& vt_10,
-                           const ManifoldBase& manifold_1, const ManifoldBase& manifold_0,
-                           SolverOptions options_slv_coarse,
-                           DescentOptions options_gd, DescentOptions options_gd_coarse, FAS_Options options_fas,
-                           Vector<double>& x0)
-{
-    // Build the FAS State Managers (Bridges 2->1 and 1->0)
-    using FASManagerType = CoarseOracleBase<dim, TiltType, TiltType>;
-    FASManagerType fas_10(o_tilt_1, o_tilt_0, pt_10, vt_10);
-
-    // Build the Surrogate Models (q_k)
-    CoarseModelType<dim, TiltType> q_1(fas_10, options_slv_coarse);
-
-    // Level 0: Gradient Descent (minimizing q_1)
-    GradientDescent<dim> solver_0(q_1, manifold_0, options_gd_coarse);
-
-    // Level 1: FAS (minimizing q_2, using solver_0 for coarse steps)
-    FullApproximationScheme<dim, DescentOracleType, FASManagerType, CoarseModelType<dim, TiltType>>
-        solver_1(o_descent_1, fas_10, q_1, manifold_1, manifold_0, vt_10, solver_0, options_gd, options_fas);
-
-    // Run the Top-Level Cycle
-    solver_1.cycle(x0, std::cout);
-}
 
 
 void cat_file(std::string filename)
@@ -107,6 +42,307 @@ void cat_file(std::string filename)
         std::cerr << "Error: Could not open file for reading.\n";
     }
 }
+
+
+template <int dim>
+auto build_transfers(const DoFHandler<dim>& dofs_c,
+                     const DoFHandler<dim>& dofs_f,
+                     const AffineConstraints<double>& constr_c,
+                     const AffineConstraints<double>& constr_f,
+                     const OperatorType& M_c, const OperatorType& M_f, const InverseOpType& M_inv_c,
+                     FAS_Options options_fas)
+{
+    std::shared_ptr<LinearTransferBase> transfer;
+    std::shared_ptr<ManifoldTransferBase> point_transfer;
+    std::shared_ptr<VectorTransportBase> vector_transport;
+
+    if (options_fas.interpol_t == Interpolate::NONE) {
+        transfer = std::make_shared<LinearTransferMatrix<dim>>(dofs_c, dofs_f, constr_c, constr_f);
+        point_transfer = std::make_shared<ManifoldTransfer<OperatorType>>(*transfer, M_c, M_f);
+    }
+    else if (options_fas.interpol_t == Interpolate::MASS) {
+        transfer = std::make_shared<MassTransfer<dim,LinearTransferMatrix<dim>,OperatorType,InverseOpType>>(
+            dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
+        point_transfer = std::make_shared<ManifoldTransfer<OperatorType>>(*transfer, M_c, M_f);
+    }
+    else {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
+    if (options_fas.transport_t == Transport::DIFFERENTIAL) {
+        vector_transport = std::make_shared<DifferentialTransport<OperatorType>>(*point_transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::MASS) {
+        vector_transport = std::make_shared<MassProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::FROBENIUS) {
+        vector_transport = std::make_shared<FrobeniusProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION) {
+        vector_transport = std::make_shared<AdjointRestrictionTransport<OperatorType,InverseOpType>>(
+            *transfer, M_c, M_f, M_inv_c);
+    }
+    else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION_SCALED) {
+        vector_transport = std::make_shared<AdjointRestrictionTransportScaled<OperatorType,InverseOpType>>(
+            *transfer, M_c, M_f, M_inv_c);
+    }
+    else {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
+    return std::make_tuple(transfer, point_transfer, vector_transport);
+};
+
+
+template <int dim>
+class Experiment2Level
+{
+public:
+    template <typename Potential>
+    Experiment2Level(Potential&& V, unsigned n_levels,
+                     GPE_Options options, FAS_Options options_fas,
+                     SolverOptions options_slv_f, SolverOptions options_slv_c)
+        : n_levels(n_levels)
+        , options(options), options_fas(options_fas), options_slv_c(options_slv_c), options_slv_f(options_slv_f)
+        , builder_c(V, options, n_levels-1)
+        , builder_f(V, options, n_levels)
+        // FIXED: Added options.beta to get_eval()
+        , obj_c(builder_c.get_eval(options.beta))
+        , obj_f(builder_f.get_eval(options.beta))
+        , M_c(obj_c.get_M())
+        , M_f(obj_f.get_M())
+        , M_inv_c(obj_c.get_M(), options_slv_c)
+        , M_inv_f(obj_f.get_M(), options_slv_f)
+        , manifold_c(M_c)
+        , manifold_f(M_f)
+    {
+        const auto& dofs_c = builder_c.get_package().get_dofs();
+        const auto& dofs_f = builder_f.get_package().get_dofs();
+
+        const auto& constr_c = builder_c.get_package().get_constraints();
+        const auto& constr_f = builder_f.get_package().get_constraints();
+
+        std::tie(transfer, point_transfer, vector_transport) = build_transfers(dofs_c, dofs_f, constr_c, constr_f,
+            M_c, M_f, M_inv_c, options_fas);
+    }
+
+    void distribute(Vector<double>& x)
+    {
+        builder_f.distribute(x);
+    }
+
+    unsigned n_dofs() const
+    {
+        return builder_f.n_dofs();
+    }
+
+    void run(Vector<double>& x0, DescentOptions options_gd_f, DescentOptions options_gd_c, std::ostream& os)
+    {
+        EnergyOracle<dim> o_descent_f(obj_f, options_slv_f);
+
+        if (options_fas.metric_t == MetricKind::NONE) {
+            // FIXED: Passed os instead of std::cout
+            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_f, manifold_f, options_gd_f).cycle(x0, os);
+        }
+        else if (options_fas.metric_t == MetricKind::MASS) {
+            MassOracle<dim> o_tilt_c(obj_c, options_slv_c);
+            MassOracle<dim> o_tilt_f(obj_f, options_slv_f);
+
+            // FIXED: Call matches the run_impl signature exactly
+            run_impl<EnergyOracle<dim>, MassOracle<dim>, MassCoarseOracleEnergyAdaptive>(
+                x0, o_descent_f, o_tilt_f, o_tilt_c, options_gd_f, options_gd_c, os);
+        }
+        else if (options_fas.metric_t == MetricKind::FROBENIUS) {
+            FrobeniusOracle<dim> o_tilt_c(obj_c);
+            FrobeniusOracle<dim> o_tilt_f(obj_f);
+
+            // FIXED: Call matches the run_impl signature exactly
+            run_impl<EnergyOracle<dim>, FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive>(
+                x0, o_descent_f, o_tilt_f, o_tilt_c, options_gd_f, options_gd_c, os);
+        }
+    }
+
+protected:
+    template <typename DescentOracleType, typename TiltOracleType, template<int, typename> class CoarseModelType>
+    void run_impl(Vector<double>& x0, DescentOracleType& o_descent_f,
+                  TiltOracleType& o_tilt_f, TiltOracleType& o_tilt_c,
+                  DescentOptions options_gd_f, DescentOptions options_gd_c, std::ostream& os)
+    {
+        // FAS orchestration (bridges 1->0)
+        using FASManagerType = CoarseOracleBase<dim, TiltOracleType, TiltOracleType>;
+        // FIXED: Dereferenced point_transfer and vector_transport
+        FASManagerType fas(o_tilt_f, o_tilt_c, manifold_c, *point_transfer, *vector_transport);
+
+        // Define the coarse models (q_k)
+        CoarseModelType<dim, TiltOracleType> q_1(fas, options_slv_c);
+
+        // Level 0: Gradient Descent (minimizing q_1)
+        GradientDescent<dim> solver_c(q_1, manifold_c, options_gd_c);
+
+        // Level 1: FAS (minimizing q_2, using solver_c for coarse steps)
+        // FIXED: Dereferenced vector_transport
+        FullApproximationScheme<dim, DescentOracleType, FASManagerType, CoarseModelType<dim, TiltOracleType>>
+            solver_f(o_descent_f, fas, q_1, manifold_f, manifold_c, *vector_transport, solver_c, options_gd_f, options_fas);
+
+        // Run the Top-Level Cycle
+        solver_f.cycle(x0, os);
+    }
+
+private:
+    unsigned n_levels;
+    GPE_Options   options;
+    FAS_Options   options_fas;
+    SolverOptions options_slv_c;
+    SolverOptions options_slv_f;
+
+    ModelBuilder<dim> builder_c;  // coarse 0
+    ModelBuilder<dim> builder_f;  // fine 1
+
+    GrossPitaevskiiFunctional<dim> obj_c, obj_f;
+    const OperatorType &M_c, &M_f;
+    InverseOpType M_inv_c, M_inv_f;
+
+    UnitMassSphere<dim, OperatorType> manifold_c;
+    UnitMassSphere<dim, OperatorType> manifold_f;
+
+    // Variable grid operators
+    std::shared_ptr<LinearTransferBase> transfer;
+    std::shared_ptr<ManifoldTransferBase> point_transfer;
+    std::shared_ptr<VectorTransportBase> vector_transport;
+};
+
+
+template <int dim>
+class Experiment3Level
+{
+public:
+    template <typename Potential>
+    Experiment3Level(Potential&& V, unsigned n_levels,
+                     GPE_Options options, FAS_Options options_fas,
+                     SolverOptions options_slv_f, SolverOptions options_slv_c)
+        : n_levels(n_levels)
+        , options(options), options_fas(options_fas), options_slv_c(options_slv_c), options_slv_f(options_slv_f)
+        , builder_0(V, options, n_levels-2)
+        , builder_1(V, options, n_levels-1)
+        , builder_2(V, options, n_levels)
+        , obj_0(builder_0.get_eval(options.beta))
+        , obj_1(builder_1.get_eval(options.beta))
+        , obj_2(builder_2.get_eval(options.beta))
+        , M_0(obj_0.get_M())
+        , M_1(obj_1.get_M())
+        , M_2(obj_2.get_M())
+        , M_inv_0(obj_0.get_M(), options_slv_c)
+        , M_inv_1(obj_1.get_M(), options_slv_c)
+        , M_inv_2(obj_2.get_M(), options_slv_f)
+        , manifold_0(M_0)
+        , manifold_1(M_1)
+        , manifold_2(M_2)
+    {
+        const auto& dofs_0 = builder_0.get_package().get_dofs();
+        const auto& dofs_1 = builder_1.get_package().get_dofs();
+        const auto& dofs_2 = builder_2.get_package().get_dofs();
+
+        const auto& constr_0 = builder_0.get_package().get_constraints();
+        const auto& constr_1 = builder_1.get_package().get_constraints();
+        const auto& constr_2 = builder_2.get_package().get_constraints();
+
+        std::tie(transfer_10, pt_10, vt_10) = build_transfers(dofs_0, dofs_1, constr_0, constr_1,
+            M_0, M_1, M_inv_0, options_fas);
+
+        std::tie(transfer_21, pt_21, vt_21) = build_transfers(dofs_1, dofs_2, constr_1, constr_2,
+            M_1, M_2, M_inv_1, options_fas);
+    }
+
+    void distribute(Vector<double>& x)
+    {
+        builder_2.distribute(x);
+    }
+
+    unsigned n_dofs() const
+    {
+        return builder_2.n_dofs();
+    }
+
+    void run(Vector<double>& x0, DescentOptions options_gd_f, DescentOptions options_gd_c, std::ostream& os)
+    {
+        EnergyOracle<dim> o_descent_2(obj_2, options_slv_f);
+
+        if (options_fas.metric_t == MetricKind::NONE) {
+            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_2, manifold_2, options_gd_f).cycle(x0, os);
+        }
+        else if (options_fas.metric_t == MetricKind::MASS) {
+            MassOracle<dim> o_tilt_0(obj_0, options_slv_c);
+            MassOracle<dim> o_tilt_1(obj_1, options_slv_c);
+            MassOracle<dim> o_tilt_2(obj_2, options_slv_f);
+
+            run_impl<EnergyOracle<dim>, MassOracle<dim>, MassCoarseOracleEnergyAdaptive>(
+                x0, o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0, options_gd_f, options_gd_c, os);
+        }
+        else if (options_fas.metric_t == MetricKind::FROBENIUS) {
+            FrobeniusOracle<dim> o_tilt_0(obj_0);
+            FrobeniusOracle<dim> o_tilt_1(obj_1);
+            FrobeniusOracle<dim> o_tilt_2(obj_2);
+
+            run_impl<EnergyOracle<dim>, FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive>(
+                x0, o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0, options_gd_f, options_gd_c, os);
+        }
+    }
+
+protected:
+    template <typename DescentOracleType, typename TiltOracleType, template<int, typename> class CoarseModelType>
+    void run_impl(Vector<double>& x0, DescentOracleType& o_descent_2,
+                  TiltOracleType& o_tilt_2, TiltOracleType& o_tilt_1, TiltOracleType& o_tilt_0,
+                  DescentOptions options_gd_f, DescentOptions options_gd_c, std::ostream& os)
+    {
+        // FAS orchestration managers (bridges 2->1 and 1->0)
+        using FASManagerType = CoarseOracleBase<dim, TiltOracleType, TiltOracleType>;
+        FASManagerType fas_21(o_tilt_2, o_tilt_1, manifold_1, *pt_21, *vt_21);
+        FASManagerType fas_10(o_tilt_1, o_tilt_0, manifold_0, *pt_10, *vt_10);
+
+        // Define the coarse surrogate models (q_k)
+        CoarseModelType<dim, TiltOracleType> q_2(fas_21, options_slv_c);
+        CoarseModelType<dim, TiltOracleType> q_1(fas_10, options_slv_c);
+
+        // Level 0: Gradient Descent (minimizing q_1)
+        GradientDescent<dim> solver_0(q_1, manifold_0, options_gd_c);
+
+        // Level 1: FAS (minimizing q_2, using solver_0 for coarse steps)
+        FullApproximationScheme<dim, CoarseModelType<dim, TiltOracleType>, FASManagerType, CoarseModelType<dim, TiltOracleType>>
+            solver_1(q_2, fas_10, q_1, manifold_1, manifold_0, *vt_10, solver_0, options_gd_c, options_fas);
+
+        // Level 2: FAS (minimizing true objective, using solver_1 for coarse steps)
+        FullApproximationScheme<dim, DescentOracleType, FASManagerType, CoarseModelType<dim, TiltOracleType>>
+            solver_2(o_descent_2, fas_21, q_2, manifold_2, manifold_1, *vt_21, solver_1, options_gd_f, options_fas);
+
+        // Run the Top-Level Cycle
+        solver_2.cycle(x0, os);
+    }
+
+private:
+    unsigned n_levels;
+    GPE_Options   options;
+    FAS_Options   options_fas;
+    SolverOptions options_slv_c;
+    SolverOptions options_slv_f;
+
+    ModelBuilder<dim> builder_0;  // coarse 0
+    ModelBuilder<dim> builder_1;  // coarse 1
+    ModelBuilder<dim> builder_2;  // fine 2
+
+    GrossPitaevskiiFunctional<dim> obj_0, obj_1, obj_2;
+    const OperatorType &M_0, &M_1, &M_2;
+    InverseOpType M_inv_0, M_inv_1, M_inv_2;
+
+    UnitMassSphere<dim, OperatorType> manifold_0;
+    UnitMassSphere<dim, OperatorType> manifold_1;
+    UnitMassSphere<dim, OperatorType> manifold_2;
+
+    // Variable grid operators
+    std::shared_ptr<LinearTransferBase> transfer_10, transfer_21;
+    std::shared_ptr<ManifoldTransferBase> pt_10, pt_21;
+    std::shared_ptr<VectorTransportBase> vt_10, vt_21;
+};
+
 
 int main(int argc, char* argv[])
 {
@@ -152,142 +388,33 @@ int main(int argc, char* argv[])
 
             Square<dim> V;
 
-            // Define the 3-Level Hierarchy
-            const int n_level_2 = options_mg.max_level;
-            const int n_level_1 = n_level_2 - 1;
-            const int n_level_0 = n_level_2 - 2;
+            int n_levels = options_mg.max_level;
+            const int levels_count = options_mg.max_level - options_mg.min_level + 1;
 
-            AssertThrow(n_level_0 >= 0, dealii::ExcMessage("max_level must be at least 2 for a 3-level setup."));
+            if (levels_count == 3) {
+                AssertThrow(n_levels >= 2, dealii::ExcMessage("max_level must be >= 2 for 3-level setup"));
 
-            // Setup physics contexts
-            ModelBuilder<dim> builder_0(V, options, n_level_0);
-            ModelBuilder<dim> builder_1(V, options, n_level_1);
-            ModelBuilder<dim> builder_2(V, options, n_level_2);
+                Experiment3Level<dim> exp(V, n_levels, options, options_fas, options_slv, options_slv_coarse, options_slv_coarse);
 
-            // 1. Build the Functionals
-            auto obj_0 = builder_0.get_eval(options.beta);
-            auto obj_1 = builder_1.get_eval(options.beta);
-            auto obj_2 = builder_2.get_eval(options.beta);
+                Vector<double> x0(exp.n_dofs());
+                x0 = 1.0;
+                exp.distribute(x0);
 
-            // 2. Extract OperatorTypes
-            const auto& M_0 = obj_0.get_M();
-            const auto& M_1 = obj_1.get_M();
-            const auto& M_2 = obj_2.get_M();
-
-            auto M_inv_0 = InverseOpType(M_0, options_slv_coarse);
-            auto M_inv_1 = InverseOpType(M_1, options_slv_coarse);
-            auto M_inv_2 = InverseOpType(M_2, options_slv);
-
-            const auto& dofs_0 = builder_0.get_package().get_dofs();
-            const auto& dofs_1 = builder_1.get_package().get_dofs();
-            const auto& dofs_2 = builder_2.get_package().get_dofs();
-
-            const auto& constr_0 = builder_0.get_package().get_constraints();
-            const auto& constr_1 = builder_1.get_package().get_constraints();
-            const auto& constr_2 = builder_2.get_package().get_constraints();
-
-            Vector<double> x0(builder_2.n_dofs());
-            x0 = 1.0;
-            builder_2.distribute(x0);
-
-            // --- TRANSFER AND TRANSPORT OPERATORS FACTORY ---
-            // TODO: take const& ModelBuilder as argument
-            //       free function instead of lambda
-            auto build_transfers = [&](const auto& dofs_c, const auto& dofs_f,
-                                       const auto& constr_c, const auto& constr_f,
-                                       const auto& M_c, const auto& M_f, const auto& M_inv_c)
-            {
-                std::shared_ptr<LinearTransferBase> transfer;
-                std::shared_ptr<ManifoldTransferBase> point_transfer;
-                std::shared_ptr<VectorTransportBase> vector_transport;
-
-                if (options_fas.interpol_t == Interpolate::NONE) {
-                    transfer = std::make_shared<LinearTransferMatrix<dim>>(dofs_c, dofs_f, constr_c, constr_f);
-                    point_transfer = std::make_shared<ManifoldTransfer<OperatorType>>(*transfer, M_c, M_f);
-                }
-                else if (options_fas.interpol_t == Interpolate::MASS) {
-                    transfer = std::make_shared<MassTransfer<dim,LinearTransferMatrix<dim>,OperatorType,InverseOpType>>(
-                        dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
-                    point_transfer = std::make_shared<ManifoldTransfer<OperatorType>>(*transfer, M_c, M_f);
-                }
-                else {
-                    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-                }
-
-                if (options_fas.transport_t == Transport::DIFFERENTIAL) {
-                    vector_transport = std::make_shared<DifferentialTransport<OperatorType>>(*point_transfer, M_c, M_f);
-                }
-                else if (options_fas.transport_t == Transport::MASS) {
-                    vector_transport = std::make_shared<MassProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
-                }
-                else if (options_fas.transport_t == Transport::FROBENIUS) {
-                    vector_transport = std::make_shared<FrobeniusProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
-                }
-                else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION) {
-                    vector_transport = std::make_shared<AdjointRestrictionTransport<OperatorType,InverseOpType>>(
-                        *transfer, M_c, M_f, M_inv_c);
-                }
-                else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION_SCALED) {
-                    vector_transport = std::make_shared<AdjointRestrictionTransportScaled<OperatorType,InverseOpType>>(
-                        *transfer, M_c, M_f, M_inv_c);
-                }
-                else {
-                    throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-                }
-
-                return std::make_tuple(transfer, point_transfer, vector_transport);
-            };
-
-            auto [transfer_10, pt_10, vt_10] = build_transfers(dofs_0, dofs_1, constr_0, constr_1, M_0, M_1, M_inv_0);
-            auto [transfer_21, pt_21, vt_21] = build_transfers(dofs_1, dofs_2, constr_1, constr_2, M_1, M_2, M_inv_1);
-
-            // --- ORACLE AND SOLVER DISPATCH ---
-            EnergyOracle<dim> o_descent_2(obj_2, options_slv);
-
-            // Build Manifolds
-            UnitMassSphere<dim, OperatorType> manifold_0(M_0);
-            UnitMassSphere<dim, OperatorType> manifold_1(M_1);
-            UnitMassSphere<dim, OperatorType> manifold_2(M_2);
-
-            if (options_fas.metric_t == MetricKind::NONE) {
-                ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_2, manifold_2, options_gd).cycle(x0, std::cout);
+                exp.run(x0, options_gd, options_gd_coarse, options_gd_coarse, std::cout);
             }
-            else if (options_fas.metric_t == MetricKind::MASS) {
-                MassOracle<dim> o_tilt_0(obj_0, options_slv_coarse);
-                MassOracle<dim> o_tilt_1(obj_1, options_slv_coarse);
-                MassOracle<dim> o_tilt_2(obj_2, options_slv);
+            else if (levels_count == 2) {
+                AssertThrow(n_levels >= 1, dealii::ExcMessage("max_level must be >= 1 for 2-level setup"));
 
-                run_3level_experiment<dim, EnergyOracle<dim>, MassOracle<dim>, MassCoarseOracleEnergyAdaptive>(
-                    o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0,
-                    *pt_21, *vt_21, *pt_10, *vt_10,
-                    manifold_2, manifold_1, manifold_0,
-                    options_slv_coarse, options_gd, options_gd_coarse, options_fas, x0);
+                Experiment2Level<dim> exp(V, n_levels, options, options_fas, options_slv, options_slv_coarse);
 
-                // run_2level_experiment<dim, EnergyOracle<dim>, MassOracle<dim>, MassCoarseOracleEnergyAdaptive>(
-                //     o_descent_2, o_tilt_2, o_tilt_1,
-                //         *pt_21, *vt_21,
-                //         manifold_2, manifold_1,
-                //         options_slv_coarse, options_gd, options_gd_coarse, options_fas, x0);
-            }
-            else if (options_fas.metric_t == MetricKind::FROBENIUS) {
-                FrobeniusOracle<dim> o_tilt_0(obj_0);
-                FrobeniusOracle<dim> o_tilt_1(obj_1);
-                FrobeniusOracle<dim> o_tilt_2(obj_2);
+                Vector<double> x0(exp.n_dofs());
+                x0 = 1.0;
+                exp.distribute(x0);
 
-                run_3level_experiment<dim, EnergyOracle<dim>, FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive>(
-                    o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0,
-                    *pt_21, *vt_21, *pt_10, *vt_10,
-                    manifold_2, manifold_1, manifold_0,
-                    options_slv_coarse, options_gd, options_gd_coarse, options_fas, x0);
-
-                // run_2level_experiment<dim, EnergyOracle<dim>, FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive>(
-                //     o_descent_2, o_tilt_2, o_tilt_1,
-                //     *pt_21, *vt_21,
-                //     manifold_2, manifold_1,
-                //     options_slv_coarse, options_gd, options_gd_coarse, options_fas, x0);
+                exp.run(x0, options_gd, options_gd_coarse, std::cout);
             }
             else {
-                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+                AssertThrow(false, dealii::ExcMessage("Unsupported level count (only 2 or 3 supported in this example)"));
             }
         });
     }

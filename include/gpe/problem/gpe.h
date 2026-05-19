@@ -7,7 +7,8 @@
 #include <gpe/fe/assemble.h>
 #include <gpe/fe/grid.h>
 #include <gpe/fe/space.h>
-#include <gpe/ropt/descent.h>
+
+#include <gpe/lac.h>
 #include <gpe/util/sparsity.h>
 #include <gpe/option_types.h>
 

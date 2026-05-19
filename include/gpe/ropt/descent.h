@@ -1,6 +1,7 @@
 #ifndef GPE_DESCENT_H
 #define GPE_DESCENT_H
 
+#include <gpe/problem/oracle.h>
 #include <gpe/ropt/manifold.h>
 #include <gpe/lac.h>
 #include <gpe/option_types.h>
@@ -108,7 +109,7 @@ double armijo_line_search(OracleType& oracle,
 //! @param options Parameters for gradient descent, such as step-size.
 //! @param os Output stream for diagnostics.
 //! @return
-// TODO: split into cycle() and eval(), compare FullApproximationScheme
+// TODO: use callback method
 template <typename OracleType>
 Vector<double>
 gradient_descent(OracleType& oracle,
@@ -130,11 +131,10 @@ gradient_descent(OracleType& oracle,
     // TODO: "residual" class returned by Oracle (values + criterion)
     double residual = oracle.residual(x);
     double energy   = oracle.value(x);
-    unsigned int lac_iter = 0;  // number of iterations in inner solver taken
 
     // TODO: move to function.h
     convergence_table.add_value("iter", 0);
-    convergence_table.add_value("lac_iter", lac_iter);
+    convergence_table.add_value("lac_iter", 0);
     convergence_table.add_value("residual", residual);
     convergence_table.add_value("energy", energy);
     convergence_table.add_value("step",0);
@@ -145,6 +145,7 @@ gradient_descent(OracleType& oracle,
 
     // Begin RGD iteration
     Vector<double> g(x.size());
+    GradInfo g_info{};
 
     for (unsigned int iter = 1; iter <= options.max_iter; iter++) {
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
@@ -158,7 +159,7 @@ gradient_descent(OracleType& oracle,
 
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-        lac_iter = oracle.gradient(x, g);
+        g_info = oracle.gradient(x, g);
         double step_size = options.step_size;
         // Retraction: x <- (x - h g) / ||x - h g||_M
 
@@ -178,12 +179,12 @@ gradient_descent(OracleType& oracle,
             oracle.update(x);
         }
 
-        residual = oracle.residual(x);  // assumed to be computed by OracleType::gradient(x)
+        //residual = oracle.residual(x);  // assumed to be computed by OracleType::gradient(x)
         energy   = oracle.value(x);
 
         convergence_table.add_value("iter", iter);
-        convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("residual", residual);
+        convergence_table.add_value("lac_iter", g_info.num_iter);
+        convergence_table.add_value("residual", g_info.residual);
         convergence_table.add_value("energy", energy);
         convergence_table.add_value("step",step_size);
         convergence_table.add_value("elapsed",timer.cpu_time());
@@ -192,15 +193,11 @@ gradient_descent(OracleType& oracle,
     timer.stop();
 
     std::cerr << std::endl << std::endl;
-    convergence_table.set_precision("mass", 2);
-    convergence_table.set_precision("lambda", 2);
     convergence_table.set_precision("residual", 4);
     convergence_table.set_precision("energy", 16);
     convergence_table.set_precision("step", 2);
     convergence_table.set_precision("elapsed", 2);
 
-    //convergence_table.set_scientific("mass",true);
-    convergence_table.set_scientific("lambda", true);
     convergence_table.set_scientific("residual", true);
     convergence_table.set_scientific("energy", true);
     convergence_table.set_scientific("step", true);

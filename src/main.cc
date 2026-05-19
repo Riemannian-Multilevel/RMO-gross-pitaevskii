@@ -4,6 +4,7 @@
 #include <gpe/main/model.h>
 #include <gpe/problem/oracle.h>
 #include <gpe/ropt/manifold.h>
+#include <gpe/ropt/descent.h>
 #include <gpe/option.h>
 #include <gpe/util/util.h>
 

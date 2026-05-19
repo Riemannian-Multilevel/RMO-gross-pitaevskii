@@ -7,125 +7,205 @@
 
 #include <gpe/problem/oracle.h>
 
+#include "fmt/base.h"
+
 namespace gpe
 {
+
+// TODO: keep track of fine vector for consistency
+struct CoarseState
+{
+    Vector<double> x;             // fine point
+    Vector<double> y;             // restricted point (base point for coarse model)
+    Vector<double> y_grad;        // gradient of restricted point
+    Vector<double> x_grad;        // fine gradient
+    Vector<double> x_grad_restr;  // restricted gradient
+    Vector<double> w;             // correction vector
+
+    CoarseState(unsigned n_fine, unsigned n_coarse)
+        : x(n_fine)
+        , y(n_coarse)
+        , y_grad(n_coarse)
+        , x_grad(n_fine)
+        , x_grad_restr(n_coarse)
+        , w(n_coarse)
+    {}
+};
+
+
+// TODO: move to lac.h
+struct IdentityOperator
+{
+    static void vmult(Vector<double>& dst, const Vector<double>& src) {
+        dst = src;
+    }
+    static void Tvmult(Vector<double>& dst, const Vector<double>& src) {
+        dst = src;
+    }
+};
+
+
+template <typename CoarseModelType>
+class GrossPitaevskiiCoarseResidual
+{
+public:
+    // M, A: matrices for computing residual of (uncorrected) objective E_GP
+    // M_tilt: matrix for computing residual of coarse correction term <w,L(z)>
+    GrossPitaevskiiCoarseResidual(const CoarseModelType& model)
+        : m_model(model)
+        , m_norm(model.coarse().get_M())
+    {}
+
+protected:
+    Vector<double> residual_vector(const Vector<double>& x) const
+    {
+        const auto& state = m_model.get_state();
+        const auto& M     = m_model.coarse().get_M();
+        const auto& A     = m_model.coarse().get_A();
+
+        Vector<double> Mx(x.size());
+        M.vmult(Mx, x);
+
+        const double mass = x * Mx;
+        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
+
+        // 1. Compute the pullback of the tilt (u)
+        Vector<double> u(x.size());
+        ellipsoid::retract_inv_diff_by_norm_adjoint(M, state.y, x, state.w, u);
+
+        Vector<double> grad_tilt(x.size());
+        // This varies for different coarse models
+        m_model.metric(grad_tilt, u);
+
+        // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
+        Vector<double> Ax(x.size());
+        A.vmult(Ax, x);
+        const double lambda = (x * Ax - x * grad_tilt) / mass;
+
+        // 3. Form the modified residual vector: r = (Ax - Mu) - lambda_tilde * Mx
+        Vector<double> r(Ax);
+        r.add(-1.0, grad_tilt);
+        r.add(-lambda, Mx);
+
+        return r;
+    }
+
+    double residual(const Vector<double>& x) const
+    {
+        // This is fixed for different coarse models
+        return m_norm(residual_vector(x));
+    }
+
+private:
+    const CoarseModelType& m_model;
+
+    EnergyNorm<OperatorType> m_norm;  // M-norm
+};
+
 
 // Class which implements all needed terms for the Nash coarse model. It assumes an oracle on a fine and coarse
 // level of discretization (implementing Riemannain gradient descent for a certain metric),
 // used to compute a correction vector between coarse and fine gradients.
-// TODO: for a multilevel implementation, O(, O_coarse) need to be set to previous levels
+// TODO: for a multilevel implementation, O_fine(, O_coarse) need to be set to previous levels
 template <int dim, typename FineOracleType, typename CoarseOracleType>
 class CoarseOracleBase
 {
 public:
     static constexpr int dimension = dim;
 
-    struct CoarseState
-    {
-        Vector<double> y;             // restricted point (base point for coarse model)
-        Vector<double> y_grad;        // gradient of restricted point
-        Vector<double> x_grad;        // fine gradient
-        Vector<double> x_grad_restr;  // restricted gradient
-        Vector<double> w;             // correction vector
-
-        CoarseState(unsigned n_fine, unsigned n_coarse)
-            : y(n_coarse)
-            , y_grad(n_coarse)
-            , x_grad(n_fine)
-            , x_grad_restr(n_coarse)
-            , w(n_coarse)
-        {}
-    };
-
-    CoarseOracleBase(FineOracleType& O,
-                     CoarseOracleType& O_coarse,
-                     const ManifoldTransferBase& point_transfer,
-                     const VectorTransportBase& vector_transport)
-        : O(O), O_coarse(O_coarse)
-
+    CoarseOracleBase(FineOracleType     &O_fine,
+                     CoarseOracleType   &O_coarse,
+                     const ManifoldBase &coarse_manifold,
+                     const ManifoldTransferBase &point_transfer,
+                     const VectorTransportBase  &vector_transport)
     // Problem evaluation
-        , n(O.n_dofs())
+        : O_fine(O_fine), O_coarse(O_coarse)
+        , coarse_manifold(coarse_manifold)
+        , n_fine(O_fine.n_dofs())
         , n_coarse(O_coarse.n_dofs())
 
     // Grid transfer
         , point_transfer(point_transfer)
         , vector_transport(vector_transport)
 
-    // Coarse parameters
-        , m_state(n, n_coarse)
-    {}
+    // Coarse parameter initialization
+        , m_state(n_fine, n_coarse)
+    {
+        Assert(FineOracleType::metric_t == CoarseOracleType::metric_t,
+            dealii::ExcInternalError("non-corresponding metrics for coarse and fine oracle types"));
+    }
 
     // Compute parameters for coarse model
-    void update(const Vector<double>& x)
+    // Note that unlike the coarse models, which take a coarse vector as argument, this takes a fine vector
+    // to build a new model based on the difference w of coarse gradients and restricted fine gradients.
+    void update_model(const Vector<double>& x_fine)
     {
-        AssertDimension(x.size(), n);
+        AssertDimension(x_fine.size(), n_fine);
+        m_state.x = x_fine;
 
-        // Update state for fine oracle
-#ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] fine: assemble matrix\n";
-#endif
-        O.update(x);
-
-        // Set base point for coarse model
+        // Compute base point for coarse model
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: point transfer\n";
 #endif
-        point_transfer.restriction(x, m_state.y);
+        point_transfer.restriction(m_state.x, m_state.y);
+        AssertDimension(m_state.y.size(), n_coarse);
 
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
 #endif
         O_coarse.update(m_state.y);
 
-        // Compute coarse M-gradient
+        // Compute coarse (F or M)-gradient
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id << "-coarse gradient\n";
 #endif
+        // TODO: increase tolerance for gradients defining the coarse model
         O_coarse.gradient(m_state.y, m_state.y_grad);
+        AssertDimension(m_state.y_grad.size(), n_coarse);
 
-        // Compute fine M-gradient
+        // Compute fine (F or M)-gradient
 #ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O.id << "-fine gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
 #endif
-        O.gradient(x, m_state.x_grad);
+        // TODO: increase tolerance for gradients defining the coarse model
+        O_fine.gradient(m_state.x, m_state.x_grad);
+        AssertDimension(m_state.x_grad.size(), n_fine);
 
         // Compute restricted gradient
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector restriction\n";
 #endif
-        vector_transport.vector_restriction(m_state.y, x, m_state.x_grad, m_state.x_grad_restr);
+        vector_transport.vector_restriction(m_state.y, m_state.x, m_state.x_grad, m_state.x_grad_restr);
+        AssertDimension(m_state.x_grad_restr.size(), n_coarse);
 
         // Compute correction term
         m_state.w = m_state.y_grad;
         m_state.w.add(-1.0, m_state.x_grad_restr);
     }
 
-    void set_timer(const dealii::Timer& timer_new) const
-    {
-        timer = timer_new;
-    }
+    double norm(const Vector<double> &x) const { return O_coarse.norm(x); }
+    double metric(const Vector<double> &x, const Vector<double> &z) const { return O_coarse.metric(x, z); }
 
-    const CoarseState& get_state() const
-    {
-        return m_state;
-    }
+    void set_timer(const dealii::Timer& timer_new) const { timer = timer_new; }
+    const CoarseState& get_state() const { return m_state; }
 
-    const FineOracleType& objective_fine() const { return O; }
-    FineOracleType& objective_fine() { return O; }
+    const FineOracleType& fine() const { return O_fine; }  // fine tilt oracle
+    FineOracleType& fine() { return O_fine; }
 
-    const CoarseOracleType& objective_coarse() const { return O_coarse; }
-    CoarseOracleType& objective_coarse() { return O_coarse; }
+    const CoarseOracleType& coarse() const { return O_coarse; }  // coarse tilt oracle
+    CoarseOracleType& coarse() { return O_coarse; }
 
 
 protected:
     // Coarse and fine level evaluation for correction vector w
-    FineOracleType &O;
-    CoarseOracleType &O_coarse;
-    unsigned n, n_coarse;
+    FineOracleType      &O_fine;
+    CoarseOracleType    &O_coarse;
+    const ManifoldBase  &coarse_manifold;
+    unsigned n_fine, n_coarse;
 
     // Operators for transferring solutions and gradients
-    const ManifoldTransferBase& point_transfer;
-    const VectorTransportBase& vector_transport;
+    const ManifoldTransferBase &point_transfer;
+    const VectorTransportBase  &vector_transport;
 
     // Coarse model parameters
     CoarseState m_state;
@@ -135,180 +215,113 @@ protected:
 };
 
 
-template <int dim>
-class GrossPitaevskiiCoarseResidual : public Residual
-{
-public:
-    GrossPitaevskiiCoarseResidual(const GrossPitaevskiiFunctional<dim>& m_func)
-        : m_func(m_func)
-    {}
-
-protected:
-    double norm(const Vector<double>& x) const override
-    {
-        EnergyNorm norm(m_func.get_M());
-
-        return norm(x);
-    }
-
-    Vector<double> residual_vector(const Vector<double>& x) const override
-    {
-        const auto& M_coarse = O_coarse.get_M();
-
-        // 1. Get the base Euclidean residual from the functional (A x - lambda_base M x)
-        Vector<double> r_base = O_coarse.residual_vector(x);
-
-        // 2. Compute the gradient of the tilt term: u = (D_invRet_phi)^*[w]
-        Vector<double> u(x.size());
-        ellipsoid::retract_inv_diff_by_norm_adjoint(M_coarse, m_state.y, x, m_state.w, u);
-
-        // For the Mass-metric tilt, the gradient is M * u
-        Vector<double> Mu(x.size());
-        M_coarse.vmult(Mu, u);
-
-        // 3. Compute the shift in the eigenvalue caused by the tilt
-        // lambda_shift = - (x^T M u) / (x^T M x)
-        Vector<double> Mx(x.size());
-        M_coarse.vmult(Mx, x);
-        const double mass = x * Mx;
-        const double lambda_shift = -(x * Mu) / mass;
-
-        // 4. The final coarse residual is: r_base - grad_tilt - lambda_shift * Mx
-        Vector<double> r = r_base;
-        r.add(-1.0, Mu);
-        r.add(-lambda_shift, Mx);
-
-        return r;
-    }
-
-private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
-};
-
-
 // O_coarse: oracle for evaluating \grad E_c(y) in correction term w = \grad E_c(y) - R \grad E_f(x)
 //           assumed to be consistent with metric in oracle for evaluating <w, .>_y
+
 // O_fine:   oracle for evaluating \grad E_f(x) in correction term w = \grad E_c(y) - R \grad E_f(x)
 //           assumed to be consistent with metric in oracle for evaluating <w, .>_y
 //           independent of oracle used for gradient descent on the fine level
+
 // this:     oracle for evaluating coarse model q_k(y) = E_c(y) + <w, .>_y
 //           oracle for evaluating gradient of coarse model \grad q_k(y)
 //           metric for \grad q_k(y) can differ from gradient of w and <w, .>_y
+
+
+// =========================================================================
+// Mass Coarse Family
+// =========================================================================
 template <int dim, typename FineOracleType>
 class MassCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "MC";
-    static constexpr int dimension = dim;
+    using Base = CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>;
 
-    MassCoarseOracle(CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model, SolverOptions options)
-        : coarse_model(coarse_model)
+    MassCoarseOracle(Base& coarse_model, SolverOptions options)
+        : m_model(coarse_model)
+        , m_coarse_res(coarse_model)
         , options(options)
-        , M_coarse(coarse_model.objective_coarse().get_M())
-        , A_coarse(coarse_model.objective_coarse().get_A())
+        , M_coarse(coarse_model.coarse().get_M())
+        , A_coarse(coarse_model.coarse().get_A())
         , M_inv_coarse(M_coarse, options)
+        , m_norm(M_coarse)
     {}
 
-    // Assembly:
-    //   O.update(x) (fine)
-    //   O_coarse.update(x) (coarse)
-    // Model parameters:
-    //   CoarseOracleBase::CoarseState (restricted gradients)
+    // Update for _evaluation_ of the coarse model
+    // Distinguish from Base::update_model(x), which updates the coarse parameters w_k
     void update(const Vector<double>& x) override
     {
-        coarse_model.objective_coarse().update(x);
-        // Invalidate cached value
-        m_res = -1.0;
+        m_model.coarse().update(x);
     }
 
     double value(const Vector<double>& x) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& O_coarse = m_model.coarse();
+        const auto& coarse_step  = m_model.get_state();
 
-        return coarse::mass::function_value(x, coarse_step.y, coarse_step.w,
-            M_coarse, O_coarse.value(x));
+        return coarse::mass::function_value(x, coarse_step.y, coarse_step.w, M_coarse, O_coarse.value(x));
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& coarse_step = m_model.get_state();
 
-        return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w,
-            z, M_coarse, A_coarse);
+        return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    // Lazy evaluation for residual
-    double residual(const Vector<double>& x) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        EnergyNorm norm(M_coarse);
+        dealii::Timer timer;
+        GradInfo info{};
 
-        // If the cache is empty, compute and store it
-        if (m_res < 0) {
-            auto r = coarse_model.residual_vector(x);
-            m_res = norm(r);
+        timer.start();
+        info.residual = m_coarse_res.residual(x);
+
+        if (info.residual > 0) {
+            M_inv_coarse.set_tol(info.residual * options.tol_inner_res);
         }
-        AssertThrow(m_res >= 0, "residual must be positive");
 
-        // Otherwise, just return the cached value
-        return m_res;
+        const auto& coarse_step = this->m_model.get_state();
+        coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse, x, coarse_step.y, coarse_step.w, output);
+        timer.stop();
+
+        info.num_iter     = M_inv_coarse.control().last_step();
+        info.tolerance    = M_inv_coarse.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
+
+        return info;
     }
 
-    /**
-  * @brief Computes the coarse model gradient in the M-metric.
-  */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    double residual(const Vector<double>& x) const override
     {
-        const double residual = this->residual(x);
-
-        if (residual > 0) {
-            M_inv_coarse.set_tol(residual * options.tol_inner_res);
-        }
-
-        const auto& coarse_step = coarse_model.get_state();
-
-        coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse,
-            x, coarse_step.y, coarse_step.w, output);
-
-        return M_inv_coarse.control().last_step();
+        return m_coarse_res.residual(x);
     }
 
     unsigned n_dofs() const override
     {
-        return coarse_model.objective_coarse().n_dofs();
+        return m_model.coarse().n_dofs();
     }
+
+    const auto& get_M()  const { return M_coarse; }
+    const auto& get_A()  const { return A_coarse; }
 
     double norm(const Vector<double>& v) const override
     {
-        Vector<double> Mv(n_dofs());
-        M_coarse.vmult(Mv, v);
-
-        return std::sqrt(v*Mv);
-    }
-
-    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
-    const auto& get_M()  const
-    {
-        return coarse_model.objective_coarse().get_M();
-    }
-    const auto& get_A()  const
-    {
-        return coarse_model.objective_coarse().get_A();
-    }
-    const auto& get_A0() const
-    {
-        return coarse_model.objective_coarse().get_A0();
+        return m_norm(v);
     }
 
 private:
-    CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model;
+    // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
+    //       (non-linear assembly)
+    // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
+    // TODO: wrap Base::update_model in MassCoarseOracle to simplify the calling interface?
+    Base& m_model;
+    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
     SolverOptions options;
 
-    const OperatorType &M_coarse, &A_coarse;  // operators owned by MassOracle <- GrossPitaevskiiFunctional
+    const OperatorType &M_coarse, &A_coarse;
     InverseOpType M_inv_coarse;
-
-    mutable double m_res = -1.0;
+    EnergyNorm<OperatorType> m_norm;
 };
 
 
@@ -317,344 +330,266 @@ class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "MCA";
-    static constexpr int dimension = dim;
+    using Base = CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>;
 
-    MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model,
-                                   SolverOptions options)
-        : coarse_model(coarse_model)
+    MassCoarseOracleEnergyAdaptive(Base& coarse_model, SolverOptions options)
+        : m_model(coarse_model)
+        , m_coarse_res(coarse_model)
         , options(options)
-        , M_coarse(coarse_model.objective_coarse().get_M())
-        , A_coarse(coarse_model.objective_coarse().get_A())
+        , M_coarse(m_model.coarse().get_M())
+        , A_coarse(m_model.coarse().get_A())
         , A_inv_coarse(A_coarse, options)
+        , m_norm(M_coarse)
     {
-        A_inv_coarse.update_static(coarse_model.objective_coarse().get_A0());
+        A_inv_coarse.update_static(m_model.coarse().get_A0());
     }
 
     void update(const Vector<double>& x) override
     {
-        coarse_model.objective_coarse().update(x);
+        m_model.coarse().update(x);
 
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
-        // Invalidate cached value
-        m_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& O_coarse = m_model.coarse();
+        const auto& coarse_step  = m_model.get_state();
 
-        return coarse::mass::function_value(x, coarse_step.y, coarse_step.w,
-            M_coarse, O_coarse.value(x));
+        return coarse::mass::function_value(x, coarse_step.y, coarse_step.w, M_coarse, O_coarse.value(x));
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& coarse_step = m_model.get_state();
 
-        return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w,
-            z, M_coarse, A_coarse);
+        return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    // Lazy evaluation for residual
-    double residual(const Vector<double>& x) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        EnergyNorm norm(M_coarse);
+        dealii::Timer timer;
+        GradInfo info{};
 
-        // If the cache is empty, compute and store it
-        if (m_res < 0) {
-            auto r = coarse_model.residual_vector(x);
-            m_res = norm(r);
+        timer.start();
+        info.residual = this->residual(x);
+
+        if (info.residual > 0) {
+            A_inv_coarse.set_tol(info.residual * options.tol_inner_res);
         }
-        AssertThrow(m_res >= 0, "residual must be positive");
 
-        // Otherwise, just return the cached value
-        return m_res;
+        const auto& coarse_step = m_model.get_state();
+        coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse, x, coarse_step.y, coarse_step.w, output);
+        timer.stop();
+
+        info.elapsed_time = timer.cpu_time();
+        info.num_iter     = A_inv_coarse.control().last_step();
+        info.tolerance    = A_inv_coarse.control().tolerance();
+
+        return info;
     }
 
-    /**
-     * @brief Computes the coarse model gradient in the A-metric.
-     * $$ \nabla_A q_k(x) = \nabla_A E_H(x) - w $$
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    double residual(const Vector<double>& x) const override
     {
-        const double residual = this->residual(x);
-
-        if (residual > 0) {
-            A_inv_coarse.set_tol(residual * options.tol_inner_res);
-        }
-
-        const auto& coarse_step = coarse_model.get_state();
-
-        coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse,
-            x, coarse_step.y, coarse_step.w, output);
-
-        return A_inv_coarse.control().last_step();
+        return m_coarse_res.residual(x);
     }
 
     unsigned n_dofs() const override
     {
-        return coarse_model.objective_coarse().n_dofs();
+        return m_model.coarse().n_dofs();
     }
+
+    const auto& get_M()  const { return M_coarse; }
+    const auto& get_A()  const { return A_coarse; }
 
     double norm(const Vector<double>& v) const override
     {
-        Vector<double> Mv(n_dofs());
-        M_coarse.vmult(Mv, v);
-
-        return std::sqrt(v*Mv);
+        return m_norm(v);
     }
-
-    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
-    const auto& get_M()  const
-    {
-        return coarse_model.objective_coarse().get_M();
-    }
-    const auto& get_A()  const
-    {
-        return coarse_model.objective_coarse().get_A();
-    }
-    const auto& get_A0() const
-    {
-        return coarse_model.objective_coarse().get_A0();
-    }
-
 
 private:
-    CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>& coarse_model;
+    // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
+    Base& m_model;
+    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
     SolverOptions options;
 
-    const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
+    const OperatorType &M_coarse, &A_coarse;
     InverseOpType A_inv_coarse;
-
-    mutable double m_res = -1.0;
+    EnergyNorm<OperatorType> m_norm;
 };
 
+
+// =========================================================================
+// Frobenius Coarse Family
+// =========================================================================
 
 template <int dim, typename FineOracleType>
 class FrobeniusCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "FC";
-    static constexpr int dimension = dim;
+    using Base = CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>;
 
-    FrobeniusCoarseOracle(CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model,
-                          SolverOptions options)
-        : coarse_model(coarse_model)
-        , options(options)
-        , M_coarse(coarse_model.objective_coarse().get_M())
-        , A_coarse(coarse_model.objective_coarse().get_A())
+    FrobeniusCoarseOracle(Base& coarse_model)
+        : m_model(coarse_model)
+        , m_coarse_res(coarse_model)
+        , M_coarse(m_model.coarse().get_M())
+        , A_coarse(m_model.coarse().get_A())
     {}
 
     void update(const Vector<double>& x) override
     {
-        coarse_model.objective_coarse().update(x);
-        // Invalidate cached value
-        m_res = -1.0;
+        m_model.coarse().update(x);
     }
 
     double value(const Vector<double>& x) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& O_coarse    = m_model.coarse();
+        const auto& coarse_step = m_model.get_state();
 
-        return coarse::frobenius::function_value(x, coarse_step.y, coarse_step.w,
-            M_coarse, O_coarse.value(x));
+        return coarse::frobenius::function_value(x, coarse_step.y, coarse_step.w, M_coarse, O_coarse.value(x));
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& coarse_step = m_model.get_state();
 
-        return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w,
-            z, M_coarse, A_coarse);
+        return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w, z, this->M_coarse, this->A_coarse);
     }
 
-    double residual(const Vector<double>& x) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        EnergyNorm norm(M_coarse);
+        dealii::Timer timer;
+        GradInfo info{};
 
-        // If the cache is empty, compute and store it
-        if (m_res < 0) {
-            auto r = coarse_model.residual(x);
-            m_res = norm(r);
-        }
-        AssertThrow(m_res >= 0, "residual must be positive");
+        timer.start();
+        const auto& coarse_step = this->m_model.get_state();
 
-        // Otherwise, just return the cached value
-        return m_res;
+        coarse::frobenius::gradient(this->M_coarse, this->A_coarse, x, coarse_step.y, coarse_step.w, output);
+        timer.stop();
+        info.elapsed_time = timer.cpu_time();
+
+        return info;
     }
 
-    /**
-     * @brief Computes the coarse model gradient in the F-metric.
-     * $$ \nabla_F q_k(\zeta) = \Pi_{\zeta, F}\left(A_\zeta \zeta - \frac{1}{\phi^\top M\zeta}w\right) $$
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    double residual(const Vector<double>& x) const override
     {
-        // TODO: strictly not required for Frobenius gradient (no matrix inversion with adjutable tolerance.)
-        //       compute here anyway for consistency with EnergyOracle/MassOracle.
-        const double residual = this->residual(x);
-
-        const auto& coarse_step = coarse_model.get_state();
-
-        // Compute the pure Frobenius gradient
-        coarse::frobenius::gradient(M_coarse, A_coarse, x, coarse_step.y, coarse_step.w, output);
-
-        return 0;  // 0 iterations, as no Krylov solver is used
+        return m_coarse_res.residual(x);
     }
 
     unsigned n_dofs() const override
     {
-        return coarse_model.objective_coarse().n_dofs();
+        return m_model.coarse().n_dofs();
     }
+
+    const auto& get_M()  const { return M_coarse; }
+    const auto& get_A()  const { return A_coarse; }
 
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
     }
 
-    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
-    const auto& get_M()  const
-    {
-        return coarse_model.objective_coarse().get_M();
-    }
-    const auto& get_A()  const
-    {
-        return coarse_model.objective_coarse().get_A();
-    }
-    const auto& get_A0() const
-    {
-        return coarse_model.objective_coarse().get_A0();
-    }
-
-
 private:
-    CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model;
+    // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
+    Base& m_model;
+    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
     SolverOptions options;
 
-    const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
-    mutable double m_res = -1.0;
+    const OperatorType &M_coarse, &A_coarse;
 };
 
 
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
 template <int dim, typename FineOracleType>
 class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "FCA";
-    static constexpr int dimension = dim;
+    using Base = CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>;
 
-    FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model,
-                                        SolverOptions options)
-        : coarse_model(coarse_model)
+    FrobeniusCoarseOracleEnergyAdaptive(Base& coarse_model, SolverOptions options)
+        : m_model(coarse_model)
+        , m_coarse_res(coarse_model)
         , options(options)
-        , M_coarse(coarse_model.objective_coarse().get_M())
-        , A_coarse(coarse_model.objective_coarse().get_A())
+        , M_coarse(m_model.coarse().get_M())
+        , A_coarse(m_model.coarse().get_A())
         , A_inv_coarse(A_coarse, options)
     {
-        A_inv_coarse.update_static(coarse_model.objective_coarse().get_A0());
+        A_inv_coarse.update_static(m_model.coarse().get_A0());
     }
 
     void update(const Vector<double>& x) override
     {
-        coarse_model.objective_coarse().update(x);
+        m_model.coarse().update(x);
 
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
-        // Invalidate cached value
-        m_res = -1.0;
     }
 
     double value(const Vector<double>& x) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& O_coarse = m_model.coarse();
+        const auto& coarse_step = m_model.get_state();
 
-        return coarse::frobenius::function_value(x, coarse_step.y, coarse_step.w,
-            M_coarse, O_coarse.value(x));
+        return coarse::frobenius::function_value(x, coarse_step.y, coarse_step.w, M_coarse, O_coarse.value(x));
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        const auto& O_coarse = coarse_model.objective_coarse();
-        const auto& coarse_step = coarse_model.get_state();
+        const auto& coarse_step = m_model.get_state();
 
-        return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w,
-            z, M_coarse, A_coarse);
+        return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    double residual(const Vector<double>& x) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        EnergyNorm norm(M_coarse);
+        dealii::Timer timer;
+        GradInfo info{};
 
-        // If the cache is empty, compute and store it
-        if (m_res < 0) {
-            auto r = coarse_model.residual(x);
-            m_res = norm(r);
-        }
-        AssertThrow(m_res >= 0, "residual must be positive");
+        timer.start();
+        info.residual = this->residual(x);
 
-        // Otherwise, just return the cached value
-        return m_res;
-    }
-
-    /**
-     * @brief Computes the coarse model gradient in the energy-adaptive metric.
-     * $$ \nabla_A q_k(\zeta) = \tilde{A}_\zeta^{-1} \left( \nabla_F q_k(\zeta) \right) $$
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
-    {
-        const double residual = this->residual(x);
-
-        if (residual > 0) {
-            A_inv_coarse.set_tol(residual * options.tol_inner_res);
+        if (info.residual > 0) {
+            A_inv_coarse.set_tol(info.residual * options.tol_inner_res);
         }
 
-        // Computes the F-gradient and applies the A_inv preconditioner
-        const auto& coarse_step = coarse_model.get_state();
-
-        coarse::frobenius::energy_adaptive_gradient(M_coarse, A_inv_coarse,A_coarse,
+        const auto& coarse_step = this->m_model.get_state();
+        coarse::frobenius::energy_adaptive_gradient(this->M_coarse, A_inv_coarse, this->A_coarse,
             x, coarse_step.y, coarse_step.w, output);
+        timer.stop();
 
-        // Return the number of Krylov iterations used by A_inv
-        return A_inv_coarse.control().last_step();
+        info.elapsed_time = timer.cpu_time();
+        info.num_iter     = A_inv_coarse.control().last_step();
+        info.tolerance    = A_inv_coarse.control().tolerance();
+
+        return info;
+    }
+
+    double residual(const Vector<double>& x) const override
+    {
+        return m_coarse_res.residual(x);
     }
 
     unsigned n_dofs() const override
     {
-        return coarse_model.objective_coarse().n_dofs();
+        return m_model.coarse().n_dofs();
     }
+
+    const auto& get_M()  const { return M_coarse; }
+    const auto& get_A()  const { return A_coarse; }
 
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
     }
 
-    // For recursive calls (n-level algorithms where fine oracle = CoarseOracleBase)
-    const auto& get_M()  const
-    {
-        return coarse_model.objective_coarse().get_M();
-    }
-    const auto& get_A()  const
-    {
-        return coarse_model.objective_coarse().get_A();
-    }
-    const auto& get_A0() const
-    {
-        return coarse_model.objective_coarse().get_A0();
-    }
-
-
 private:
-    CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>& coarse_model;
+    // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
+    Base& m_model;
+    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
     SolverOptions options;
 
-    const OperatorType &M_coarse, &A_coarse;  // operators owned by EnergyOracle <- GrossPitaevskiiFunctional
+    const OperatorType& M_coarse, &A_coarse;
     InverseOpType A_inv_coarse;
-
-    mutable double m_res = -1.0;
 };
 
 } // namespace gpe

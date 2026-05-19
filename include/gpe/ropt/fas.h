@@ -6,6 +6,8 @@
 #define GPE_MAIN_COARSE_H
 
 #include <deal.II/numerics/data_postprocessor.h>
+#include <deal.II/base/convergence_table.h>
+
 #include <gpe/lac.h>
 #include <gpe/problem/oracle.h>
 #include <gpe/problem/oracle_coarse.h>
@@ -88,16 +90,14 @@ void cycle_eval(const Oracle& O, const Vector<double>& y,
                 dealii::ConvergenceTable& convergence_table,
                 const CycleInfo info)
 {
-    auto state   = O.residual(y);
-    state.energy = O.value(y);
+    const double residual = O.residual(y);
+    const double energy   = O.value(y);
 
     convergence_table.add_value("iter", info.iter);
     convergence_table.add_value("coarse", info.coarse ? "*" : " ");
     convergence_table.add_value("lac_iter", info.lac_iter);
-    convergence_table.add_value("mass", state.mass);
-    convergence_table.add_value("lambda", state.lambda);
-    convergence_table.add_value("residual", state.residual);
-    convergence_table.add_value("energy", state.energy);
+    convergence_table.add_value("residual", residual);
+    convergence_table.add_value("energy", energy);
     convergence_table.add_value("step",info.step_size);
     convergence_table.add_value("elapsed",info.elapsed);
 }
@@ -106,8 +106,6 @@ void cycle_eval(const Oracle& O, const Vector<double>& y,
 inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ostream& os,
                            dealii::TableHandler::TextOutputFormat format)
 {
-    convergence_table.set_precision("mass", 4);
-    convergence_table.set_precision("lambda", 4);
     convergence_table.set_precision("residual", 4);
     convergence_table.set_precision("energy", 8);
     convergence_table.set_precision("step", 4);
@@ -156,6 +154,7 @@ public:
             dk *= -1.0;
 
             // Evaluate directional derivative in A-norm
+            // -> runs OracleBase::update()
             CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, timer, options_gd);
             info.iter      = i;
             info.coarse    = false;
@@ -182,59 +181,23 @@ private:
 };
 
 
-// TODO: Use cycle_fine() for consistency instead of gradient_descent()
-// Deduce the FAS Manager via a template parameter
-template <typename CoarseModelType, typename FASManagerType>
-inline void coarse_solve(CoarseModelType& q_k,
-                         const FASManagerType& fas,
-                         const Vector<double>& x,
-                         const ManifoldBase& coarse_manifold,
-                         const VectorTransportBase& vector_transport,
-                         SolverBase& coarse_solver,
-                         Vector<double>& dst,
-                         [[maybe_unused]] dealii::Timer& timer,
-                         std::ostream* os = nullptr)
-{
-    const auto& state = fas.get_state();
-    Vector<double> zk = state.y;
-
-#ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: " << CoarseModelType::id << "-gradient descent\n";
-#endif
-    // Delegate the solve to whatever solver is assigned to this level
-    if (os) {
-        coarse_solver.cycle(zk, *os);
-    } else {
-        coarse_solver.cycle(zk);
-    }
-    //zk = gradient_descent(q_k, coarse_manifold, zk, options_gd, std::cerr);
-
-#ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
-#endif
-    coarse_manifold.retract_inv(zk, state.y);
-
-#ifdef CPU_TIME
-    std::cerr << "[" << timer.cpu_time() << "] coarse: vector prolongation\n";
-#endif
-    vector_transport.vector_prolongation(x, state.y, zk, dst);
-}
-
-
 // Decouple Descent Oracle from the FAS Manager, and add the fine manifold
 template <int dim, typename DescentOracleType, typename FASManagerType, typename CoarseModelType>
 class FullApproximationScheme : public SolverBase
 {
 public:
     FullApproximationScheme(DescentOracleType& O_fine,
+                        // Coarse model parameters
                             FASManagerType& fas,
+                        // Oracle for coarse model
                             CoarseModelType& q_k,
+                        // Problem geometry
                             const ManifoldBase& fine_manifold,
                             const ManifoldBase& coarse_manifold,
-                            const VectorTransportBase& vector_transport,
-                            SolverBase& coarse_solver, // Reference to the next level
+                        // Solver parameters
+                            SolverBase&    coarse_solver, // Reference to the next level
                             DescentOptions options_gd,
-                            FAS_Options options_fas)
+                            FAS_Options    options_fas)
         : O_fine(O_fine)
         , fas(fas)
         , q_k(q_k)
@@ -254,27 +217,25 @@ public:
         timer.restart();
         convergence_table.clear();
 
+        // Update the fine oracle on the initial guess
+        O_fine.update(x);
+
         Vector<double> x_grad(x.size());
         Vector<double> dk(x.size());
-        bool check_coarse_cond = true;
-        bool is_updated = false;
 
         for (unsigned i = 0; i < options_gd.max_iter; i++) {
-
             bool do_coarse_step = false;
 
-            if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
-                fas.update(x);
-                is_updated = true;
+            if (i == 0 || i % options_fas.coarse_every == 0) {
+                fas.update_model(x);  // update coarse model and oracle
                 const auto& state = fas.get_state();
 
-                double norm_fine = fas.objective_fine().norm(state.x_grad);
-                double norm_coarse = fas.objective_coarse().norm(state.x_grad_restr);
+                double norm_fine = fas.fine().norm(state.x_grad);
+                double norm_coarse = fas.coarse().norm(state.x_grad_restr);
 
                 convergence_table.add_value("grad_norm", norm_fine);
                 convergence_table.add_value("grad_restr_norm", norm_coarse);
 
-                if (norm_coarse <= options_fas.eps) { check_coarse_cond = false; }
                 if (norm_coarse >= options_fas.kappa * norm_fine && norm_coarse > options_fas.eps) {
                     do_coarse_step = true;
                 }
@@ -285,11 +246,24 @@ public:
             }
 
             if (do_coarse_step) {
-                coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, coarse_solver, dk, timer);
+                const auto& state = fas.get_state();
+                // TODO: coarse solve (next level/cycle) q_k -> z_k
+                coarse_solver.cycle
+                //coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, coarse_solver, dk, timer, &std::cerr);
 
-                // 3. Pass fine_manifold into cycle_smooth
+#ifdef CPU_TIME
+                std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
+#endif
+                coarse_manifold.retract_inv(zk, state.y);
+
+#ifdef CPU_TIME
+                std::cerr << "[" << timer.cpu_time() << "] coarse: vector prolongation\n";
+#endif
+                vector_transport.vector_prolongation(state.x, state.y, zk, dk);
+
+                // Pass fine_manifold into cycle_smooth
+                // -> runs O_fine.update(x)
                 CycleInfo info = cycle_smooth(O_fine, fine_manifold, x, dk, timer, options_gd);
-                is_updated = false;
 
                 info.iter      = i;
                 info.coarse    = true;
@@ -298,18 +272,13 @@ public:
                 cycle_eval(O_fine, x, convergence_table, info);
             }
             else {
-                if (!is_updated) {
-                    O_fine.update(x);
-                    is_updated = true;
-                }
-
                 auto lac_iter = O_fine.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
 
                 // 3. Pass fine_manifold into cycle_smooth
+                // -> runs O_fine.update(x)
                 CycleInfo info = cycle_smooth(O_fine, fine_manifold, x, dk, timer, options_gd);
-                is_updated = false;
 
                 info.iter      = i;
                 info.coarse    = false;
@@ -342,7 +311,7 @@ private:
     FASManagerType& fas;
     CoarseModelType& q_k;
 
-    const ManifoldBase& fine_manifold;     // <--- ADDED
+    const ManifoldBase& fine_manifold;
     const ManifoldBase& coarse_manifold;
     const VectorTransportBase& vector_transport;
 

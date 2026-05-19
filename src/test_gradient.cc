@@ -51,7 +51,7 @@ struct EmptyStrategy
 // TODO: additional data (h=1-8, n_trial_points=100, start_exp=-8)
 //       include exact directional derivative
 template <int dim>
-CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
+CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
 {
     CheckGradInfo check;
     const unsigned int n_dofs = test_grad.n_dofs();
@@ -123,7 +123,7 @@ CheckGradInfo check_gradient_trial(const GradientTestBase<dim>& test_grad)
 
 
 template <int dim, typename Strategy = EmptyStrategy>
-void check_gradient(const GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix,
+void check_gradient(GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix,
                     Strategy&& setup_trial = {})
 {
     dealii::ConvergenceTable convergence_table;
@@ -186,26 +186,26 @@ int main()
 
     constexpr unsigned int n_levels = 8;
     GrossPitaevskiiPackage<2> GS(options, n_levels);
-    GrossPitaevskiiProblem<2> problem = GS.problem(Square<2>());
+    GrossPitaevskiiSystem<2> system = GS.system(Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
     {
         std::cerr << "--- GRADIENT CHECK - ENERGY\n";
-        GradientTestEnergy<2> test_energy(problem, options.beta, options_slv);
+        GradientTestEnergy<2> test_energy(system, options.beta, options_slv);
         check_gradient(test_energy, NUM_TRIALS, "checkgradient_energy_2d");
         std::cerr << "\n";
     }
 
     {
         std::cerr << "--- GRADIENT CHECK - MASS\n";
-        GradientTestMass<2> test_mass(problem, options.beta, options_slv);
+        GradientTestMass<2> test_mass(system, options.beta, options_slv);
         check_gradient(test_mass, NUM_TRIALS, "checkgradient_mass_2d");
         std::cerr << "\n";
     }
 
     {
         std::cerr << "--- GRADIENT CHECK - FROBENIUS\n";
-        GradientTestFrobenius<2> test_frob(problem, options.beta, options_slv);
+        GradientTestFrobenius<2> test_frob(system, options.beta, options_slv);
         check_gradient(test_frob, NUM_TRIALS, "checkgradient_frob_2d");
         std::cerr << "\n";
     }
@@ -217,8 +217,8 @@ int main()
 
     {
         std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
-        GradientTestCoarseMass<2> test_coarse_mass(problem, options.beta, options_slv);
-        GradientTestMass<2> test_mass(problem, options.beta, options_slv);
+        GradientTestCoarseMass<2> test_coarse_mass(system, options.beta, options_slv);
+        GradientTestMass<2> test_mass(system, options.beta, options_slv);
 
         Vector<double> w(n_dofs);  // fixed correction term
         w = 1.0;
@@ -240,8 +240,8 @@ int main()
 
     {
         std::cerr << "--- GRADIENT CHECK - COARSE (FROBENIUS)\n";
-        GradientTestCoarseFrobenius<2> test_coarse_frob(problem, options.beta, options_slv);
-        GradientTestFrobenius<2> test_frob(problem, options.beta, options_slv);
+        GradientTestCoarseFrobenius<2> test_coarse_frob(system, options.beta, options_slv);
+        GradientTestFrobenius<2> test_frob(system, options.beta, options_slv);
 
         Vector<double> w(n_dofs);  // fixed correction term
         w = 1.0;

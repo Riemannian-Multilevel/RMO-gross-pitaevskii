@@ -6,6 +6,8 @@
 #include <gpe/ropt/manifold.h>
 #include <gpe/ropt/transport.h>
 
+#include <deal.II/base/timer.h>
+
 namespace gpe
 {
 /**
@@ -31,8 +33,63 @@ public:
 };
 
 
+// Fields for gradient computation with inner solver
+// TODO: mvoe to option_types.h?
+struct GradInfo
+{
+    double residual;
+    unsigned num_iter;
+    double tolerance;
+    double elapsed_time;
+};
+
+
+template <int dim>
+class GrossPitaevskiiResidual
+{
+public:
+    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
+        : m_func(m_func)
+        , m_norm(m_func.get_M())
+    {}
+
+    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func, OperatorType op)
+        : m_func(m_func)
+        , m_norm(op)
+    {}
+
+    Vector<double> residual_vector(const Vector<double>& x) const
+    {
+        Vector<double> Mx(x.size());
+        m_func.get_M().vmult(Mx, x);
+
+        const double mass = x * Mx;             // should be ~ 1 (energy constraint)
+        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
+
+        Vector<double> Ax(x.size());         // A x
+        m_func.get_A().vmult(Ax, x);
+
+        const double lambda = x * Ax / mass;    // Rayleigh quotient (x'Ax / x'Mx)
+
+        Vector<double> r(Ax);
+        r.add(-lambda, Mx);                     // r = A x - lambda M x
+
+        return r;
+    }
+
+    double residual(const Vector<double>& x) const
+    {
+        return m_norm(residual_vector(x));
+    }
+
+private:
+    const GrossPitaevskiiFunctional<dim>& m_func;
+
+    EnergyNorm<OperatorType> m_norm;
+};
+
+
 // Basic oracle interface
-// TODO: include residual(x)?
 class OracleBase
 {
 public:
@@ -49,142 +106,66 @@ public:
 
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
-    virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
+    virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
 
+    // TODO: move this to a separate interface? (-> class Metric)
     virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
+    virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
     virtual unsigned n_dofs() const = 0;
+
+    // TODO: move this to a separate interface? (-> class Residual or GrossPitaevskiiFunctional)
+    virtual double residual(const Vector<double>&) const = 0;
 };
 
 
-class Residual
-{
-public:
-    virtual ~Residual() = default;
-
-    double residual(const Vector<double>& x) const
-    {
-        // If the cache is empty, compute and store it
-        if (m_residual < 0) {
-            const auto r = residual_vector(x);
-            m_residual = norm(r);
-        }
-        AssertThrow(m_residual >= 0, dealii::ExcInternalError("residual must be positive"));
-
-        // Otherwise, just return the cached value
-        return m_residual;
-    }
-
-    void reinit() const { m_residual = -1.0; }  // invalidate cached value
-
-protected:
-    mutable double m_residual = -1.0;
-
-    virtual double norm(const Vector<double>& x) const = 0;
-    virtual Vector<double> residual_vector(const Vector<double>& x) const = 0;
-};
-
-
-template <int dim>
-class GrossPitaevskiiResidual : public Residual
-{
-public:
-    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
-        : m_func(m_func)
-    {}
-
-protected:
-    double norm(const Vector<double>& x) const override
-    {
-        EnergyNorm norm(m_func.get_M());
-
-        return norm(x);
-    }
-
-    Vector<double> residual_vector(const Vector<double>& x) const override
-    {
-        Vector<double> Mx(x.size());
-        m_func.get_M().vmult(Mx, x);
-
-        const double mass = x * Mx;             // should be ~ 1 (energy constraint)
-        AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
-
-        Vector<double> Ax(x.size());         // A x
-        m_func.get_A().vmult(Ax, x);
-
-        const double lambda = x * Ax / mass;    // Rayleigh quotient (x'Ax / x'Mx)
-
-        Vector<double> r(Ax);
-        r.add(-lambda, Mx);                     // r = A x - lambda M x
-
-        return r;
-    }
-
-private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
-};
-
-
-// Metric-aware wrapper for GrossPitaevskii energy evaluation
+// Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
 template <int dim>
 class GrossPitaevskiiOracle : public OracleBase
 {
 public:
     static constexpr int dimension = dim;
+    static constexpr auto metric_t = MetricKind::NONE;
 
     GrossPitaevskiiOracle(GrossPitaevskiiFunctional<dim>& func)
         : m_func(func)
-        , m_res_func(func)
+        , m_res(func)
     {}
 
     virtual ~GrossPitaevskiiOracle() = default;
 
-    // Common lifecycle management
+    // Function evaluation
     void update(const Vector<double>& x) override
     {
         m_func.update(x);
-        m_res_func.reinit();
     }
-
-    // Common metric-independent GP evaluation
     double value(const Vector<double>& x) const override
     {
         return m_func.value(x);
     }
-
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
         return m_func.directional_derivative(x, z);
     }
-
-    double residual(const Vector<double>& x) const
-    {
-        return m_res_func.residual(x);
-    }
-
     unsigned n_dofs() const override
     {
         return m_func.n_dofs();
     }
 
-    // Methods to be defined in child classes (metric-dependent)
-    double norm(const Vector<double>&) const override
+    // Residual evaluation
+    double residual(const Vector<double>& x) const override
     {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+        return m_res.residual(x);
     }
 
-    unsigned gradient(const Vector<double>&, Vector<double>&) const override
-    {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-    }
-
-    // Shared domain-specific accessors
+    // Shared accessors
     const auto& get_M()  const { return m_func.get_M(); }
     const auto& get_A()  const { return m_func.get_A(); }
     const auto& get_A0() const { return m_func.get_A0(); }
 
 protected:
     GrossPitaevskiiFunctional<dim>& m_func;
-    const GrossPitaevskiiResidual<dim> m_res_func;
+
+    const GrossPitaevskiiResidual<dim> m_res;
 };
 
 
@@ -193,11 +174,13 @@ class MassOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "M";
+    static constexpr auto metric_t = MetricKind::MASS;
 
     MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : GrossPitaevskiiOracle<dim>(func)
         , options(options)
         , M_inv(this->get_M(), options)
+        , m_norm(this->get_M())
     {}
 
     void update(const Vector<double>& x) override
@@ -206,28 +189,53 @@ public:
     }
 
     /* @brief Computes the Riemannian gradient in the M-metric. */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        // TODO: include residual in CPU time evaluation
         const double x_residual = this->residual(x);
+        Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        if (x_residual > 0) {
-            M_inv.set_tol(x_residual * options.tol_inner_res);
+        auto info = gradient(x, output, x_residual);
+        info.residual = x_residual;
+
+        return info;
+    }
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    {
+        dealii::Timer timer;
+        GradInfo info{};
+
+        if (inv_tol > 0) {
+            M_inv.set_tol(inv_tol);
         }
+
+        timer.start();
         ellipsoid::mass::gradient(M_inv, this->get_A(), this->get_M(), x, output);
 
-        return this->M_inv.control().last_step();
+        info.num_iter     = M_inv.control().last_step();
+        info.tolerance    = M_inv.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
+
+        timer.stop();
+        return info;
     }
 
     double norm(const Vector<double>& v) const override
     {
-        EnergyNorm norm(this->get_M());
+        return m_norm(v);
+    }
 
-        return norm(v);
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return m_norm(x, z);
     }
 
 private:
     SolverOptions options;
     InverseOpType M_inv;
+
+    EnergyNorm<OperatorType> m_norm;
 };
 
 
@@ -236,12 +244,13 @@ class EnergyOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "A";
-    static constexpr int dimension = dim;
+    static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;
 
     EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : GrossPitaevskiiOracle<dim>(func)
         , options(options)
         , A_inv(this->get_A(), options)
+        , m_norm(this->get_A())
     {
         A_inv.update_static(this->get_A0());
     }
@@ -257,28 +266,53 @@ public:
      * @brief Computes the Riemannian gradient in the A-metric.
      * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        // TODO: include residual in CPU time evaluation
         const double x_residual = this->residual(x);
+        Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        if (x_residual > 0) {
-            A_inv.set_tol(x_residual * this->options.tol_inner_res);
+        auto info = gradient(x, output, x_residual);
+        info.residual = x_residual;
+
+        return info;
+    }
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    {
+        dealii::Timer timer;
+        GradInfo info{};
+
+        if (inv_tol > 0) {
+            A_inv.set_tol(inv_tol);
         }
+
+        timer.start();
         ellipsoid::energy::gradient(A_inv, this->get_M(), x, output);
 
-        return A_inv.control().last_step();
+        info.num_iter     = A_inv.control().last_step();
+        info.tolerance    = A_inv.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
+
+        timer.stop();
+        return info;
     }
 
     double norm(const Vector<double>& x) const override
     {
-        EnergyNorm norm(this->get_A());
+        return m_norm(x);
+    }
 
-        return norm(x);
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return m_norm(x, z);
     }
 
 private:
     SolverOptions options;
     InverseOpType A_inv;
+
+    EnergyNorm<OperatorType> m_norm;
 };
 
 
@@ -287,8 +321,9 @@ class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
     static constexpr const char* id = "F";
+    static constexpr auto metric_t = MetricKind::FROBENIUS;
 
-    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions)
+    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func)
         : GrossPitaevskiiOracle<dim>(func)
     {}
 
@@ -301,17 +336,33 @@ public:
      * @brief Computes the Riemannian gradient in the F-metric.
      * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
+        dealii::Timer timer;
+        GradInfo info{};
+
+        timer.start();
         ellipsoid::frobenius::gradient(this->get_A(), this->get_M(), x, output);
+        timer.stop();
 
         // F-gradient evaluation does not involve a linear solver.
-        return 0;
+        info.elapsed_time = timer.cpu_time();
+        return info;
+    }
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    {
+        return gradient(x, output);  // no-op
     }
 
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
+    }
+
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return x*z;
     }
 };
 

@@ -97,7 +97,9 @@ inline po::options_description gpe_cli_options() {
         ("beta", po::value<double>()->default_value(100.0),
             "non-linearity factor")
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
-            "type of mesh elements used (quadrilateral|simplex)");
+            "type of mesh elements used (quadrilateral|simplex)")
+        ("reference", po::value<double>()->default_value(-1.0),
+            "reference solution for table output");
     return d;
 }
 
@@ -113,6 +115,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
+    options.reference = vm["reference"].as<double>();
 }
 
 
