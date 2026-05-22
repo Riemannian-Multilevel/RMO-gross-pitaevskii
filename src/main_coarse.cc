@@ -219,9 +219,10 @@ public:
     template <typename Potential>
     Experiment3Level(Potential&& V, unsigned n_levels,
                      GPE_Options options, FAS_Options options_fas,
-                     SolverOptions options_slv_f, SolverOptions options_slv_c)
+                     SolverOptions options_slv_2, SolverOptions options_slv_1, SolverOptions options_slv_0)
         : n_levels(n_levels)
-        , options(options), options_fas(options_fas), options_slv_c(options_slv_c), options_slv_f(options_slv_f)
+        , options(options), options_fas(options_fas)
+        , options_slv_2(options_slv_2), options_slv_1(options_slv_1), options_slv_0(options_slv_0)
         , builder_0(V, options, n_levels-2)
         , builder_1(V, options, n_levels-1)
         , builder_2(V, options, n_levels)
@@ -231,9 +232,9 @@ public:
         , M_0(obj_0.get_M())
         , M_1(obj_1.get_M())
         , M_2(obj_2.get_M())
-        , M_inv_0(obj_0.get_M(), options_slv_c)
-        , M_inv_1(obj_1.get_M(), options_slv_c)
-        , M_inv_2(obj_2.get_M(), options_slv_f)
+        , M_inv_0(obj_0.get_M(), options_slv_0)
+        , M_inv_1(obj_1.get_M(), options_slv_1)
+        , M_inv_2(obj_2.get_M(), options_slv_2)
         , manifold_0(M_0)
         , manifold_1(M_1)
         , manifold_2(M_2)
@@ -263,20 +264,20 @@ public:
         return builder_2.n_dofs();
     }
 
-    void run(Vector<double>& x0, DescentOptions options_gd_f, DescentOptions options_gd_c, std::ostream& os)
+    void run(Vector<double>& x0, DescentOptions options_gd_2, DescentOptions options_gd_1, DescentOptions options_gd_0, std::ostream& os)
     {
-        EnergyOracle<dim> o_descent_2(obj_2, options_slv_f);
+        EnergyOracle<dim> o_descent_2(obj_2, options_slv_2);
 
         if (options_fas.metric_t == MetricKind::NONE) {
-            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_2, manifold_2, options_gd_f).cycle(x0, os);
+            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_2, manifold_2, options_gd_2).cycle(x0, os);
         }
         else if (options_fas.metric_t == MetricKind::MASS) {
-            MassOracle<dim> o_tilt_0(obj_0, options_slv_c);
-            MassOracle<dim> o_tilt_1(obj_1, options_slv_c);
-            MassOracle<dim> o_tilt_2(obj_2, options_slv_f);
+            MassOracle<dim> o_tilt_0(obj_0, options_slv_0);
+            MassOracle<dim> o_tilt_1(obj_1, options_slv_1);
+            MassOracle<dim> o_tilt_2(obj_2, options_slv_2);
 
             run_impl<EnergyOracle<dim>, MassOracle<dim>, MassCoarseOracleEnergyAdaptive>(
-                x0, o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0, options_gd_f, options_gd_c, os);
+                x0, o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0, options_gd_2, options_gd_1, options_gd_0, os);
         }
         else if (options_fas.metric_t == MetricKind::FROBENIUS) {
             FrobeniusOracle<dim> o_tilt_0(obj_0);
@@ -284,7 +285,7 @@ public:
             FrobeniusOracle<dim> o_tilt_2(obj_2);
 
             run_impl<EnergyOracle<dim>, FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive>(
-                x0, o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0, options_gd_f, options_gd_c, os);
+                x0, o_descent_2, o_tilt_2, o_tilt_1, o_tilt_0, options_gd_2, options_gd_1, options_gd_0, os);
         }
     }
 
@@ -292,7 +293,7 @@ protected:
     template <typename DescentOracleType, typename TiltOracleType, template<int, typename> class CoarseModelType>
     void run_impl(Vector<double>& x0, DescentOracleType& o_descent_2,
                   TiltOracleType& o_tilt_2, TiltOracleType& o_tilt_1, TiltOracleType& o_tilt_0,
-                  DescentOptions options_gd_f, DescentOptions options_gd_c, std::ostream& os)
+                  DescentOptions options_gd_2, DescentOptions options_gd_1, DescentOptions options_gd_0, std::ostream& os)
     {
         // FAS orchestration managers (bridges 2->1 and 1->0)
         using FASManagerType = CoarseOracleBase<dim, TiltOracleType, TiltOracleType>;
@@ -300,19 +301,19 @@ protected:
         FASManagerType fas_10(o_tilt_1, o_tilt_0, manifold_0, *pt_10, *vt_10);
 
         // Define the coarse surrogate models (q_k)
-        CoarseModelType<dim, TiltOracleType> q_2(fas_21, options_slv_c);
-        CoarseModelType<dim, TiltOracleType> q_1(fas_10, options_slv_c);
+        CoarseModelType<dim, TiltOracleType> q_1(fas_21, options_slv_1);
+        CoarseModelType<dim, TiltOracleType> q_0(fas_10, options_slv_0);
 
-        // Level 0: Gradient Descent (minimizing q_1)
-        GradientDescent<dim> solver_0(q_1, manifold_0, options_gd_c);
+        // Level 0: Gradient Descent (minimizing q_0)
+        GradientDescent<dim> solver_0(q_0, manifold_0, options_gd_0);
 
-        // Level 1: FAS (minimizing q_2, using solver_0 for coarse steps)
+        // Level 1: FAS (minimizing q_1, using solver_0 for coarse steps)
         FullApproximationScheme<dim, CoarseModelType<dim, TiltOracleType>, FASManagerType, CoarseModelType<dim, TiltOracleType>>
-            solver_1(q_2, fas_10, q_1, manifold_1, manifold_0, *vt_10, solver_0, options_gd_c, options_fas);
+            solver_1(q_1, fas_10, q_0, manifold_1, manifold_0, *vt_10, solver_0, options_gd_1, options_fas);
 
-        // Level 2: FAS (minimizing true objective, using solver_1 for coarse steps)
+        // Level 2: FAS (minimizing true objective E_2, using solver_1 for coarse steps)
         FullApproximationScheme<dim, DescentOracleType, FASManagerType, CoarseModelType<dim, TiltOracleType>>
-            solver_2(o_descent_2, fas_21, q_2, manifold_2, manifold_1, *vt_21, solver_1, options_gd_f, options_fas);
+            solver_2(o_descent_2, fas_21, q_1, manifold_2, manifold_1, *vt_21, solver_1, options_gd_2, options_fas);
 
         // Run the Top-Level Cycle
         solver_2.cycle(x0, os);
@@ -322,12 +323,13 @@ private:
     unsigned n_levels;
     GPE_Options   options;
     FAS_Options   options_fas;
-    SolverOptions options_slv_c;
-    SolverOptions options_slv_f;
+    SolverOptions options_slv_2;
+    SolverOptions options_slv_1;
+    SolverOptions options_slv_0;
 
-    ModelBuilder<dim> builder_0;  // coarse 0
-    ModelBuilder<dim> builder_1;  // coarse 1
-    ModelBuilder<dim> builder_2;  // fine 2
+    ModelBuilder<dim> builder_0;
+    ModelBuilder<dim> builder_1;
+    ModelBuilder<dim> builder_2;
 
     GrossPitaevskiiFunctional<dim> obj_0, obj_1, obj_2;
     const OperatorType &M_0, &M_1, &M_2;
@@ -337,7 +339,6 @@ private:
     UnitMassSphere<dim, OperatorType> manifold_1;
     UnitMassSphere<dim, OperatorType> manifold_2;
 
-    // Variable grid operators
     std::shared_ptr<LinearTransferBase> transfer_10, transfer_21;
     std::shared_ptr<ManifoldTransferBase> pt_10, pt_21;
     std::shared_ptr<VectorTransportBase> vt_10, vt_21;
