@@ -247,9 +247,11 @@ public:
 
             if (do_coarse_step) {
                 const auto& state = fas.get_state();
-                // TODO: coarse solve (next level/cycle) q_k -> z_k
-                coarse_solver.cycle
-                //coarse_solve(q_k, fas, x, coarse_manifold, vector_transport, coarse_solver, dk, timer, &std::cerr);
+                // Initialize coarse trial point as the restricted fine point
+                Vector<double> zk = state.y;
+                // Solve the coarse model q_k(zk)
+                // TODO: solve() method in CoarseModelType to ensure consistency
+                coarse_solver.cycle(zk);
 
 #ifdef CPU_TIME
                 std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
