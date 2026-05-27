@@ -259,19 +259,23 @@ public:
         return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
+    double residual(const Vector<double>& x) const override
+    {
+        return m_coarse_res.residual(x);
+    }
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        timer.start();
-        info.residual = m_coarse_res.residual(x);
-
-        if (info.residual > 0) {
-            M_inv_coarse.set_tol(info.residual * options.tol_inner_res);
+        if (inv_tol > 0) {
+            M_inv_coarse.set_tol(inv_tol);
         }
 
+        timer.start();
         const auto& coarse_step = this->m_model.get_state();
+
         coarse::mass::gradient(M_coarse, M_inv_coarse, A_coarse, x, coarse_step.y, coarse_step.w, output);
         timer.stop();
 
@@ -282,9 +286,17 @@ public:
         return info;
     }
 
-    double residual(const Vector<double>& x) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        return m_coarse_res.residual(x);
+        // TODO: include residual in CPU time evaluation
+        const double coarse_residual = this->residual(x);
+        Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
+
+        const double inv_tol = coarse_residual * options.tol_inner_res;
+        auto info     = gradient(x, output, inv_tol);
+        info.residual = coarse_residual;
+
+        return info;
     }
 
     unsigned n_dofs() const override
@@ -366,32 +378,44 @@ public:
         return coarse::mass::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
+    double residual(const Vector<double>& x) const override
+    {
+        return m_coarse_res.residual(x);
+    }
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        timer.start();
-        info.residual = this->residual(x);
-
-        if (info.residual > 0) {
-            A_inv_coarse.set_tol(info.residual * options.tol_inner_res);
+        if (inv_tol > 0) {
+            A_inv_coarse.set_tol(inv_tol);
         }
 
-        const auto& coarse_step = m_model.get_state();
+        timer.start();
+        const auto& coarse_step = this->m_model.get_state();
+
         coarse::mass::energy_adaptive_gradient(M_coarse, A_inv_coarse, x, coarse_step.y, coarse_step.w, output);
         timer.stop();
 
-        info.elapsed_time = timer.cpu_time();
         info.num_iter     = A_inv_coarse.control().last_step();
         info.tolerance    = A_inv_coarse.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
 
         return info;
     }
 
-    double residual(const Vector<double>& x) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        return m_coarse_res.residual(x);
+        // TODO: include residual in CPU time evaluation
+        const double coarse_residual = this->residual(x);
+        Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
+
+        const double inv_tol = coarse_residual * options.tol_inner_res;
+        auto info     = gradient(x, output, inv_tol);
+        info.residual = coarse_residual;
+
+        return info;
     }
 
     unsigned n_dofs() const override
@@ -467,6 +491,16 @@ public:
         return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w, z, this->M_coarse, this->A_coarse);
     }
 
+    double residual(const Vector<double>& x) const override
+    {
+        return m_coarse_res.residual(x);
+    }
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    {
+        gradient(x, output);  // No matrix inversion
+    }
+
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         dealii::Timer timer;
@@ -480,11 +514,6 @@ public:
         info.elapsed_time = timer.cpu_time();
 
         return info;
-    }
-
-    double residual(const Vector<double>& x) const override
-    {
-        return m_coarse_res.residual(x);
     }
 
     unsigned n_dofs() const override
@@ -559,34 +588,46 @@ public:
 
         return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
+    
+    double residual(const Vector<double>& x) const override
+    {
+        return m_coarse_res.residual(x);
+    }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double inv_tol) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        timer.start();
-        info.residual = this->residual(x);
-
-        if (info.residual > 0) {
-            A_inv_coarse.set_tol(info.residual * options.tol_inner_res);
+        if (inv_tol > 0) {
+            A_inv_coarse.set_tol(inv_tol);
         }
 
+        timer.start();
         const auto& coarse_step = this->m_model.get_state();
+
         coarse::frobenius::energy_adaptive_gradient(this->M_coarse, A_inv_coarse, this->A_coarse,
             x, coarse_step.y, coarse_step.w, output);
         timer.stop();
 
-        info.elapsed_time = timer.cpu_time();
         info.num_iter     = A_inv_coarse.control().last_step();
         info.tolerance    = A_inv_coarse.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
 
         return info;
     }
 
-    double residual(const Vector<double>& x) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        return m_coarse_res.residual(x);
+        // TODO: include residual in CPU time evaluation
+        const double coarse_residual = this->residual(x);
+        Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
+
+        const double inv_tol = coarse_residual * options.tol_inner_res;
+        auto info     = gradient(x, output, inv_tol);
+        info.residual = coarse_residual;
+
+        return info;
     }
 
     unsigned n_dofs() const override

@@ -200,7 +200,7 @@ public:
         const double x_residual = this->residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        auto inv_tol = x_residual * options.tol_inner_res;
+        const double inv_tol = x_residual * options.tol_inner_res;
         auto info = gradient(x, output, inv_tol);
         info.residual = x_residual;
 
@@ -283,7 +283,7 @@ public:
         const double x_residual = this->residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        auto inv_tol = x_residual * options.tol_inner_res;
+        const double inv_tol = x_residual * options.tol_inner_res;
         auto info = gradient(x, output, inv_tol);
         info.residual = x_residual;
 
