@@ -117,8 +117,8 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
     convergence_table.set_scientific("step", true);
     convergence_table.set_scientific("elapsed", true);
 
-    convergence_table.evaluate_convergence_rates("residual", reduction_rate);
-    convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
+    convergence_table.evaluate_convergence_rates("residual", dealii::ConvergenceTable::reduction_rate);
+    convergence_table.evaluate_convergence_rates("residual", dealii::ConvergenceTable::reduction_rate_log2);
     convergence_table.write_text(os, format);
 }
 
@@ -149,7 +149,7 @@ public:
 #ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
 #endif
-            auto lac_iter = O_fine.gradient(x, x_grad);
+            auto info_grad = O_fine.gradient(x, x_grad);
             dk  = x_grad;
             dk *= -1.0;
 
@@ -158,7 +158,7 @@ public:
             CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, timer, options_gd);
             info.iter      = i;
             info.coarse    = false;
-            info.lac_iter  = lac_iter;
+            info.lac_iter  = info_grad.num_iter;
 
             cycle_eval(O_fine, x, convergence_table, info);
         }
@@ -194,6 +194,7 @@ public:
                         // Problem geometry
                             const ManifoldBase& fine_manifold,
                             const ManifoldBase& coarse_manifold,
+                            const VectorTransportBase& vector_transport,
                         // Solver parameters
                             SolverBase&    coarse_solver, // Reference to the next level
                             DescentOptions options_gd,
@@ -274,7 +275,7 @@ public:
                 cycle_eval(O_fine, x, convergence_table, info);
             }
             else {
-                auto lac_iter = O_fine.gradient(x, x_grad);
+                auto info_grad = O_fine.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
 
@@ -284,7 +285,7 @@ public:
 
                 info.iter      = i;
                 info.coarse    = false;
-                info.lac_iter  = lac_iter;
+                info.lac_iter  = info_grad.num_iter;
 
                 cycle_eval(O_fine, x, convergence_table, info);
 

@@ -33,18 +33,6 @@ struct CoarseState
 };
 
 
-// TODO: move to lac.h
-struct IdentityOperator
-{
-    static void vmult(Vector<double>& dst, const Vector<double>& src) {
-        dst = src;
-    }
-    static void Tvmult(Vector<double>& dst, const Vector<double>& src) {
-        dst = src;
-    }
-};
-
-
 template <typename CoarseModelType>
 class GrossPitaevskiiCoarseResidual
 {
@@ -55,6 +43,13 @@ public:
         : m_model(model)
         , m_norm(model.coarse().get_M())
     {}
+
+    double residual(const Vector<double>& x) const
+    {
+        // This is fixed for different coarse models
+        return m_norm(residual_vector(x));
+    }
+
 
 protected:
     Vector<double> residual_vector(const Vector<double>& x) const
@@ -75,7 +70,7 @@ protected:
 
         Vector<double> grad_tilt(x.size());
         // This varies for different coarse models
-        m_model.metric(grad_tilt, u);
+        m_model.apply_metric(grad_tilt, u);
 
         // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
         Vector<double> Ax(x.size());
@@ -88,12 +83,6 @@ protected:
         r.add(-lambda, Mx);
 
         return r;
-    }
-
-    double residual(const Vector<double>& x) const
-    {
-        // This is fixed for different coarse models
-        return m_norm(residual_vector(x));
     }
 
 private:
@@ -113,8 +102,8 @@ class CoarseOracleBase
 public:
     static constexpr int dimension = dim;
 
-    CoarseOracleBase(FineOracleType     &O_fine,
-                     CoarseOracleType   &O_coarse,
+    CoarseOracleBase(FineOracleType   &O_fine,
+                     CoarseOracleType &O_coarse,
                      const ManifoldBase &coarse_manifold,
                      const ManifoldTransferBase &point_transfer,
                      const VectorTransportBase  &vector_transport)
@@ -142,6 +131,7 @@ public:
     {
         AssertDimension(x_fine.size(), n_fine);
         m_state.x = x_fine;
+        // Underlying state of O_fine assumed to match x (OracleBase::update -> GrossPitaevskiiSystem::update)
 
         // Compute base point for coarse model
 #ifdef CPU_TIME
@@ -310,6 +300,16 @@ public:
         return m_norm(v);
     }
 
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return m_norm(x, z);
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        M_coarse.vmult(dst, src);
+    }
+
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
     //       (non-linear assembly)
@@ -407,6 +407,16 @@ public:
         return m_norm(v);
     }
 
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return m_norm(x, z);
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        M_coarse.vmult(dst, src);
+    }
+
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
     Base& m_model;
@@ -488,6 +498,16 @@ public:
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
+    }
+
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return x * z;
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        dst = src;
     }
 
 private:
@@ -580,6 +600,16 @@ public:
     double norm(const Vector<double>& v) const override
     {
         return std::sqrt(v*v);
+    }
+
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return x * z;
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        dst = src;
     }
 
 private:

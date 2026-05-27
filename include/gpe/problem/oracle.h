@@ -111,6 +111,8 @@ public:
     // TODO: move this to a separate interface? (-> class Metric)
     virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
+    // TODO: improve name
+    virtual void apply_metric(const Vector<double>&, Vector<double>&) const = 0;
     virtual unsigned n_dofs() const = 0;
 
     // TODO: move this to a separate interface? (-> class Residual or GrossPitaevskiiFunctional)
@@ -138,14 +140,17 @@ public:
     {
         m_func.update(x);
     }
+
     double value(const Vector<double>& x) const override
     {
         return m_func.value(x);
     }
+
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
         return m_func.directional_derivative(x, z);
     }
+
     unsigned n_dofs() const override
     {
         return m_func.n_dofs();
@@ -195,7 +200,8 @@ public:
         const double x_residual = this->residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        auto info = gradient(x, output, x_residual);
+        auto inv_tol = x_residual * options.tol_inner_res;
+        auto info = gradient(x, output, inv_tol);
         info.residual = x_residual;
 
         return info;
@@ -229,6 +235,11 @@ public:
     double metric(const Vector<double>& x, const Vector<double>& z) const override
     {
         return m_norm(x, z);
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        this->get_M().vmult(dst, src);
     }
 
 private:
@@ -272,7 +283,8 @@ public:
         const double x_residual = this->residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        auto info = gradient(x, output, x_residual);
+        auto inv_tol = x_residual * options.tol_inner_res;
+        auto info = gradient(x, output, inv_tol);
         info.residual = x_residual;
 
         return info;
@@ -306,6 +318,11 @@ public:
     double metric(const Vector<double>& x, const Vector<double>& z) const override
     {
         return m_norm(x, z);
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        this->get_A().vmult(dst, src);
     }
 
 private:
@@ -363,6 +380,11 @@ public:
     double metric(const Vector<double>& x, const Vector<double>& z) const override
     {
         return x*z;
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        dst = src;
     }
 };
 

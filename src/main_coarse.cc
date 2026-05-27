@@ -1,6 +1,7 @@
 #include <gpe/lac.h>
 #include <gpe/main/model.h>
 #include <gpe/ropt/fas.h>
+#include <gpe/ropt/descent.h>
 #include <gpe/problem/oracle_coarse.h>
 #include <gpe/problem/gpe.h>
 #include <gpe/option.h>
@@ -142,7 +143,7 @@ public:
 
         if (options_fas.metric_t == MetricKind::NONE) {
             // FIXED: Passed os instead of std::cout
-            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_f, manifold_f, options_gd_f).cycle(x0, os);
+            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_f, manifold_f, options_gd_f).run(x0, os);
         }
         else if (options_fas.metric_t == MetricKind::MASS) {
             MassOracle<dim> o_tilt_c(obj_c, options_slv_c);
@@ -269,7 +270,7 @@ public:
         EnergyOracle<dim> o_descent_2(obj_2, options_slv_2);
 
         if (options_fas.metric_t == MetricKind::NONE) {
-            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_2, manifold_2, options_gd_2).cycle(x0, os);
+            ExperimentSingleLevel<dim, EnergyOracle<dim>>(o_descent_2, manifold_2, options_gd_2).run(x0, os);
         }
         else if (options_fas.metric_t == MetricKind::MASS) {
             MassOracle<dim> o_tilt_0(obj_0, options_slv_0);
