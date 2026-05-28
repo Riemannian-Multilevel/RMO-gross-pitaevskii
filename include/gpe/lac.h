@@ -32,10 +32,10 @@ using dealii::SolverControl;
 
 // Class representing the symmetric positive definite dot product <u, Av> with induced norm sqrt(<u, Au>)
 template <typename MatrixType>
-class EnergyNorm
+class SpdNorm
 {
 public:
-    explicit EnergyNorm(const MatrixType& matrix)
+    explicit SpdNorm(const MatrixType& matrix)
         : matrix(matrix)
     {
         AssertDimension(matrix.n(), matrix.m());

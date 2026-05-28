@@ -85,7 +85,7 @@ public:
 private:
     const GrossPitaevskiiFunctional<dim>& m_func;
 
-    EnergyNorm<OperatorType> m_norm;
+    SpdNorm<OperatorType> m_norm;
 };
 
 
@@ -93,6 +93,7 @@ private:
 class OracleBase
 {
 public:
+    static constexpr const char* id = "";
     virtual ~OracleBase() = default;
 
     virtual void update(const Vector<double>& x) = 0;
@@ -107,12 +108,14 @@ public:
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
+    virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;  // method for setting tolerance
 
     // TODO: move this to a separate interface? (-> class Metric)
     virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
     // TODO: improve name
     virtual void apply_metric(const Vector<double>&, Vector<double>&) const = 0;
+    virtual MetricKind get_metric() const { return MetricKind::NONE; }
     virtual unsigned n_dofs() const = 0;
 
     // TODO: move this to a separate interface? (-> class Residual or GrossPitaevskiiFunctional)
@@ -205,7 +208,7 @@ public:
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
         dealii::Timer timer;
         GradInfo info{};
@@ -241,12 +244,14 @@ public:
         this->get_M().vmult(dst, src);
     }
 
+    MetricKind get_metric() const override { return metric_t; }
+
     SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
 
-    EnergyNorm<OperatorType> m_norm;
+    SpdNorm<OperatorType> m_norm;
 };
 
 
@@ -279,7 +284,7 @@ public:
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const override
     {
         dealii::Timer timer;
         GradInfo info{};
@@ -315,12 +320,14 @@ public:
         this->get_A().vmult(dst, src);
     }
 
+    MetricKind get_metric() const override { return metric_t; }
+
     SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
 
-    EnergyNorm<OperatorType> m_norm;
+    SpdNorm<OperatorType> m_norm;
 };
 
 
@@ -353,7 +360,7 @@ public:
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double) const override
     {
         return gradient(x, output);  // no-op
     }
@@ -367,6 +374,8 @@ public:
     {
         return x*z;
     }
+
+    MetricKind get_metric() const override { return metric_t; }
 
     void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
     {

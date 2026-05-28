@@ -10,8 +10,7 @@
 
 #include <gpe/lac.h>
 #include <gpe/problem/oracle.h>
-#include <gpe/problem/oracle_coarse.h>
-#include <gpe/ropt/transport.h>
+#include <gpe/ropt/descent.h>
 
 namespace gpe
 {

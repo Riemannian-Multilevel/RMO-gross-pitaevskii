@@ -259,6 +259,24 @@ private:
 };
 
 
+class FunctionalBase
+{
+public:
+    virtual ~FunctionalBase() = default;
+
+    virtual void update(const Vector<double>&)
+    {
+        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+    }
+
+    virtual double value(const Vector<double>& x) const = 0;
+    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const = 0;
+
+    virtual void gradient(const Vector<double>&, Vector<double>&) const = 0;
+    virtual unsigned n_dofs() const = 0;
+};
+
+
 // Class that represents the smooth objective function E(x) in ambient Euclidean space
 template <int dim>
 class GrossPitaevskiiFunctional
