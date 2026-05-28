@@ -89,6 +89,7 @@ public:
     void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const override
     {
         transfer.to_fine_mesh(y_coarse, x_fine);
+
         ellipsoid::retract_by_norm(M_fine, x_fine);
     }
 
@@ -400,7 +401,7 @@ public:
      * $$\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})$$
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-        const Vector<double>& v_fine, Vector<double>& dst) const override
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Differential D_r(y): T_y S_h -> T_r(y) S_H
         Vector<double> D_ry(point_transfer.n_coarse());
@@ -432,14 +433,15 @@ class AdjointRestrictionTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "V2Restr";
 
+    // TODO: set tolerance inside vector_restriction() instead of global tolerance
     AdjointRestrictionTransport(const LinearTransferBase& I,
                                 const MatrixType& M_coarse,
                                 const MatrixType& M_fine,
-                                const InverseMatrixType& Minv_coarse)
+                                const InverseMatrixType& M_inv_coarse)
         : transfer(I),
           M_coarse(M_coarse),
           M_fine(M_fine),
-          Minv_coarse(Minv_coarse)
+          M_inv_coarse(M_inv_coarse)
     {}
 
     /**
@@ -478,7 +480,7 @@ public:
 
         // 3. Apply inverse coarse mass matrix: M_H^{-1} * IT_M_v
         Vector<double> w(transfer.n_coarse());
-        Minv_coarse.vmult(w, IT_M_v);
+        M_inv_coarse.vmult(w, IT_M_v);
 
         // 4. Project onto target tangent space T_\psi S_H
         ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, w, dst);
@@ -488,7 +490,7 @@ protected:
     const LinearTransferBase& transfer;
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
-    const InverseMatrixType& Minv_coarse;
+    const InverseMatrixType& M_inv_coarse;
 };
 
 
@@ -503,6 +505,7 @@ class AdjointRestrictionTransportScaled : public AdjointRestrictionTransport<Mat
 {
 public:
     static constexpr const char* id = "V5restr";
+    // TODO: set tolerance inside vector_restriction() instead of global tolerance
     using AdjointRestrictionTransport<MatrixType, InverseMatrixType>::AdjointRestrictionTransport;
 
     /**

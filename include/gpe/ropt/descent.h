@@ -159,7 +159,7 @@ gradient_descent(OracleType& oracle,
 
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-        g_info = oracle.gradient(x, g);
+        g_info = oracle.gradient(x, g, residual);
         double step_size = options.step_size;
         // Retraction: x <- (x - h g) / ||x - h g||_M
 
@@ -179,12 +179,12 @@ gradient_descent(OracleType& oracle,
             oracle.update(x);
         }
 
-        //residual = oracle.residual(x);  // assumed to be computed by OracleType::gradient(x)
+        residual = oracle.residual(x);
         energy   = oracle.value(x);
 
         convergence_table.add_value("iter", iter);
         convergence_table.add_value("lac_iter", g_info.num_iter);
-        convergence_table.add_value("residual", g_info.residual);
+        convergence_table.add_value("residual", residual);
         convergence_table.add_value("energy", energy);
         convergence_table.add_value("step",step_size);
         convergence_table.add_value("elapsed",timer.cpu_time());

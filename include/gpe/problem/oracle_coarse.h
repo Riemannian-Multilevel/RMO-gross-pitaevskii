@@ -50,7 +50,6 @@ public:
         return m_norm(residual_vector(x));
     }
 
-
 protected:
     Vector<double> residual_vector(const Vector<double>& x) const
     {
@@ -68,9 +67,9 @@ protected:
         Vector<double> u(x.size());
         ellipsoid::retract_inv_diff_by_norm_adjoint(M, state.y, x, state.w, u);
 
-        Vector<double> grad_tilt(x.size());
         // This varies for different coarse models
-        m_model.apply_metric(grad_tilt, u);
+        Vector<double> grad_tilt(x.size());
+        m_model.coarse().apply_metric(grad_tilt, u);
 
         // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
         Vector<double> Ax(x.size());
@@ -127,11 +126,11 @@ public:
     // Compute parameters for coarse model
     // Note that unlike the coarse models, which take a coarse vector as argument, this takes a fine vector
     // to build a new model based on the difference w of coarse gradients and restricted fine gradients.
-    void update_model(const Vector<double>& x_fine)
+    void update_model(const Vector<double>& x_fine, const double model_tol = -1.0)
     {
         AssertDimension(x_fine.size(), n_fine);
         m_state.x = x_fine;
-        // Underlying state of O_fine assumed to match x (OracleBase::update -> GrossPitaevskiiSystem::update)
+        // TODO: Underlying state of O_fine assumed to match x (OracleBase::update -> GrossPitaevskiiSystem::update)
 
         // Compute base point for coarse model
 #ifdef CPU_TIME
@@ -149,16 +148,25 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id << "-coarse gradient\n";
 #endif
-        // TODO: increase tolerance for gradients defining the coarse model
-        O_coarse.gradient(m_state.y, m_state.y_grad);
+        // Set tolerance for coarse gradient defining the coarse model
+        if (model_tol > 0.0) {
+            O_coarse.gradient(m_state.y, m_state.y_grad, model_tol);
+        } else {
+            O_coarse.gradient(m_state.y, m_state.y_grad);  // set based on residual of coarse objective
+        }
         AssertDimension(m_state.y_grad.size(), n_coarse);
 
         // Compute fine (F or M)-gradient
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
 #endif
-        // TODO: increase tolerance for gradients defining the coarse model
-        O_fine.gradient(m_state.x, m_state.x_grad);
+        // Set tolerance for fine gradient defining the coarse model
+        if (model_tol > 0.0) {
+            O_fine.gradient(m_state.x, m_state.x_grad, model_tol);
+        } else {
+            O_fine.gradient(m_state.x, m_state.x_grad);   // set based on residual of fine objective
+        }
+
         AssertDimension(m_state.x_grad.size(), n_fine);
 
         // Compute restricted gradient
@@ -185,6 +193,7 @@ public:
     const CoarseOracleType& coarse() const { return O_coarse; }  // coarse tilt oracle
     CoarseOracleType& coarse() { return O_coarse; }
 
+    const ManifoldBase& manifold() const { return coarse_manifold; }
 
 protected:
     // Coarse and fine level evaluation for correction vector w
@@ -225,9 +234,10 @@ class MassCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "MC";
-    using Base = CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>;
+    using coarse_t = MassOracle<dim>;
+    using base_t   = CoarseOracleBase<dim, FineOracleType, coarse_t>;
 
-    MassCoarseOracle(Base& coarse_model, SolverOptions options)
+    MassCoarseOracle(base_t& coarse_model, SolverOptions options)
         : m_model(coarse_model)
         , m_coarse_res(coarse_model)
         , options(options)
@@ -264,13 +274,14 @@ public:
         return m_coarse_res.residual(x);
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    // Wrapper method for providing residual*TOL to matrix solver
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        if (inv_tol > 0) {
-            M_inv_coarse.set_tol(inv_tol);
+        if (residual > 0) {
+            M_inv_coarse.set_tol(residual * options.tol_inner_res);
         }
 
         timer.start();
@@ -286,14 +297,14 @@ public:
         return info;
     }
 
+    // TODO: use options.tol_inner_res by default with opt-in residual?
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
         const double coarse_residual = this->residual(x);
         Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        const double inv_tol = coarse_residual * options.tol_inner_res;
-        auto info     = gradient(x, output, inv_tol);
+        auto info     = gradient(x, output, coarse_residual);
         info.residual = coarse_residual;
 
         return info;
@@ -327,8 +338,8 @@ private:
     //       (non-linear assembly)
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model in MassCoarseOracle to simplify the calling interface?
-    Base& m_model;
-    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
+    base_t& m_model;
+    GrossPitaevskiiCoarseResidual<base_t> m_coarse_res;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;
@@ -342,9 +353,10 @@ class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "MCA";
-    using Base = CoarseOracleBase<dim, FineOracleType, MassOracle<dim>>;
+    using coarse_t = MassOracle<dim>;
+    using base_t   = CoarseOracleBase<dim, FineOracleType, coarse_t>;
 
-    MassCoarseOracleEnergyAdaptive(Base& coarse_model, SolverOptions options)
+    MassCoarseOracleEnergyAdaptive(base_t& coarse_model, SolverOptions options)
         : m_model(coarse_model)
         , m_coarse_res(coarse_model)
         , options(options)
@@ -383,13 +395,14 @@ public:
         return m_coarse_res.residual(x);
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    // Wrapper method for providing residual*TOL to matrix solver
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        if (inv_tol > 0) {
-            A_inv_coarse.set_tol(inv_tol);
+        if (residual > 0) {
+            A_inv_coarse.set_tol(residual * options.tol_inner_res);
         }
 
         timer.start();
@@ -405,14 +418,14 @@ public:
         return info;
     }
 
+    // TODO: use options.tol_inner_res by default with opt-in residual?
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
         const double coarse_residual = this->residual(x);
         Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        const double inv_tol = coarse_residual * options.tol_inner_res;
-        auto info     = gradient(x, output, inv_tol);
+        auto info     = gradient(x, output, coarse_residual);
         info.residual = coarse_residual;
 
         return info;
@@ -443,8 +456,8 @@ public:
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
-    Base& m_model;
-    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
+    base_t& m_model;
+    GrossPitaevskiiCoarseResidual<base_t> m_coarse_res;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;
@@ -462,9 +475,10 @@ class FrobeniusCoarseOracle : public OracleBase
 {
 public:
     static constexpr const char* id = "FC";
-    using Base = CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>;
+    using coarse_t = FrobeniusOracle<dim>;
+    using base_t   = CoarseOracleBase<dim, FineOracleType, coarse_t>;
 
-    FrobeniusCoarseOracle(Base& coarse_model)
+    FrobeniusCoarseOracle(base_t& coarse_model)
         : m_model(coarse_model)
         , m_coarse_res(coarse_model)
         , M_coarse(m_model.coarse().get_M())
@@ -496,7 +510,9 @@ public:
         return m_coarse_res.residual(x);
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    // Wrapper method for providing residual*TOL to matrix solver
+    // Frobenius: no-op since no matrix inversion is involved
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double) const
     {
         gradient(x, output);  // No matrix inversion
     }
@@ -541,8 +557,8 @@ public:
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
-    Base& m_model;
-    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
+    base_t& m_model;
+    GrossPitaevskiiCoarseResidual<base_t> m_coarse_res;
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;
@@ -554,9 +570,10 @@ class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     static constexpr const char* id = "FCA";
-    using Base = CoarseOracleBase<dim, FineOracleType, FrobeniusOracle<dim>>;
+    using coarse_t = FrobeniusOracle<dim>;
+    using base_t   = CoarseOracleBase<dim, FineOracleType, coarse_t>;
 
-    FrobeniusCoarseOracleEnergyAdaptive(Base& coarse_model, SolverOptions options)
+    FrobeniusCoarseOracleEnergyAdaptive(base_t& coarse_model, SolverOptions options)
         : m_model(coarse_model)
         , m_coarse_res(coarse_model)
         , options(options)
@@ -588,19 +605,20 @@ public:
 
         return coarse::frobenius::directional_derivative(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
-    
+
     double residual(const Vector<double>& x) const override
     {
         return m_coarse_res.residual(x);
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double inv_tol) const
+    // Wrapper method for providing residual*TOL to matrix solver
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        if (inv_tol > 0) {
-            A_inv_coarse.set_tol(inv_tol);
+        if (residual > 0) {
+            A_inv_coarse.set_tol(residual * options.tol_inner_res);
         }
 
         timer.start();
@@ -617,14 +635,14 @@ public:
         return info;
     }
 
+    // TODO: use options.tol_inner_res by default with opt-in residual?
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
         const double coarse_residual = this->residual(x);
         Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        const double inv_tol = coarse_residual * options.tol_inner_res;
-        auto info     = gradient(x, output, inv_tol);
+        auto info     = gradient(x, output, coarse_residual);
         info.residual = coarse_residual;
 
         return info;
@@ -655,8 +673,8 @@ public:
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
-    Base& m_model;
-    GrossPitaevskiiCoarseResidual<Base> m_coarse_res;
+    base_t& m_model;
+    GrossPitaevskiiCoarseResidual<base_t> m_coarse_res;
     SolverOptions options;
 
     const OperatorType& M_coarse, &A_coarse;

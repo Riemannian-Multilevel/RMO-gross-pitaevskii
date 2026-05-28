@@ -1,11 +1,15 @@
 #include <gpe/lac.h>
 #include <gpe/main/model.h>
-#include <gpe/ropt/fas.h>
+#include <gpe/main/fas.h>
+
+#include <gpe/ropt/solver.h>
 #include <gpe/ropt/descent.h>
+#include <gpe/ropt/manifold.h>
+
 #include <gpe/problem/oracle_coarse.h>
 #include <gpe/problem/gpe.h>
+
 #include <gpe/option.h>
-#include <gpe/ropt/manifold.h>
 
 #include <memory>
 #include <tuple>

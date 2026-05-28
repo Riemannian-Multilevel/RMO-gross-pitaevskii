@@ -128,6 +128,7 @@ public:
     static constexpr int dimension = dim;
     static constexpr auto metric_t = MetricKind::NONE;
 
+    // TODO: move options to base class constructor? (used for all but Frobenius -> no-op)
     GrossPitaevskiiOracle(GrossPitaevskiiFunctional<dim>& func)
         : m_func(func)
         , m_res(func)
@@ -200,20 +201,19 @@ public:
         const double x_residual = this->residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        const double inv_tol = x_residual * options.tol_inner_res;
-        auto info = gradient(x, output, inv_tol);
+        auto info = gradient(x, output, x_residual);
         info.residual = x_residual;
 
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        if (inv_tol > 0) {
-            M_inv.set_tol(inv_tol);
+        if (residual > 0) {
+            M_inv.set_tol(residual * options.tol_inner_res);
         }
 
         timer.start();
@@ -241,6 +241,8 @@ public:
     {
         this->get_M().vmult(dst, src);
     }
+
+    SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
@@ -283,20 +285,19 @@ public:
         const double x_residual = this->residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
-        const double inv_tol = x_residual * options.tol_inner_res;
-        auto info = gradient(x, output, inv_tol);
+        auto info = gradient(x, output, x_residual);
         info.residual = x_residual;
 
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const
     {
         dealii::Timer timer;
         GradInfo info{};
 
-        if (inv_tol > 0) {
-            A_inv.set_tol(inv_tol);
+        if (residual > 0) {
+            A_inv.set_tol(residual * options.tol_inner_res);
         }
 
         timer.start();
@@ -325,6 +326,8 @@ public:
         this->get_A().vmult(dst, src);
     }
 
+    SolverOptions get_options() const { return options; }
+
 private:
     SolverOptions options;
     InverseOpType A_inv;
@@ -340,7 +343,7 @@ public:
     static constexpr const char* id = "F";
     static constexpr auto metric_t = MetricKind::FROBENIUS;
 
-    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func)
+    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions = {})
         : GrossPitaevskiiOracle<dim>(func)
     {}
 
@@ -367,7 +370,7 @@ public:
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double inv_tol) const
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const
     {
         return gradient(x, output);  // no-op
     }
