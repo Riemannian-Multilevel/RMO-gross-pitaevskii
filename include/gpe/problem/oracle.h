@@ -168,6 +168,9 @@ public:
     const auto& get_A()  const { return m_func.get_A(); }
     const auto& get_A0() const { return m_func.get_A0(); }
 
+    InverseOpType& get_M_inv() const { return m_func.get_M_inv(); }
+    InverseOpType& get_A_inv() const { return m_func.get_A_inv(); }
+
 protected:
     GrossPitaevskiiFunctional<dim>& m_func;
 
@@ -185,7 +188,6 @@ public:
     MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : GrossPitaevskiiOracle<dim>(func)
         , options(options)
-        , M_inv(this->get_M(), options)
         , m_norm(this->get_M())
     {}
 
@@ -211,6 +213,7 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
+        auto& M_inv = this->get_M_inv();
 
         if (residual > 0) {
             M_inv.set_tol(residual * options.tol_inner_res);
@@ -246,7 +249,6 @@ public:
 
 private:
     SolverOptions options;
-    InverseOpType M_inv;
 
     EnergyNorm<OperatorType> m_norm;
 };
@@ -262,17 +264,15 @@ public:
     EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
         : GrossPitaevskiiOracle<dim>(func)
         , options(options)
-        , A_inv(this->get_A(), options)
         , m_norm(this->get_A())
-    {
-        A_inv.update_static(this->get_A0());
-    }
+    {}
 
     void update(const Vector<double>& x) override
     {
         GrossPitaevskiiOracle<dim>::update(x);
 
-        A_inv.update_dynamic(this->get_A().diagonal());
+        // TODO: move to GrossPitaevskiiFunctional (with optional update bool?)
+        this->get_A_inv().update_dynamic(this->get_A().diagonal());
     }
 
     /**
@@ -295,6 +295,7 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
+        auto& A_inv = this->get_A_inv();
 
         if (residual > 0) {
             A_inv.set_tol(residual * options.tol_inner_res);
@@ -330,7 +331,6 @@ public:
 
 private:
     SolverOptions options;
-    InverseOpType A_inv;
 
     EnergyNorm<OperatorType> m_norm;
 };

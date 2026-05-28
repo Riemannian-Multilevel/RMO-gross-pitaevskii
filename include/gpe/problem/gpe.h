@@ -264,17 +264,24 @@ template <int dim>
 class GrossPitaevskiiFunctional
 {
 public:
-    GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta)
+    GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
         : system(system)
         , beta(beta)
         , M(system.get_operator_M())
         , A(system.get_operator_A(beta))
-    {}
+        // Instantiate the solvers here so Oracle is a light-weight objects
+        // (that can be instantiated inside loops if necessary)
+        , M_inv(M, options)
+        , A_inv(A, options)
+    {
+        A_inv.update_static(system.get_A0());
+    }
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
     void update(const Vector<double>& x)
     {
         system.assemble_nonlinear_term(x);
+        // A_inv.update_dynamic(A.diagonal()) - left on-demand for consumers
     }
 
     /**
@@ -315,12 +322,18 @@ public:
     const auto& get_A() const { return A; }
     const auto& get_A0() const { return system.get_A0(); }
 
+    InverseOpType& get_M_inv() const { return M_inv; }
+    InverseOpType& get_A_inv() const { return A_inv; }
+
 
 private:
     GrossPitaevskiiSystem<dim>& system;
 
     double beta;
     OperatorType M, A;
+
+    // Marked mutable so const evaluative methods in the Oracles can update inner tolerances
+    mutable InverseOpType M_inv, A_inv;
 };
 
 }

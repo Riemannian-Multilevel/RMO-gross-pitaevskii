@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
                 context.distribute(x0);
 
                 // Define objective in ambient space
-                auto gp = context.get_eval(options.beta);
+                auto gp = context.get_eval(options.beta, options_slv);
                 // Define manifold
                 auto manifold = UnitMassSphere<dim,SparseMatrix<double>>(context.get_M());
                 // Define Riemannian metric

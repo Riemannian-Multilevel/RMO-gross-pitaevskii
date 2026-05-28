@@ -237,13 +237,13 @@ public:
     using coarse_t = MassOracle<dim>;
     using base_t   = CoarseOracleBase<dim, FineOracleType, coarse_t>;
 
-    MassCoarseOracle(base_t& coarse_model, SolverOptions options)
-        : m_model(coarse_model)
-        , m_coarse_res(coarse_model)
+    MassCoarseOracle(base_t& qk, SolverOptions options)
+        : m_model(qk)
+        , m_coarse_res(qk)
         , options(options)
-        , M_coarse(coarse_model.coarse().get_M())
-        , A_coarse(coarse_model.coarse().get_A())
-        , M_inv_coarse(M_coarse, options)
+        , M_coarse(qk.coarse().get_M())
+        , A_coarse(qk.coarse().get_A())
+        , M_inv_coarse(qk.coarse().get_M_inv())
         , m_norm(M_coarse)
     {}
 
@@ -343,7 +343,7 @@ private:
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;
-    InverseOpType M_inv_coarse;
+    InverseOpType &M_inv_coarse;
     EnergyNorm<OperatorType> m_norm;
 };
 
@@ -356,17 +356,15 @@ public:
     using coarse_t = MassOracle<dim>;
     using base_t   = CoarseOracleBase<dim, FineOracleType, coarse_t>;
 
-    MassCoarseOracleEnergyAdaptive(base_t& coarse_model, SolverOptions options)
-        : m_model(coarse_model)
-        , m_coarse_res(coarse_model)
+    MassCoarseOracleEnergyAdaptive(base_t& qk, SolverOptions options)
+        : m_model(qk)
+        , m_coarse_res(qk)
         , options(options)
         , M_coarse(m_model.coarse().get_M())
         , A_coarse(m_model.coarse().get_A())
-        , A_inv_coarse(A_coarse, options)
+        , A_inv_coarse(m_model.coarse().get_A_inv())
         , m_norm(M_coarse)
-    {
-        A_inv_coarse.update_static(m_model.coarse().get_A0());
-    }
+    {}
 
     void update(const Vector<double>& x) override
     {
@@ -461,7 +459,7 @@ private:
     SolverOptions options;
 
     const OperatorType &M_coarse, &A_coarse;
-    InverseOpType A_inv_coarse;
+    InverseOpType &A_inv_coarse;
     EnergyNorm<OperatorType> m_norm;
 };
 
@@ -579,15 +577,14 @@ public:
         , options(options)
         , M_coarse(m_model.coarse().get_M())
         , A_coarse(m_model.coarse().get_A())
-        , A_inv_coarse(A_coarse, options)
-    {
-        A_inv_coarse.update_static(m_model.coarse().get_A0());
-    }
+        , A_inv_coarse(m_model.coarse().get_A_inv())
+    {}
 
     void update(const Vector<double>& x) override
     {
         m_model.coarse().update(x);
 
+        // TODO: move to GrossPitaevskiiFunctional (with optional update bool?)
         A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
@@ -678,7 +675,7 @@ private:
     SolverOptions options;
 
     const OperatorType& M_coarse, &A_coarse;
-    InverseOpType A_inv_coarse;
+    InverseOpType &A_inv_coarse;
 };
 
 } // namespace gpe

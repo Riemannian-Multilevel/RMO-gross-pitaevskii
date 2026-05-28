@@ -63,14 +63,14 @@ public:
     /** @brief Computation of value and derivatives in ambient space.
      * Non-const so calls to GrossPitaevskiiSystem::update() can propagate
      */
-    auto get_eval(double beta)
+    auto get_eval(double beta, SolverOptions options_slv)
     {
-        return GrossPitaevskiiFunctional<dim>(system, beta);
+        return GrossPitaevskiiFunctional<dim>(system, beta, options_slv);
     }
 
-    auto get_eval()
+    auto get_eval(SolverOptions options_slv)
     {
-        return GrossPitaevskiiFunctional<dim>(system, options.beta);
+        return GrossPitaevskiiFunctional<dim>(system, options.beta, options_slv);
     }
 
     unsigned int n_dofs() const { return package.n_dofs(); }
