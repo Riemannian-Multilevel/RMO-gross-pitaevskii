@@ -168,6 +168,7 @@ public:
     const auto& get_A()  const { return m_func.get_A(); }
     const auto& get_A0() const { return m_func.get_A0(); }
 
+    // Oracle getters must remain const so they can be called inside gradient(...) const
     InverseOpType& get_M_inv() const { return m_func.get_M_inv(); }
     InverseOpType& get_A_inv() const { return m_func.get_A_inv(); }
 
@@ -190,11 +191,6 @@ public:
         , options(options)
         , m_norm(this->get_M())
     {}
-
-    void update(const Vector<double>& x) override
-    {
-        GrossPitaevskiiOracle<dim>::update(x);
-    }
 
     /* @brief Computes the Riemannian gradient in the M-metric. */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
@@ -267,14 +263,6 @@ public:
         , m_norm(this->get_A())
     {}
 
-    void update(const Vector<double>& x) override
-    {
-        GrossPitaevskiiOracle<dim>::update(x);
-
-        // TODO: move to GrossPitaevskiiFunctional (with optional update bool?)
-        this->get_A_inv().update_dynamic(this->get_A().diagonal());
-    }
-
     /**
      * @brief Computes the Riemannian gradient in the A-metric.
      * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
@@ -346,11 +334,6 @@ public:
     FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions = {})
         : GrossPitaevskiiOracle<dim>(func)
     {}
-
-    void update(const Vector<double>& x) override
-    {
-        GrossPitaevskiiOracle<dim>::update(x);
-    }
 
     /**
      * @brief Computes the Riemannian gradient in the F-metric.

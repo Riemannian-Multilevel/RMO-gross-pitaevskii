@@ -369,8 +369,6 @@ public:
     void update(const Vector<double>& x) override
     {
         m_model.coarse().update(x);
-
-        A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
     double value(const Vector<double>& x) const override
@@ -583,9 +581,6 @@ public:
     void update(const Vector<double>& x) override
     {
         m_model.coarse().update(x);
-
-        // TODO: move to GrossPitaevskiiFunctional (with optional update bool?)
-        A_inv_coarse.update_dynamic(A_coarse.diagonal());
     }
 
     double value(const Vector<double>& x) const override

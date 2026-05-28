@@ -280,8 +280,11 @@ public:
     // Assembly of the non-linear matrix for value() / directional_derivative()
     void update(const Vector<double>& x)
     {
+        // Updates A, M as references to system
         system.assemble_nonlinear_term(x);
-        // A_inv.update_dynamic(A.diagonal()) - left on-demand for consumers
+
+        // TODO: lazy evaluation for preconditioner updates in A_inv
+        A_inv.update_dynamic(A.diagonal());
     }
 
     /**
@@ -322,8 +325,8 @@ public:
     const auto& get_A() const { return A; }
     const auto& get_A0() const { return system.get_A0(); }
 
-    InverseOpType& get_M_inv() const { return M_inv; }
-    InverseOpType& get_A_inv() const { return A_inv; }
+    InverseOpType& get_M_inv() { return M_inv; }
+    InverseOpType& get_A_inv() { return A_inv; }
 
 
 private:
@@ -333,7 +336,7 @@ private:
     OperatorType M, A;
 
     // Marked mutable so const evaluative methods in the Oracles can update inner tolerances
-    mutable InverseOpType M_inv, A_inv;
+    InverseOpType M_inv, A_inv;
 };
 
 }
