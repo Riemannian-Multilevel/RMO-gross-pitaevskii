@@ -93,7 +93,7 @@ private:
 class OracleBase
 {
 public:
-    static constexpr const char* id = "";
+    virtual const char* id() const { return ""; }
     virtual ~OracleBase() = default;
 
     virtual void update(const Vector<double>& x) = 0;
@@ -186,7 +186,7 @@ template <int dim>
 class MassOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
-    static constexpr const char* id = "M";
+    const char* id() const override { return "M"; }
     static constexpr auto metric_t = MetricKind::MASS;
 
     MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
@@ -259,7 +259,7 @@ template <int dim>
 class EnergyOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
-    static constexpr const char* id = "A";
+    const char* id() const override { return "A"; }
     static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;
 
     EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
@@ -335,7 +335,7 @@ template <int dim>
 class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
-    static constexpr const char* id = "F";
+    const char* id() const override { return "F"; }
     static constexpr auto metric_t = MetricKind::FROBENIUS;
 
     FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions = {})

@@ -74,7 +74,7 @@ public:
         Vector<double> dk(x.size());
 
         // Update the level oracle on the initial guess
-        // TODO: possible mismatch between O_level and T_level defined below
+        // This matches m_objective_mg[level]->update(x)
         O_level.update(x);
 
         if (level == min_level) {
@@ -98,25 +98,25 @@ public:
         }
 
         // Reference coarse oracle for next level
-        // TODO: dependency injection
         TiltOracleType T_coarse(*m_objective_mg[level-1], options_solver_mg[level-1]);
-        TiltOracleType T_level(*m_objective_mg[level], options_solver_mg[level]);
+        TiltOracleType T_level (*m_objective_mg[level],   options_solver_mg[level]);
 
         // Define the coarse model (for levels min_level+1..max_level)
         // Required to evaluate the coarse condition
-        // O_level can either be a descent oracle (oracle.h) or a coarse oracle (oracle_coarse.h)
-        // as defined by the template parameter
         // Note: CoarseOracleBase is problem-independent and only depends on the OracleBase interface
         CoarseOracleBase<dim> qk_base(T_level, T_coarse,
             *m_manifold_mg[level-1], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
         // Evaluation of coarse model
         CoarseModelType qk(qk_base, options_solver_mg[level-1]);
 
+        // T_level.update(x)
+        // TODO: clearly encode that T_level and O_level point to the same GrossPitaevskiiSystem (~Functional)
+
+        bool check_coarse_cond = true;
+
         // Begin (W-)cycle
         for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
-            bool do_coarse_step = false;
-
-            if (i == 0 || i % options_fas.coarse_every == 0) {
+            if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 qk_base.update_model(x);
 
@@ -128,50 +128,51 @@ public:
                 convergence_table.add_value("grad_norm", norm_level);
                 convergence_table.add_value("grad_restr_norm", norm_coarse);
 
+                if (norm_coarse <= options_fas.eps) {
+                    check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
+                }
+
                 // Different values of kappa for different levels?
                 if (norm_coarse >= options_fas.kappa * norm_level && norm_coarse > options_fas.eps) {
-                    do_coarse_step = true;
+                    // Initialize coarse trial point as the restricted fine point
+                    Vector<double> zk = state.y;
+
+                    // Solve the coarse model q_k(zk)
+                    this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, level-1);
+
+#ifdef CPU_TIME
+                    std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
+#endif
+                    m_manifold_mg[level-1]->retract_inv(zk, state.y);
+
+#ifdef CPU_TIME
+                    std::cerr << "[" << timer.cpu_time() << "] coarse: vector prolongation\n";
+#endif
+                    m_vector_transport_mg[level]->vector_prolongation(state.x, state.y, zk, dk);
+
+                    // Pass fine_manifold into cycle_smooth
+                    // -> runs O_level.update(x)
+                    CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x,
+                        dk, timer, options_descent_mg[level]);
+                    info.iter      = i;
+                    info.coarse    = true;
+                    info.lac_iter  = 0;
+
+                    cycle_eval(O_level, x, convergence_table, info);
+                } else {
+                    goto fine_step;
                 }
             }
             else {
                 convergence_table.add_value("grad_restr_norm", 0);
                 convergence_table.add_value("grad_norm", 0);
-            }
-
-            if (do_coarse_step) {
-                // Initialize coarse trial point as the restricted fine point
-                const auto& state = qk_base.get_state();
-                Vector<double> zk = state.y;
-
-                // Solve the coarse model q_k(zk)
-                this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, level-1);
-
-#ifdef CPU_TIME
-                std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
-#endif
-                m_manifold_mg[level-1]->retract_inv(zk, state.y);
-
-#ifdef CPU_TIME
-                std::cerr << "[" << timer.cpu_time() << "] coarse: vector prolongation\n";
-#endif
-                m_vector_transport_mg[level]->vector_prolongation(state.x, state.y, zk, dk);
-
-                // Pass fine_manifold into cycle_smooth
-                // -> runs O_level.update(x)
-                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x,
-                    dk, timer, options_descent_mg[level]);
-                info.iter      = i;
-                info.coarse    = true;
-                info.lac_iter  = 0;
-
-                cycle_eval(O_level, x, convergence_table, info);
-            }
-            else {
+fine_step:
+                // Update gradient
                 auto info_grad = O_level.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
 
-                // 3. Pass fine_manifold into cycle_smooth
+                // Pass fine_manifold into cycle_smooth
                 // -> runs O_fine.update(x)
                 CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x,
                     dk, timer, options_descent_mg[level]);

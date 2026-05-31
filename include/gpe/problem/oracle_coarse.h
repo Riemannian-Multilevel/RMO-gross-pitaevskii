@@ -86,7 +86,7 @@ public:
 
         // Compute coarse (F or M)-gradient
 #ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id << "-coarse gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id() << "-coarse gradient\n";
 #endif
         // Set tolerance for coarse gradient defining the coarse model
         if (model_tol > 0.0) {
@@ -98,7 +98,7 @@ public:
 
         // Compute fine (F or M)-gradient
 #ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id << "-fine gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id() << "-fine gradient\n";
 #endif
         // Set tolerance for fine gradient defining the coarse model
         if (model_tol > 0.0) {
@@ -236,7 +236,7 @@ template <int dim>
 class MassCoarseOracle : public OracleBase
 {
 public:
-    static constexpr const char* id = "MC";
+    const char* id() const override { return "MC"; }
     static constexpr auto metric_t = MetricKind::MASS;
 
     MassCoarseOracle(CoarseOracleBase<dim>& model, SolverOptions options)
@@ -362,7 +362,7 @@ template <int dim>
 class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
-    static constexpr const char* id = "MCA";
+    const char* id() const override { return "MCA"; }
     static constexpr auto metric_t = MetricKind::MASS;
 
     MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim>& model, SolverOptions options)
@@ -489,7 +489,7 @@ template <int dim>
 class FrobeniusCoarseOracle : public OracleBase
 {
 public:
-    static constexpr const char* id = "FC";
+    const char* id() const override { return "FC"; }
     static constexpr auto metric_t = MetricKind::FROBENIUS;
 
     FrobeniusCoarseOracle(CoarseOracleBase<dim>& model)
@@ -591,7 +591,7 @@ template <int dim>
 class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
-    static constexpr const char* id = "FCA";
+    const char* id() const override { return "FCA"; }
     static constexpr auto metric_t = MetricKind::FROBENIUS;
 
     FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim>& model, SolverOptions options)
