@@ -22,6 +22,7 @@ struct CycleInfo
     double   step_size;
     double   elapsed;
     bool     coarse;
+    unsigned level;
 };
 
 
@@ -84,13 +85,14 @@ void cycle_eval(const Oracle& O, const Vector<double>& y,
     const double residual = O.residual(y);
     const double energy   = O.value(y);
 
-    convergence_table.add_value("iter", info.iter);
-    convergence_table.add_value("coarse", info.coarse ? "*" : " ");
+    convergence_table.add_value("iter",     info.iter);
+    convergence_table.add_value("level",    info.level);
+    convergence_table.add_value("coarse",   info.coarse ? "*" : " ");
     convergence_table.add_value("lac_iter", info.lac_iter);
     convergence_table.add_value("residual", residual);
-    convergence_table.add_value("energy", energy);
-    convergence_table.add_value("step",info.step_size);
-    convergence_table.add_value("elapsed",info.elapsed);
+    convergence_table.add_value("energy",   energy);
+    convergence_table.add_value("step",     info.step_size);
+    convergence_table.add_value("elapsed",  info.elapsed);
 }
 
 
@@ -102,7 +104,6 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
     convergence_table.set_precision("step", 4);
     convergence_table.set_precision("elapsed", 4);
 
-    convergence_table.set_scientific("lambda", true);
     convergence_table.set_scientific("residual", true);
     convergence_table.set_scientific("energy", true);
     convergence_table.set_scientific("step", true);
@@ -150,6 +151,7 @@ public:
             info.iter      = i;
             info.coarse    = false;
             info.lac_iter  = info_grad.num_iter;
+            info.level     = 0;
 
             cycle_eval(O_fine, x, convergence_table, info);
         }

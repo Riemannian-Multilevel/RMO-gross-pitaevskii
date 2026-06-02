@@ -47,7 +47,7 @@ function(add_gpe_executable TARGET_NAME)
     target_link_libraries(${TARGET_NAME} ${ARG_LINK_LIBS})
 endfunction()
 
-add_compile_definitions(CPU_TIME)
+#add_compile_definitions(CPU_TIME)
 
 # --- Create targets for executables
 add_gpe_executable(main LINK_LIBS Boost::program_options fmt::fmt)

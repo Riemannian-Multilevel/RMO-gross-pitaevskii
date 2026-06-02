@@ -8,7 +8,6 @@
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/mg_level_object.h>
 
-#include <gpe/lac.h>
 #include <gpe/problem/oracle.h>
 #include <gpe/problem/oracle_coarse.h>
 
@@ -52,12 +51,13 @@ public:
         conv_table_mg.resize(min_level, max_level);
     }
 
-    // TiltOracleType: The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
-    // CoarseModelType: The surrogate descent model (e.g. MassCoarseOracleEnergyAdaptive)
-    // OracleBase&: The oracle used to evaluate the level objective
+    // TiltOracleType:  The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
+    // CoarseModelType: The coarse descent model (e.g. MassCoarseOracleEnergyAdaptive)
+    // OracleBase&:     The oracle used to evaluate the level objective
     template <typename TiltOracleType, typename CoarseModelType>
     void cycle(OracleBase& O_level, Vector<double>& x, unsigned level)
     {
+        std::cerr << "level: " << level << std::endl;
         AssertIndexRange(level - min_level, max_level - min_level + 1);
 
         // Clear and start the clock on finest level
@@ -118,6 +118,8 @@ public:
         for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
             if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
+                // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
+                // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
                 qk_base.update_model(x);
 
                 // Compute coarse condition
@@ -138,7 +140,8 @@ public:
                     Vector<double> zk = state.y;
 
                     // Solve the coarse model q_k(zk)
-                    this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, level-1);
+                    // TODO: pass on ostream (-> callback strategy)
+                    this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, level-1, std::cerr);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -157,6 +160,7 @@ public:
                     info.iter      = i;
                     info.coarse    = true;
                     info.lac_iter  = 0;
+                    info.level     = level;
 
                     cycle_eval(O_level, x, convergence_table, info);
                 } else {
@@ -179,11 +183,14 @@ fine_step:
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
+                info.level     = level;
 
                 cycle_eval(O_level, x, convergence_table, info);
             }
         }
-        timer.stop();
+        if (level == max_level) {
+            timer.stop();
+        }
     }
 
     // TODO: only output on certain levels OR include the current level in the table

@@ -65,7 +65,8 @@ inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 
     // min_level >= 0
     const int min_i = vm["min-level"].as<int>();
-    mg.min_level    = to_unsigned_nonneg(min_i, "min-level");
+    const unsigned min_u = to_unsigned_nonneg(min_i, "min-level");
+    mg.min_level         = (min_u == 0) ? mg.n_levels : min_u;
 
     // max_level >= 0, default n_levels
     const int max_i      = vm["max-level"].as<int>();

@@ -604,7 +604,7 @@ public:
         , A_coarse(gp_coarse.get_A())
         , A_inv_coarse(gp_coarse.get_A_inv())
     {
-        AssertThrow(model.coarse().get_metric == metric_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().get_metric() == metric_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override

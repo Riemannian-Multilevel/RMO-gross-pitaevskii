@@ -24,21 +24,98 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
     if (options_fas.interpol_t == Interpolate::MASS) {
         transfer = std::make_shared<MassTransfer<dim,LinearTransferMatrix<dim>,OperatorType,InverseOpType>>(
             dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
-    } else {
+    }
+    else if (options_fas.interpol_t == Interpolate::NONE) {
         transfer = std::make_shared<LinearTransferMatrix<dim>>(dofs_c, dofs_f, constr_c, constr_f);
+    }
+    else {
+        std::abort();
     }
 
     point_transfer = std::make_shared<ManifoldTransfer<OperatorType>>(*transfer, M_c, M_f);
 
     // TODO: include other operators
-    if (options_fas.transport_t == Transport::MASS) {
+    if (options_fas.transport_t == Transport::FROBENIUS) {
+        vector_transport = std::make_shared<FrobeniusProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::MASS) {
         vector_transport = std::make_shared<MassProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
-    } else {
+    }
+    else if (options_fas.transport_t == Transport::DIFFERENTIAL) {
         vector_transport = std::make_shared<DifferentialTransport<OperatorType>>(*point_transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION) {
+        vector_transport = std::make_shared<AdjointRestrictionTransport<OperatorType, InverseOpType>>(*transfer, M_c, M_f, M_inv_c);
+    }
+    else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION_SCALED) {
+        vector_transport = std::make_shared<AdjointRestrictionTransportScaled<OperatorType, InverseOpType>>(*transfer, M_c, M_f, M_inv_c);
+    }
+    else {
+        std::abort();
     }
 
     return std::make_tuple(transfer, point_transfer, vector_transport);
 }
+
+
+// Reference problem using Riemannian gradient descent
+template <int dim>
+class SingleLevelExperiment
+{
+public:
+    template <typename Potential>
+    SingleLevelExperiment(Potential&& V, unsigned level,
+                          GPE_Options options,
+                          SolverOptions options_slv,
+                          DescentOptions options_gd)
+        : builder(std::make_unique<ModelBuilder<dim>>(V, options, level))
+        , options_slv(options_slv)
+        , options_gd(options_gd)
+    {
+        // 1. Build Physics and Manifold for the single level
+        objective = std::make_shared<GrossPitaevskiiFunctional<dim>>(
+            builder->get_system(), options.beta, options_slv
+        );
+        manifold = std::make_shared<UnitMassSphere<dim, OperatorType>>(
+            objective->get_M()
+        );
+    }
+
+    unsigned n_dofs() const { return builder->n_dofs(); }
+    void distribute(Vector<double>& x) const { builder->distribute(x); }
+
+    void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
+    {
+        std::unique_ptr<OracleBase> oracle;
+
+        // 2. Instantiate the corresponding descent oracle
+        if (metric_t == MetricKind::FROBENIUS) {
+            oracle = std::make_unique<FrobeniusOracle<dim>>(*objective, options_slv);
+        }
+        else if (metric_t == MetricKind::MASS) {
+            oracle = std::make_unique<MassOracle<dim>>(*objective, options_slv);
+        }
+        else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {
+            oracle = std::make_unique<EnergyOracle<dim>>(*objective, options_slv);
+        }
+        else {
+            std::abort();
+        }
+
+        // 3. Execute the single-level gradient descent cycle
+        GradientDescent<dim> solver(*oracle, *manifold, options_gd);
+        solver.cycle(x0, os);
+    }
+
+private:
+    std::unique_ptr<ModelBuilder<dim>>              builder;
+    std::shared_ptr<GrossPitaevskiiFunctional<dim>> objective;
+    std::shared_ptr<ManifoldBase>                   manifold;
+
+    SolverOptions  options_slv;
+    DescentOptions options_gd;
+};
+
 
 template <int dim>
 class MultiLevelExperiment
@@ -72,14 +149,14 @@ public:
             manifold_mg [l] = std::make_shared<UnitMassSphere<dim, OperatorType>>(
                 objective_mg[l]->get_M()
             );
-
         }
 
         // 2. Configure looser bounds for coarse grids
         // TODO: configurable (option.h)
         for (unsigned l = min_level; l < max_level; ++l) {
             options_descent_mg[l].max_iter = 4;
-            options_descent_mg[l].line_search = false;
+            //options_descent_mg[l].line_search = false;
+            // TODO: set options_solver_mg[], options_descent_mg[] per level
         }
 
         // 3. Build Transfer/Transport operators bridging each consecutive level
@@ -110,15 +187,24 @@ public:
     unsigned n_dofs() const { return builders.back()->n_dofs(); }
     void distribute(Vector<double>& x) const { builders.back()->distribute(x); }
 
-    void run(Vector<double>& x0, std::ostream& os)
+    void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
         // Execute the cycle on the finest level
-        // (De-referencing objective_mg since it's a shared_ptr)
         EnergyOracle<dim> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
-        fas_solver->template cycle<MassOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
-            O_fine, x0, max_level, os
-        );
+        if (metric_t == MetricKind::FROBENIUS) {
+            fas_solver->template cycle<FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive<dim>>(
+                O_fine, x0, max_level, os
+            );
+        }
+        else if (metric_t == MetricKind::MASS) {
+            fas_solver->template cycle<MassOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
+                O_fine, x0, max_level, os
+            );
+        }
+        else {
+            std::abort();
+        }
     }
 
 private:
@@ -135,6 +221,7 @@ private:
 
     std::unique_ptr<FullApproximationScheme<dim>> fas_solver;
 };
+
 
 // -------------------------------------------------------------------------
 // Main
@@ -176,15 +263,29 @@ int main(int argc, char* argv[])
             constexpr int dim = T0::value;
             Square<dim> V;
 
-            int n_levels = options_mg.max_level;
+            const unsigned n_levels     = options_mg.max_level;
+            const unsigned n_levels_min = options_mg.min_level == n_levels ? n_levels - 1 : options_mg.min_level;
 
-            MultiLevelExperiment<dim> exp(V, n_levels-1, n_levels, options, options_fas, options_slv, options_gd);
+            if (options_fas.metric_t == MetricKind::NONE) {
+                // Run standard single-level Riemannian gradient descent on the finest level
+                SingleLevelExperiment<dim> exp(V, n_levels, options, options_slv, options_gd);
 
-            Vector<double> x0(exp.n_dofs());
-            x0 = 1.0;
-            exp.distribute(x0);
+                Vector<double> x0(exp.n_dofs());
+                x0 = 1.0;
+                exp.distribute(x0);
 
-            exp.run(x0, std::cout);
+                exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
+            }
+            else {
+                MultiLevelExperiment<dim> exp(V, n_levels_min, n_levels,
+                    options, options_fas, options_slv, options_gd);
+
+                Vector<double> x0(exp.n_dofs());
+                x0 = 1.0;
+                exp.distribute(x0);
+
+                exp.run(x0, options_fas.metric_t, std::cout);
+            }
         });
     }
     catch (std::exception& e) {
