@@ -161,14 +161,14 @@ public:
 
         // 3. Build Transfer/Transport operators bridging each consecutive level
         for (unsigned l = min_level + 1; l <= max_level; ++l) {
-            const auto&   dofs_c= builders[l - min_level - 1]->get_package().get_dofs();
+            const auto&   dofs_c   = builders[l - min_level - 1]->get_package().get_dofs();
             const auto&   constr_c = builders[l - min_level - 1]->get_package().get_constraints();
-            const auto&   M_c= objective_mg[l-1]->get_M();
-            InverseOpType M_inv_c(M_c, options_solver_mg[l-1]);
+            const auto&   M_c      = objective_mg[l-1]->get_M();
+            InverseOpType& M_inv_c = objective_mg[l-1]->get_M_inv();
 
-            const auto& dofs_f = builders[l - min_level]->get_package().get_dofs();
+            const auto& dofs_f   = builders[l - min_level]->get_package().get_dofs();
             const auto& constr_f = builders[l - min_level]->get_package().get_constraints();
-            const auto& M_f= objective_mg[l]->get_M();
+            const auto& M_f   = objective_mg[l]->get_M();
 
             auto [t, pt, vt] = build_transfers(
                 dofs_c, dofs_f, constr_c, constr_f, M_c, M_f, M_inv_c, options_fas);
@@ -228,10 +228,10 @@ private:
 // -------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    GPE_Options    options{};
-    DescentOptions options_gd{};
+    GPE_Options    options    {};
+    DescentOptions options_gd {};
     SolverOptions  options_slv{};
-    MG_Options     options_mg{};
+    MG_Options     options_mg {};
     FAS_Options    options_fas{};
 
     try {
