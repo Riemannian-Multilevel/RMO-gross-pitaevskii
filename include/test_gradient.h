@@ -99,10 +99,7 @@ public:
 
     GradientTestBase(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
         : m_system(system)
-        , A(system.get_operator_A(beta))   // all arguments are lazily evaluated
-        , M(system.get_operator_M())
-        , A_inv(InverseOpType(A, options))
-        , M_inv(InverseOpType(M, options))
+        , m_eval(system, beta, options)
         , m_beta(beta)
     {}
     virtual ~GradientTestBase() = default;
@@ -116,28 +113,29 @@ public:
     void retract(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_retr) const
     {
         v_retr = x;
-        ellipsoid::retract_by_norm(M, v, v_retr);  // input-output vector
+        ellipsoid::retract_by_norm(get_M(), v, v_retr);  // input-output vector
     }
 
     // Special case for x == v
     void retract(const Vector<double>& x, Vector<double>& x_retr) const
     {
         x_retr = x;
-        ellipsoid::retract_by_norm(M, x_retr);
+        ellipsoid::retract_by_norm(get_M(), x_retr);
     }
 
     double constraint_value(const Vector<double>& x) const
     {
         Vector<double> Mx(x.size());
-        this->M.vmult(Mx, x);
+        get_M().vmult(Mx, x);
+
         return x*Mx;
     }
 
-    auto get_A()     const { return A; }
-    auto get_M()     const { return M; }
-    auto get_A_inv() const { return A_inv; }
-    auto get_M_inv() const { return M_inv; }
-    auto n_dofs()    const { return A.m(); }
+    const auto& get_A() const { return m_eval.get_A(); }
+    const auto& get_M() const { return m_eval.get_M(); }
+    const auto& get_A_inv() const { return m_eval.get_A_inv(); }
+    const auto& get_M_inv() const { return m_eval.get_M_inv(); }
+    unsigned n_dofs() const { return m_eval.n_dofs(); }
 
     virtual void random_point(Vector<double>& x) const = 0;  // virtual for problems with parameters (i.e. coarse model, w, phi)
     virtual void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const = 0;
@@ -148,10 +146,10 @@ public:
     virtual Vector<double> gradient(const Vector<double>&) const = 0;
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
 
+
 protected:
-    GrossPitaevskiiSystem<dim>& m_system;
-    OperatorType A, M;
-    InverseOpType A_inv, M_inv;
+    GrossPitaevskiiSystem<dim> &m_system;
+    GrossPitaevskiiFunctional<dim> m_eval;
     double m_beta;
 };
 
@@ -162,26 +160,22 @@ class GradientTest : public GradientTestBase<dim>
 public:
     GradientTest(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
         : GradientTestBase<dim>(system, beta, options)
-        , m_eval(system, beta)
     {}
 
     double value(const Vector<double>& x) const override
     {
-        return m_eval.value(x);
+        return this->m_eval.value(x);
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return m_eval.directional_derivative(x, z);
+        return this->m_eval.directional_derivative(x, z);
     }
 
     void random_point(Vector<double>& x) const override
     {
-        ellipsoid::random_point(x, this->M);
+        ellipsoid::random_point(x, this->get_M());
     }
-
-private:
-    GrossPitaevskiiFunctional<dim> m_eval;
 };
 
 
@@ -194,7 +188,8 @@ public:
     Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::energy::gradient(this->A_inv, this->M, x, x_grad);
+        ellipsoid::energy::gradient(this->get_A_inv(), this->get_M(), x, x_grad);
+
         return x_grad;
     }
 
@@ -202,18 +197,19 @@ public:
     {
         AssertDimension(y.size(), z.size());
         Vector<double> Az(z.size());
-        this->A.vmult(Az, z);
+        this->get_A().vmult(Az, z);
+
         return y*Az;
     }
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
-        ellipsoid::energy::project_onto_tangent_space(this->A_inv, x, this->M, v, v_proj);
+        ellipsoid::energy::project_onto_tangent_space(this->get_A_inv(), x, this->get_M(), v, v_proj);
     }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
     {
-        ellipsoid::energy::random_tangent_vector(this->A_inv, x, this->M, v);
+        ellipsoid::energy::random_tangent_vector(this->get_A_inv(), x, this->get_M(), v);
     }
 };
 
@@ -227,7 +223,8 @@ public:
     Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::mass::gradient(this->M_inv, this->A, this->M, x, x_grad);
+        ellipsoid::mass::gradient(this->get_M_inv(), this->get_A(), this->get_M(), x, x_grad);
+
         return x_grad;
     }
 
@@ -235,18 +232,19 @@ public:
     {
         AssertDimension(y.size(), z.size());
         Vector<double> Mz(z.size());
-        this->M.vmult(Mz, z);
+        this->get_M().vmult(Mz, z);
+
         return y*Mz;
     }
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::mass::project_onto_tangent_space(x, this->M, v, v_proj);
+        ellipsoid::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
     {
-        ellipsoid::mass::random_tangent_vector(x, this->M, v);
+        ellipsoid::mass::random_tangent_vector(x, this->get_M(), v);
     }
 };
 
@@ -260,7 +258,7 @@ public:
     Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::frobenius::gradient(this->A, this->M, x, x_grad);
+        ellipsoid::frobenius::gradient(this->get_A(), this->get_M(), x, x_grad);
         return x_grad;
     }
 
@@ -273,12 +271,12 @@ public:
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
     {
-        ellipsoid::frobenius::random_tangent_vector(x, this->M, v);
+        ellipsoid::frobenius::random_tangent_vector(x, this->get_M(), v);
     }
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, v, v_proj);
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 };
 
@@ -302,14 +300,12 @@ public:
                        const Vector<double>& phi,   // base point (restricted point)
                        const Vector<double>& w)     // correction term (restricted gradient difference)
         : GradientTestBase<dim>(system, beta, options)
-        , m_eval(system, beta)
         , m_phi(phi)
         , m_w(w)
     {}
 
     GradientTestCoarse(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
         : GradientTestBase<dim>(system, beta, options)
-        , m_eval(system, beta)
         , m_phi(system.n_dofs())
         , m_w(system.n_dofs())
     {}
@@ -324,8 +320,8 @@ public:
     // have different implementations per coarse-model, due to the correction vector computed
     // in different metrics.
 
+
 protected:
-    GrossPitaevskiiFunctional<dim> m_eval;
     Vector<double> m_phi, m_w;  // copy stored for flipping sign
 };
 
@@ -344,18 +340,18 @@ public:
     {
         const double energy = this->m_eval.value(x);
 
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M, energy);
+        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->get_M(), energy);
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const final
     {
-        return coarse::mass::directional_derivative(x, this->m_phi, this->m_w, z, this->M, this->A);
+        return coarse::mass::directional_derivative(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
     }
 
     Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> q_grad(x.size());
-        coarse::mass::gradient(this->M, this->M_inv, this->A, x, this->m_phi, this->m_w, q_grad);
+        coarse::mass::gradient(this->get_M(), this->get_M_inv(), this->get_A(), x, this->m_phi, this->m_w, q_grad);
 
         return q_grad;
     }
@@ -365,13 +361,14 @@ public:
     {
         AssertDimension(y.size(), z.size());
         Vector<double> Mz(z.size());
-        this->M.vmult(Mz, z);
+        this->get_M().vmult(Mz, z);
+
         return y*Mz;
     }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
     {
-        ellipsoid::mass::random_tangent_vector(x, this->M, v);
+        ellipsoid::mass::random_tangent_vector(x, this->get_M(), v);
     }
 
     // Generate a random point x safely in the neighborhood of phi
@@ -389,7 +386,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
-        ellipsoid::mass::project_onto_tangent_space(x, this->M, v, v_proj);
+        ellipsoid::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 };
 
@@ -404,20 +401,21 @@ public:
     {
         const double energy = this->m_eval.value(x);
 
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
+        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->get_M(), energy);
     }
 
     double directional_derivative(const dealii::Vector<double>& x, const dealii::Vector<double>& z) const override
     {
-        return coarse::frobenius::directional_derivative(x, this->m_phi, this->m_w, z, this->M, this->A);
+        return coarse::frobenius::directional_derivative(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
     }
 
     Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> q_grad(x.size());
         // Pure F-metric gradient of the coarse model
-        coarse::frobenius::gradient(this->M, this->A,
+        coarse::frobenius::gradient(this->get_M(), this->get_A(),
             x, this->m_phi, this->m_w, q_grad);
+
         return q_grad;
     }
 
@@ -431,7 +429,8 @@ public:
     {
         Vector<double> tmp(v.size());
         normrnd(this->mean, this->stddev, tmp);
-        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, tmp, v);
+
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->get_M(), tmp, v);
     }
 
     void random_point(Vector<double>& x) const final
@@ -447,7 +446,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
-        ellipsoid::frobenius::project_onto_tangent_space(x, this->M, v, v_proj);
+        ellipsoid::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 };
 

@@ -6,6 +6,7 @@
 #include <gpe/problem/oracle.h>
 #include <fstream>
 #include <fmt/format.h>
+#include <deal.II/base/convergence_table.h>
 
 #define NUM_TRIALS 50
 

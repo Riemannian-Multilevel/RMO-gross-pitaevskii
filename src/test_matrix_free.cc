@@ -101,7 +101,7 @@ int main()
         ModelBuilder<DIM> model(Square<DIM>(), options, level);
 
         auto& system = model.get_system();
-        const auto& eval = model.get_eval(options.beta);
+        const auto& eval = model.get_eval(options.beta, SolverOptions{});
         const unsigned n_dofs = model.n_dofs();
 
         // Average time over trials for value() + assembly, and value_matrix_free()
