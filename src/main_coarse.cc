@@ -266,9 +266,13 @@ int main(int argc, char* argv[])
             const unsigned n_levels     = options_mg.max_level;
             const unsigned n_levels_min = options_mg.min_level == n_levels ? n_levels - 1 : options_mg.min_level;
 
+            auto potential_v = get_potential<dim>(options.potential);
+
             if (options_fas.metric_t == MetricKind::NONE) {
                 // Run standard single-level Riemannian gradient descent on the finest level
-                SingleLevelExperiment<dim> exp(V, n_levels, options, options_slv, options_gd);
+                auto exp = std::visit([&](auto&& arg) {
+                    return SingleLevelExperiment<dim>(arg, n_levels, options, options_slv, options_gd);
+                }, potential_v);
 
                 Vector<double> x0(exp.n_dofs());
                 x0 = 1.0;
@@ -277,8 +281,10 @@ int main(int argc, char* argv[])
                 exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
             }
             else {
-                MultiLevelExperiment<dim> exp(V, n_levels_min, n_levels,
-                    options, options_fas, options_slv, options_gd);
+                auto exp = std::visit([&](auto&& arg) {
+                    return MultiLevelExperiment<dim>(arg, n_levels_min, n_levels,
+                        options, options_fas, options_slv, options_gd);
+                }, potential_v);
 
                 Vector<double> x0(exp.n_dofs());
                 x0 = 1.0;

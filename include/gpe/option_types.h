@@ -47,7 +47,8 @@ enum class MeshKind
 // TODO: support more complicated potentials
 enum class Potential
 {
-    SQUARE
+    SQUARE,
+    OPTICAL_LATTICE
 };
 
 // TODO: Merge CoarseMetric + SmoothKind -> MetricKind
@@ -121,7 +122,7 @@ struct GPE_Options
     Ordering order;         // ordering for degrees of freedom
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
-    double reference;       // reference minimum energy for table output
+    Potential potential;    // used potential V for matrix M_V
 };
 
 struct FAS_Options

@@ -7,6 +7,7 @@
 #include <gpe/ropt/transport.h>
 
 #include <deal.II/base/timer.h>
+#include <numbers>
 
 namespace gpe
 {
@@ -33,8 +34,50 @@ public:
 };
 
 
+template <int dim>
+class OpticalLattice
+{
+public:
+    explicit OpticalLattice(const double nu = 100)
+        : m_nu(nu)
+    {}
+
+    double operator()(const Point<dim>& p) const
+    {
+        typename Point<dim>::value_type out = 0.0;
+
+        for (unsigned d = 0; d < dim; d++) {
+            const double spx = std::sin(0.5*std::numbers::pi*p[d]);
+            out += 0.5*p[d]*p[d] + m_nu*spx*spx;
+        }
+        return out;
+    }
+
+private:
+    const double m_nu;
+};
+
+
+template <int dim>
+using PVar = std::variant<Square<dim>, OpticalLattice<dim>>;
+
+template <int dim>
+PVar<dim>
+get_potential(Potential potential_t) {
+    switch (potential_t)
+    {
+        case Potential::SQUARE:
+            return Square<dim>();
+        case Potential::OPTICAL_LATTICE:
+            return OpticalLattice<dim>();
+        default:
+            throw std::invalid_argument("Unknown potential type");
+    }
+}
+
+
 // Fields for gradient computation with inner solver
-// TODO: mvoe to option_types.h?
+// TODO: move to option_types.h?
 struct GradInfo
 {
     double residual;
