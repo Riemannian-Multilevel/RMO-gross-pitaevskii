@@ -26,6 +26,7 @@ BOOST_DESCRIBE_STRUCT(FAS_Options, (),
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
+BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
@@ -99,8 +100,8 @@ inline po::options_description gpe_cli_options() {
             "non-linearity factor")
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
             "type of mesh elements used (quadrilateral|simplex)")
-        ("reference", po::value<double>()->default_value(-1.0),
-            "reference solution for table output");
+        ("potential", po::value<std::string>()->default_value("square"),
+            "used potential (square|optical_lattice)");
     return d;
 }
 
@@ -108,15 +109,16 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     const auto order_str    = upper(vm["order"].as<std::string>());
     const auto boundary_str = upper(vm["boundary"].as<std::string>());
     const auto mesh_str     = upper(vm["mesh"].as<std::string>());
+    const auto potential_str= upper(vm["potential"].as<std::string>());
 
     options.order     = string_to_enum<Ordering>(order_str);
     options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
     options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
+    options.potential = string_to_enum<Potential>(potential_str);
     options.degree    = vm["degree"].as<int>();
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
-    options.reference = vm["reference"].as<double>();
 }
 
 
