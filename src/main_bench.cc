@@ -126,7 +126,7 @@ int main()
                         TimerOutput::Scope t(timer_ref, "Solve - ref " + std::to_string(ref));
 
                         // New Architecture Pipeline
-                        auto gp_func = builder[ref]->get_eval(options.beta);
+                        auto gp_func = builder[ref]->get_eval(options.beta, options_slv_level[ref]);
                         UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
                         EnergyOracle<dim> oracle(gp_func, options_slv_level[ref]);
 
@@ -152,7 +152,7 @@ int main()
                 std::cout << "\nSOLVE - fine (Cold Start)\n";
                 std::ofstream file("solve_ref_max_cold.csv");
 
-                auto gp_func = builder[ref_max]->get_eval(options.beta);
+                auto gp_func = builder[ref_max]->get_eval(options.beta, options_slv_level[ref_max]);
                 UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
                 EnergyOracle<dim> oracle(gp_func, options_slv);
 

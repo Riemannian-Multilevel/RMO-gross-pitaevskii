@@ -343,17 +343,17 @@ public:
     const auto& get_A() const { return A; }
     const auto& get_A0() const { return system.get_A0(); }
 
+    const InverseOpType& get_M_inv() const { return M_inv; }
     InverseOpType& get_M_inv() { return M_inv; }
+
+    const InverseOpType& get_A_inv() const { return A_inv; }
     InverseOpType& get_A_inv() { return A_inv; }
 
 
 private:
     GrossPitaevskiiSystem<dim>& system;
-
     double beta;
     OperatorType M, A;
-
-    // Marked mutable so const evaluative methods in the Oracles can update inner tolerances
     InverseOpType M_inv, A_inv;
 };
 
