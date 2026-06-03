@@ -4,6 +4,7 @@
 #include <gpe/problem/gpe.h>
 #include <gpe/problem/oracle.h>
 #include <gpe/option_types.h>
+#include <gpe/main/model.h>
 
 #include "test_gradient.h"
 #include <fmt/format.h>
@@ -97,9 +98,11 @@ int main()
 
     for (unsigned level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
         dealii::Timer timer;
-        GrossPitaevskiiSimulator<DIM, EnergyOracle<DIM>> simulator(Square<DIM>(), options, level);
-        const auto& problem = simulator.get_problem();
-        const unsigned n_dofs = simulator.n_dofs();
+        ModelBuilder<DIM> model(Square<DIM>(), options, level);
+
+        auto& system = model.get_system();
+        const auto& eval = model.get_eval(options.beta);
+        const unsigned n_dofs = model.n_dofs();
 
         // Average time over trials for value() + assembly, and value_matrix_free()
         time_value[level].reserve(NUM_TRIALS);
@@ -109,11 +112,11 @@ int main()
         for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
             double value, value_matrix_free;
             Vector<double> x(n_dofs);
-            ellipsoid::random_point(x, simulator.get_M(), MEAN, STDDEV);
+            ellipsoid::random_point(x, model.get_M(), MEAN, STDDEV);
 
             { // Value through sparse matrix-vector products
                 auto begin_t = timer.cpu_time();
-                value_matrix_free = get_energy(simulator.get_dofs(), x, problem.get_A0(), options.beta);
+                value_matrix_free = get_energy(model.get_dofs(), x, system.get_A0(), options.beta);
 
                 auto end_t = timer.cpu_time();
                 time_value_matrix_free[level].push_back(end_t - begin_t);
@@ -121,8 +124,8 @@ int main()
 
             { // Value through matrix-free implementation
                 auto begin_t = timer.cpu_time();
-                problem.assemble_nonlinear_term(x);
-                value = problem.value(x, options.beta);
+                system.assemble_nonlinear_term(x);
+                value = eval.value(x);
 
                 auto end_t = timer.cpu_time();
                 time_value[level].push_back(end_t - begin_t);

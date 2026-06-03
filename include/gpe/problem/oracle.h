@@ -4,6 +4,9 @@
 #include <gpe/lac.h>
 #include <gpe/problem/gpe.h>
 #include <gpe/ropt/manifold.h>
+#include <gpe/ropt/transport.h>
+
+#include <deal.II/base/timer.h>
 
 namespace gpe
 {
@@ -21,6 +24,7 @@ class Square
 public:
     double operator()(const Point<dim>& p) const {
         typename Point<dim>::value_type out = 0.0;
+
         for (unsigned d = 0; d < dim; d++) {
             out += p[d]*p[d];
         }
@@ -29,454 +33,354 @@ public:
 };
 
 
-// TODO: refactor into UnitMassSphere (<- Manifold) and GrossPitaevskiiOracle (<- A, M and inverses)
-/**
- * @brief Base Oracle for the Gross-Pitaevskii energy functional.
- * This class translates physical concepts (matrices and assembly) into optimization concepts
- * (functional values and gradients) for use in Riemannian descent algorithms.
- *
- * @tparam dim The spatial dimension of the problem.
- */
+// Fields for gradient computation with inner solver
+// TODO: mvoe to option_types.h?
+struct GradInfo
+{
+    double residual;
+    unsigned num_iter;
+    double tolerance;
+    double elapsed_time;
+};
+
+
 template <int dim>
+class GrossPitaevskiiResidual
+{
+public:
+    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
+        : m_func(m_func)
+        , m_norm(m_func.get_M())
+    {}
+
+    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func, OperatorType op)
+        : m_func(m_func)
+        , m_norm(op)
+    {}
+
+    Vector<double> residual_vector(const Vector<double>& x) const
+    {
+        Vector<double> Mx(x.size());
+        m_func.get_M().vmult(Mx, x);
+
+        const double mass = x * Mx;             // should be ~ 1 (energy constraint)
+        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
+
+        Vector<double> Ax(x.size());         // A x
+        m_func.get_A().vmult(Ax, x);
+
+        const double lambda = x * Ax / mass;    // Rayleigh quotient (x'Ax / x'Mx)
+
+        Vector<double> r(Ax);
+        r.add(-lambda, Mx);                     // r = A x - lambda M x
+
+        return r;
+    }
+
+    double residual(const Vector<double>& x) const
+    {
+        return m_norm(residual_vector(x));
+    }
+
+private:
+    const GrossPitaevskiiFunctional<dim>& m_func;
+
+    SpdNorm<OperatorType> m_norm;
+};
+
+
+// Basic oracle interface
 class OracleBase
 {
 public:
-    static constexpr int dimension = dim;
-    static constexpr const char* id = "";
-
-    /**
-     * @brief Constructs the Oracle by referencing an existing GPE problem.
-     * @note The Oracle holds a reference; the Problem object must outlive this Oracle.
-     */
-    // The discretization GrossPitaevskiiProblem is used to define (references to) the matrices used, being
-    //  A, M, A_inv, M_inv, as well as updating the underlying state for new incumbent solutions x -> A_x -> A_x_inv.
-    // TODO: separate the problem state from the geometry (retract, ...) and value evaluation (value, gradient, ...)
-    OracleBase(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : problem(problem_)
-        , beta(beta_)
-        , options(options_)
-        , A(problem.get_operator_A(beta))
-        , M(problem.get_operator_M())
-    {}
-
+    virtual const char* id() const { return ""; }
     virtual ~OracleBase() = default;
-    virtual MetricKind get_metric() const { return MetricKind::NONE; }
 
-    /**
-     * @brief Updates the problem state and preconditioner for a new evaluation point.
-     */
-    virtual void update(const Vector<double>& x) const
-    {
-        problem.assemble_nonlinear_term(x);
-    }
+    virtual void update(const Vector<double>& x) = 0;
 
-    /**
-     * @brief Retracts a tangent vector back to the unit-mass manifold.
-     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
-     */
-    void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const
-    {
-        ellipsoid::retract_by_norm(M, z, x, factor);
-    }
-
-    void retract(const Vector<double>& z, const Vector<double>& x,
-                 Vector<double>& output, double factor = 1.0) const
-    {
-        output = x;
-        retract(z, output, factor);
-    }
-
-    // Accessors
-    const auto& get_M() const { return M; }
-    const auto& get_A() const { return A; }
-
-    SolverOptions get_options() const { return options; }
-    double get_beta() const { return beta; }
-    unsigned n_dofs() const { return problem.n_dofs(); }
-
-    // Pure virtual interface
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_assembly`
     virtual double value(const Vector<double>&) const = 0;
 
     // TODO: Compute directional derivative and Riemannian gradient successively
-    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const
-    {
-        throw dealii::ExcNotImplemented();
-    }
+    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const = 0;
+
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
-    virtual unsigned gradient(const Vector<double>&, Vector<double>&) const = 0;
-    virtual iteration::State residual(const Vector<double>&) const = 0;
+    virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
+    virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;  // method for setting tolerance
 
-protected:
-    const GrossPitaevskiiProblem<dim>& problem;
-    double beta;
-    SolverOptions options;
-    OperatorType A, M;
+    // TODO: move this to a separate interface? (-> class Metric)
+    virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
+    virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
+    // TODO: improve name
+    virtual void apply_metric(const Vector<double>&, Vector<double>&) const = 0;
+    virtual MetricKind get_metric() const { return MetricKind::NONE; }
+    virtual unsigned n_dofs() const = 0;
+
+    // TODO: move this to a separate interface? (-> class Residual or GrossPitaevskiiFunctional)
+    virtual double residual(const Vector<double>&) const = 0;
 };
 
 
+// Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
 template <int dim>
-class MassOracle : public OracleBase<dim>
+class GrossPitaevskiiOracle : public OracleBase
 {
 public:
-    static constexpr const char* id = "M";
-    static constexpr auto metric = MetricKind::MASS;
+    static constexpr int dimension = dim;
+    static constexpr auto metric_t = MetricKind::NONE;
 
-    MassOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , M_inv(this->M, options_) // Specialized member
+    // TODO: move options to base class constructor? (used for all but Frobenius -> no-op)
+    GrossPitaevskiiOracle(GrossPitaevskiiFunctional<dim>& func)
+        : m_func(func)
+        , m_res(func)
     {}
 
-    MetricKind get_metric() const override { return metric; }
+    virtual ~GrossPitaevskiiOracle() = default;
 
-    /**
-      * @brief Computes the Gross-Pitaevskii energy functional value.
-      * $$ E(\phi) = \langle \phi, A_0 \phi \rangle + \frac{\beta}{2} \langle \phi, M_{pp}(\phi) \phi \rangle $$
-    */
+    // Function evaluation
+    void update(const Vector<double>& x) override
+    {
+        m_func.update(x);
+    }
+
     double value(const Vector<double>& x) const override
     {
-        return this->problem.value(x, this->beta);
+        return m_func.value(x);
     }
 
-    // Metric-free implementation
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return this->problem.directional_derivative(x, z, this->beta);
+        return m_func.directional_derivative(x, z);
     }
 
-    /**
-     * @brief Computes the Riemannian gradient in the M-metric.
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    unsigned n_dofs() const override
     {
-        if (m_res.residual > 0) {
-            M_inv.set_tol(m_res.residual*this->options.tol_inner_res);
-        }
-        ellipsoid::mass::gradient(M_inv, this->A, this->M, x, output);
-        return M_inv.control().last_step();
+        return m_func.n_dofs();
     }
 
-    iteration::State residual(const Vector<double>& x) const override
+    // Residual evaluation
+    double residual(const Vector<double>& x) const override
     {
-        m_res = iteration::residual(x, this->A, this->M);
-        return m_res;
+        return m_res.residual(x);
     }
 
-private:
-    InverseOpType M_inv;
-    mutable iteration::State m_res;
+    // Shared accessors
+    const auto& get_M()  const { return m_func.get_M(); }
+    const auto& get_A()  const { return m_func.get_A(); }
+    const auto& get_A0() const { return m_func.get_A0(); }
+
+    // Oracle getters must remain const so they can be called inside gradient(...) const
+    InverseOpType& get_M_inv() const { return m_func.get_M_inv(); }
+    InverseOpType& get_A_inv() const { return m_func.get_A_inv(); }
+
+protected:
+    GrossPitaevskiiFunctional<dim>& m_func;
+
+    const GrossPitaevskiiResidual<dim> m_res;
 };
 
 
 template <int dim>
-class EnergyOracle : public OracleBase<dim>
+class MassOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
-    static constexpr const char* id = "A";
-    static constexpr auto metric = MetricKind::ENERGY_ADAPTIVE;
+    const char* id() const override { return "M"; }
+    static constexpr auto metric_t = MetricKind::MASS;
 
-    EnergyOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : OracleBase<dim>(problem_, beta_, options_)
-        , A_inv(this->A, options_) // Specialized member
+    MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
+        : GrossPitaevskiiOracle<dim>(func)
+        , options(options)
+        , m_norm(this->get_M())
+    {}
+
+    /* @brief Computes the Riemannian gradient in the M-metric. */
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        A_inv.update_static(this->problem.get_A0());
+        // TODO: include residual in CPU time evaluation
+        const double x_residual = this->residual(x);
+        Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
+
+        auto info = gradient(x, output, x_residual);
+        info.residual = x_residual;
+
+        return info;
     }
 
-    MetricKind get_metric() const override { return metric; }
-
-    void update(const Vector<double>& x) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
-        OracleBase<dim>::update(x); // Calls assembly
-        A_inv.update_dynamic(this->A.diagonal());
+        dealii::Timer timer;
+        GradInfo info{};
+        auto& M_inv = this->get_M_inv();
+
+        if (residual > 0) {
+            M_inv.set_tol(residual * options.tol_inner_res);
+        }
+
+        timer.start();
+        ellipsoid::mass::gradient(M_inv, this->get_A(), this->get_M(), x, output);
+
+        info.num_iter     = M_inv.control().last_step();
+        info.tolerance    = M_inv.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
+
+        timer.stop();
+        return info;
     }
 
-    /**
-     * @brief Computes the Gross-Pitaevskii energy functional value.
-     * $$ E(\phi) = \langle \phi, A_0 \phi \rangle + \frac{\beta}{2} \langle \phi, M_{pp}(\phi) \phi \rangle $$
-     */
-    double value(const Vector<double>& x) const override
+    double norm(const Vector<double>& v) const override
     {
-        return this->problem.value(x, this->beta);
+        return m_norm(v);
     }
 
-    // Metric-free implementation
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return this->problem.directional_derivative(x, z, this->beta);
+        return m_norm(x, z);
     }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        this->get_M().vmult(dst, src);
+    }
+
+    MetricKind get_metric() const override { return metric_t; }
+
+    SolverOptions get_options() const { return options; }
+
+private:
+    SolverOptions options;
+
+    SpdNorm<OperatorType> m_norm;
+};
+
+
+template <int dim>
+class EnergyOracle : public GrossPitaevskiiOracle<dim>
+{
+public:
+    const char* id() const override { return "A"; }
+    static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;
+
+    EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
+        : GrossPitaevskiiOracle<dim>(func)
+        , options(options)
+        , m_norm(this->get_A())
+    {}
 
     /**
      * @brief Computes the Riemannian gradient in the A-metric.
      * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        if (m_res.residual > 0) {
-            this->A_inv.set_tol(m_res.residual*this->options.tol_inner_res);
-        }
-        ellipsoid::energy::gradient(this->A_inv, this->M, x, output);
-        return this->A_inv.control().last_step();
+        // TODO: include residual in CPU time evaluation
+        const double x_residual = this->residual(x);
+        Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
+
+        auto info = gradient(x, output, x_residual);
+        info.residual = x_residual;
+
+        return info;
     }
 
-    iteration::State residual(const Vector<double>& x) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const override
     {
-        m_res = iteration::residual(x, this->A, this->M);
-        return m_res;
+        dealii::Timer timer;
+        GradInfo info{};
+        auto& A_inv = this->get_A_inv();
+
+        if (residual > 0) {
+            A_inv.set_tol(residual * options.tol_inner_res);
+        }
+
+        timer.start();
+        ellipsoid::energy::gradient(A_inv, this->get_M(), x, output);
+
+        info.num_iter     = A_inv.control().last_step();
+        info.tolerance    = A_inv.control().tolerance();
+        info.elapsed_time = timer.cpu_time();
+
+        timer.stop();
+        return info;
     }
+
+    double norm(const Vector<double>& x) const override
+    {
+        return m_norm(x);
+    }
+
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
+    {
+        return m_norm(x, z);
+    }
+
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
+    {
+        this->get_A().vmult(dst, src);
+    }
+
+    MetricKind get_metric() const override { return metric_t; }
+
+    SolverOptions get_options() const { return options; }
 
 private:
-    mutable InverseOpType A_inv; // Moved from Base
-    mutable iteration::State m_res;
+    SolverOptions options;
+
+    SpdNorm<OperatorType> m_norm;
 };
 
 
 template <int dim>
-class FrobeniusOracle : public OracleBase<dim>
+class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
 {
 public:
-    static constexpr const char* id = "F";
-    using OracleBase<dim>::OracleBase;
-    static constexpr auto metric = MetricKind::FROBENIUS;
+    const char* id() const override { return "F"; }
+    static constexpr auto metric_t = MetricKind::FROBENIUS;
 
-    MetricKind get_metric() const override { return metric; }
-
-    /**
-     * @brief Computes the Gross-Pitaevskii energy functional value.
-     */
-    double value(const Vector<double>& x) const override
-    {
-        return this->problem.value(x, this->beta);
-    }
-
-    // Metric-free implementation
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return this->problem.directional_derivative(x, z, this->beta);
-    }
+    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions = {})
+        : GrossPitaevskiiOracle<dim>(func)
+    {}
 
     /**
      * @brief Computes the Riemannian gradient in the F-metric.
      * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
      */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
-        ellipsoid::frobenius::gradient(this->A, this->M, x, output);
+        dealii::Timer timer;
+        GradInfo info{};
+
+        timer.start();
+        ellipsoid::frobenius::gradient(this->get_A(), this->get_M(), x, output);
+        timer.stop();
 
         // F-gradient evaluation does not involve a linear solver.
-        return 0;
+        info.elapsed_time = timer.cpu_time();
+        return info;
     }
 
-    /**
-     * @brief Evaluates the current optimization state.
-     */
-    iteration::State residual(const Vector<double>& x) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double) const override
     {
-        m_res = iteration::residual(x, this->A, this->M, false);
-        return m_res;
+        return gradient(x, output);  // no-op
     }
 
-private:
-    mutable iteration::State m_res;
-};
-
-
-// Coarse oracles provide some additional functionality, such as a shift vector (m_w), base coarse point (m_phi)
-// and methods for evaluating a coarse condition
-// TODO: instead of inheriting from OracleBase (which, in its current form, is fixed to a single level of discretization),
-//       define a constructor which allows a fine and coarse level of discretization.
-//       Then, the tilt vector w canm be computed directly inside an (implementation of) CoarseOracleBase.
-template <int dim>
-class CoarseOracleBase : public OracleBase<dim>
-{
-public:
-    static constexpr const char* id = "C";
-    // TODO: abuse of notation: Galerkin condition vs. metric used for the shift w, dot product <w,.> and coarse condition
-    using OracleBase<dim>::OracleBase;
-
-    MetricKind get_metric() const override { return MetricKind::NONE; }
-
-    void update_parameters(const Vector<double>& w_new, const Vector<double>& phi_new)
+    double norm(const Vector<double>& v) const override
     {
-        m_w = w_new;
-        m_phi = phi_new;
+        return std::sqrt(v*v);
     }
 
-    iteration::State residual(const Vector<double>& x) const final
+    double metric(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return {.energy=this->value(x)};
+        return x*z;
     }
 
-protected:
-    Vector<double> m_w;
-    Vector<double> m_phi;
-};
+    MetricKind get_metric() const override { return metric_t; }
 
-
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
-//       moving the computation of m_w here requires both a fine and coarse OracleBase
-//       (-> GrossPitaevskiiProblem for coarse and fine discretizations)
-template <int dim>
-class MassCoarseOracle : public CoarseOracleBase<dim>
-{
-public:
-    static constexpr const char* id = "MC";
-    static constexpr auto metric = MetricKind::MASS;
-
-    MassCoarseOracle(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : CoarseOracleBase<dim>(problem_, beta_, options_)
-        , M_inv(this->M, options_) // Specialized member
-    {}
-
-    MetricKind get_metric() const override { return metric; }
-
-    double value(const Vector<double>& x) const final
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
     {
-        const double energy = this->problem.value(x, this->beta);
-
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M, energy);
+        dst = src;
     }
-
-    /**
-     * @brief Computes the coarse model gradient in the M-metric.
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
-    {
-        coarse::mass::gradient(this->M, M_inv, this->A, x, this->m_phi, this->m_w, output);
-
-        return M_inv.control().last_step();
-    }
-
-private:
-    InverseOpType M_inv;
-};
-
-
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
-template <int dim>
-class MassCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim>
-{
-public:
-    static constexpr const char* id = "MCA";
-    static constexpr auto metric = MetricKind::MASS;
-
-    MassCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : CoarseOracleBase<dim>(problem_, beta_, options_)
-        , A_inv(this->A, options_) // Specialized member
-    {
-        A_inv.update_static(this->problem.get_A0());
-    }
-
-    MetricKind get_metric() const override { return metric; }
-
-    void update(const Vector<double>& x) const override
-    {
-        CoarseOracleBase<dim>::update(x); // Calls assembly
-        A_inv.update_dynamic(this->A.diagonal());
-    }
-
-    double value(const Vector<double>& x) const final
-    {
-        const double energy = this->problem.value(x, this->beta);
-
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M, energy);
-    }
-
-    /**
-     * @brief Computes the coarse model gradient in the A-metric.
-     * $$ \nabla_A q_k(x) = \nabla_A E_H(x) - w $$
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
-    {
-        coarse::mass::energy_adaptive_gradient(this->M, A_inv, x, this->m_phi, this->m_w, output);
-
-        return this->A_inv.control().last_step();
-    }
-
-private:
-    mutable InverseOpType A_inv;
-};
-
-
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
-template <int dim>
-class FrobeniusCoarseOracle : public CoarseOracleBase<dim>
-{
-public:
-    static constexpr const char* id = "FC";
-    static constexpr auto metric = MetricKind::FROBENIUS;
-    using CoarseOracleBase<dim>::CoarseOracleBase;
-
-    MetricKind get_metric() const override { return metric; }
-
-    double value(const Vector<double>& x) const final
-    {
-        const double energy = this->problem.value(x, this->beta);
-
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
-    }
-
-    /**
-     * @brief Computes the coarse model gradient in the F-metric.
-     * $$ \nabla_F q_k(\zeta) = \Pi_{\zeta, F}\left(A_\zeta \zeta - \frac{1}{\phi^\top M\zeta}w\right) $$
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
-    {
-        // Compute the pure Frobenius gradient
-        coarse::frobenius::gradient(this->M, this->A, x, this->m_phi, this->m_w, output);
-
-        return 0; // 0 iterations, as no Krylov solver is used
-    }
-};
-
-
-// TODO: Vector m_w is computed in the caller and assumed consistent (computed using same metric) as ::gradient
-template <int dim>
-class FrobeniusCoarseOracleEnergyAdaptive : public CoarseOracleBase<dim>
-{
-public:
-    static constexpr const char* id = "FCA";
-    static constexpr auto metric = MetricKind::FROBENIUS;
-
-    FrobeniusCoarseOracleEnergyAdaptive(const GrossPitaevskiiProblem<dim>& problem_, double beta_, SolverOptions options_)
-        : CoarseOracleBase<dim>(problem_, beta_, options_)
-        , A_inv(this->A, options_) // Specialized member
-    {
-            A_inv.update_static(this->problem.get_A0());
-    }
-
-    MetricKind get_metric() const override { return metric; }
-
-    void update(const Vector<double>& x) const override
-    {
-        CoarseOracleBase<dim>::update(x); // Calls assembly
-        A_inv.update_dynamic(this->A.diagonal());
-    }
-
-    double value(const Vector<double>& x) const final
-    {
-        const double energy = this->problem.value(x, this->beta);
-
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
-    }
-
-    /**
-     * @brief Computes the coarse model gradient in the energy-adaptive metric.
-     * $$ \nabla_A q_k(\zeta) = \tilde{A}_\zeta^{-1} \left( \nabla_F q_k(\zeta) \right) $$
-     */
-    unsigned gradient(const Vector<double>& x, Vector<double>& output) const final
-    {
-        // Computes the F-gradient and applies the A_inv preconditioner
-        coarse::frobenius::energy_adaptive_gradient(this->M, this->A_inv,this->A,
-            x, this->m_phi, this->m_w, output);
-
-        // Return the number of Krylov iterations used by A_inv
-        return this->A_inv.control().last_step();
-    }
-
-private:
-    mutable InverseOpType A_inv;
 };
 
 } // namespace gpe

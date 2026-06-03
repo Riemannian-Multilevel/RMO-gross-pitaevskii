@@ -121,6 +121,7 @@ struct GPE_Options
     Ordering order;         // ordering for degrees of freedom
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
+    double reference;       // reference minimum energy for table output
 };
 
 struct FAS_Options

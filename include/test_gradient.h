@@ -97,20 +97,19 @@ public:
     using OperatorType  = LinearCombination<MatrixType, Vector<double>>;
     using InverseOpType = PreconditionInverse<OperatorType, MatrixType>;
 
-    GradientTestBase(const GrossPitaevskiiProblem<dim>& problem, double beta,
-                     SolverOptions options)
-        : m_problem(problem)
-        , A(problem.get_operator_A(beta))   // all arguments are lazily evaluated
-        , M(problem.get_operator_M())
+    GradientTestBase(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
+        : m_system(system)
+        , A(system.get_operator_A(beta))   // all arguments are lazily evaluated
+        , M(system.get_operator_M())
         , A_inv(InverseOpType(A, options))
         , M_inv(InverseOpType(M, options))
         , m_beta(beta)
     {}
     virtual ~GradientTestBase() = default;
 
-    void assemble(const Vector<double>& x) const
+    void assemble(const Vector<double>& x)
     {
-        m_problem.assemble_nonlinear_term(x);  // updates Mpp -> A (mutable) for underlying operators
+        m_system.assemble_nonlinear_term(x);  // updates Mpp -> A (mutable) for underlying operators
     }
 
     // Defined for all functions and metrics on S^n
@@ -150,7 +149,7 @@ public:
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
 
 protected:
-    const GrossPitaevskiiProblem<dim>& m_problem;
+    GrossPitaevskiiSystem<dim>& m_system;
     OperatorType A, M;
     InverseOpType A_inv, M_inv;
     double m_beta;
@@ -161,24 +160,28 @@ template <int dim>
 class GradientTest : public GradientTestBase<dim>
 {
 public:
-    GradientTest(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
-        : GradientTestBase<dim>(problem, beta, options)
+    GradientTest(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
+        : GradientTestBase<dim>(system, beta, options)
+        , m_eval(system, beta)
     {}
 
     double value(const Vector<double>& x) const override
     {
-        return this->m_problem.value(x, this->m_beta);
+        return m_eval.value(x);
     }
 
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return this->m_problem.directional_derivative(x, z, this->m_beta);
+        return m_eval.directional_derivative(x, z);
     }
 
     void random_point(Vector<double>& x) const override
     {
         ellipsoid::random_point(x, this->M);
     }
+
+private:
+    GrossPitaevskiiFunctional<dim> m_eval;
 };
 
 
@@ -295,18 +298,20 @@ template <int dim>
 class GradientTestCoarse : public GradientTestBase<dim>
 {
 public:
-    GradientTestCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options,
+    GradientTestCoarse(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options,
                        const Vector<double>& phi,   // base point (restricted point)
                        const Vector<double>& w)     // correction term (restricted gradient difference)
-        : GradientTestBase<dim>(problem, beta, options)
+        : GradientTestBase<dim>(system, beta, options)
+        , m_eval(system, beta)
         , m_phi(phi)
         , m_w(w)
     {}
 
-    GradientTestCoarse(const GrossPitaevskiiProblem<dim>& problem, double beta, SolverOptions options)
-        : GradientTestBase<dim>(problem, beta, options)
-        , m_phi(problem.n_dofs())
-        , m_w(problem.n_dofs())
+    GradientTestCoarse(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
+        : GradientTestBase<dim>(system, beta, options)
+        , m_eval(system, beta)
+        , m_phi(system.n_dofs())
+        , m_w(system.n_dofs())
     {}
 
     void update_parameters(const Vector<double>& w, const Vector<double>& phi)
@@ -320,6 +325,7 @@ public:
     // in different metrics.
 
 protected:
+    GrossPitaevskiiFunctional<dim> m_eval;
     Vector<double> m_phi, m_w;  // copy stored for flipping sign
 };
 
@@ -336,7 +342,7 @@ public:
 
     double value(const Vector<double>& x) const final
     {
-        const double energy = this->m_problem.value(x, this->m_beta);
+        const double energy = this->m_eval.value(x);
 
         return coarse::mass::function_value(x, this->m_phi, this->m_w, this->M, energy);
     }
@@ -396,7 +402,7 @@ public:
 
     double value(const Vector<double>& x) const override
     {
-        const double energy = this->m_problem.value(x, this->m_beta);
+        const double energy = this->m_eval.value(x);
 
         return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->M, energy);
     }

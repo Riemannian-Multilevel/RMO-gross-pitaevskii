@@ -1,8 +1,10 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include <gpe/problem/gpe.h>
+#include <gpe/main/model.h>
 #include <gpe/problem/oracle.h>
+#include <gpe/ropt/manifold.h>
+#include <gpe/ropt/descent.h>
 #include <gpe/option.h>
 #include <gpe/util/util.h>
 
@@ -11,6 +13,7 @@
 
 using namespace gpe;
 using namespace dealii;
+
 
 int main(int argc, char* argv[])
 {
@@ -43,31 +46,34 @@ int main(int argc, char* argv[])
 
         // TODO: use multiresolution if multilevel=true
         //       timer carried on across levels
-        with_dimension(options.dimension, [&]<typename T0>(T0 D)
+        with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
             unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
             unsigned int max_level = options_mg.max_level;
 
             for (unsigned int level = min_level; level < max_level; ++level) {
-                // Initialize the orchestrator (Simulator)
-                // This sets up the mesh (Package) and Finite Element space
-                GrossPitaevskiiSimulator<dim, EnergyOracle<dim>> simulator(Square<dim>(), options, level + 1);
+                // Set up the grid (Package) and finite element space
+                ModelBuilder<dim> context(Square<dim>(), options, level + 1);
 
                 // Set starting value, sufficiently far from an optimal solution
-                Vector<double> x0(simulator.n_dofs());
+                Vector<double> x0(context.n_dofs());
                 x0 = 1.0;
+                context.distribute(x0);
 
-                // Run the Riemannian Gradient Descent pipeline
-                // Square<dim>() is passed as the Potential V
-                // options_gd contains the solver tolerances and step size
-                // options.beta is the non-linear coupling constant
-                simulator.distribute(x0);
-                auto x = simulator.run(x0, options.beta, options_slv, options_gd, std::cout);
+                // Define objective in ambient space
+                auto gp = context.get_eval(options.beta, options_slv);
+                // Define manifold
+                auto manifold = UnitMassSphere<dim,SparseMatrix<double>>(context.get_M());
+                // Define Riemannian metric
+                EnergyOracle<dim> oracle(gp, options_slv);
+
+                // Termination criterion for gradient descent
+                auto x = gradient_descent(oracle, manifold, x0, options_gd, std::cout);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
-                output_results(x, simulator.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
+                output_results(x, context.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
             }
         });
     }

@@ -16,57 +16,6 @@ struct TangentVector
     Vector<double> data;
 };
 
-// TODO
-struct ManifoldPoint
-{
-    Vector<double> data;
-};
-
-namespace iteration
-{
-// Termination criteria for energy function minimization
-// TODO: make this generic?
-struct State
-{
-    double energy{0};
-    double mass{0};
-    double lambda{0};
-    double residual{0};
-};
-
-
-// TODO: x*Mx is only for debugging/diagnostic purposes
-template <typename MatrixType>
-State residual(const Vector<double>& x, const MatrixType& A, const MatrixType& M,
-               bool use_m_norm = true)
-{
-    State prop;
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-    prop.mass = x * Mx;             // should be ~ 1 (energy constraint)
-
-    Vector<double> Ax(x.size()); // A x
-    A.vmult(Ax, x);
-    prop.lambda = x * Ax / prop.mass;  // Rayleigh quotient (x'Ax / x'Mx)
-
-    Vector<double> r(Ax);
-    r.add(-prop.lambda, Mx);        // r = A x - lambda M x
-
-    // TODO: use enum for setting norm at runtime
-    prop.residual = 0.0;
-    if (use_m_norm) {
-        Vector<double> Mr(r.size());
-        M.vmult(Mr, r);
-        prop.residual = std::sqrt(r * Mr);
-    }
-    else {
-        prop.residual = r.l2_norm();
-    }
-    return prop;
-}
-
-} // namespace iteration
-
 
 // Functions for GPE minimization
 // Note: due to compartmentalizing as functions, some values are necessarily computed anew.
@@ -726,8 +675,8 @@ double directional_derivative(const Vector<double>& zeta,
  * @param M Mass matrix
  * @param M_inv Operator representing M^-1 (must support vmult)
  * @param A Operator representing A_zeta (must support vmult)
- * @param zeta Coarse approximation (base point)
- * @param phi Fine grid restriction
+ * @param zeta Coarse variable (argument of the function)
+ * @param phi Fine grid restriction (base point)
  * @param w Restricted residual
  * @param dst Output vector
  */
@@ -761,7 +710,7 @@ void gradient(const MatrixType& M,
  * @param M Mass matrix (M_coarse)
  * @param A_inv Linear operator or InverseMatrix wrapper representing A_zeta^-1
  * @param zeta The coarse approximation (y)
- * @param phi The restricted fine grid approximation (base point)
+ * @param phi Fine grid restriction (base point)
  * @param w The restricted residual/gradient
  * @param dst Output vector
  */
@@ -769,7 +718,8 @@ void gradient(const MatrixType& M,
 //       tag- or class-based metric selection
 template <typename MatrixType, typename InverseMatrixType>
 void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_inv,
-                              const Vector<double>& zeta, const Vector<double>& phi,
+                              const Vector<double>& zeta,
+                              const Vector<double>& phi,
                               const Vector<double>& w,
                               Vector<double>& dst)
 {
@@ -788,6 +738,7 @@ void energy_adaptive_gradient(const MatrixType& M, const InverseMatrixType& A_in
 } // namespace coarse::mass
 
 
+// TODO: Doxygen documentation for functions in this namespace
 namespace coarse::frobenius
 {
 
@@ -925,10 +876,79 @@ void energy_adaptive_gradient(const MatrixType& M,
 } // namespace coarse::frobenius
 
 
-namespace box
+// Class wrappers
+class ManifoldBase
 {
+public:
+    virtual ~ManifoldBase() = default;
 
-} // namespace box
+    virtual void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const = 0;
+    virtual void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor = 1.0) const = 0;
+
+    virtual void retract_inv(Vector<double>& v, const Vector<double>& x) const = 0;
+
+    virtual void retract_diff(const Vector<double>& x, const Vector<double>& v,
+        const Vector<double>& w, Vector<double>& output) const = 0;
+
+    virtual void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta,
+        const Vector<double>& u, Vector<double>& output) const = 0;
+
+    virtual void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta,
+        const Vector<double>& u, Vector<double>& output) const = 0;
+};
+
+
+template <int dim, typename MatrixType>
+class UnitMassSphere : public ManifoldBase
+{
+public:
+    UnitMassSphere(const MatrixType& M) : M(M) {}
+
+    /**
+     * @brief Retracts a tangent vector back to the unit-mass manifold.
+     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
+     */
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid::retract_by_norm(M, z, x, factor);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    void retract_diff(const Vector<double>& x, const Vector<double>& v, const Vector<double>& w,
+                      Vector<double>& output) const override
+    {
+        ellipsoid::retract_diff_by_norm(M, x, v, w, output);
+    }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid::retract_inv_by_norm(M, v, x);
+    }
+
+    void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                          Vector<double>& output) const override
+    {
+        ellipsoid::retract_inv_diff_by_norm(M, x, zeta, u, output);
+    }
+
+    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                                  Vector<double>& output) const override
+    {
+        ellipsoid::retract_inv_diff_by_norm_adjoint(M, x, zeta, u, output);
+    }
+
+    // Accessors
+    const auto& get_M() const { return M; }
+
+private:
+    const MatrixType& M;
+};
+
 
 } // namespace gpe
 
