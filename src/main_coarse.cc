@@ -261,7 +261,6 @@ int main(int argc, char* argv[])
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
-            Square<dim> V;
 
             const unsigned n_levels     = options_mg.max_level;
             const unsigned n_levels_min = options_mg.min_level == n_levels ? n_levels - 1 : options_mg.min_level;

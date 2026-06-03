@@ -100,7 +100,7 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
                            dealii::TableHandler::TextOutputFormat format)
 {
     convergence_table.set_precision("residual", 4);
-    convergence_table.set_precision("energy", 8);
+    convergence_table.set_precision("energy", 16);
     convergence_table.set_precision("step", 4);
     convergence_table.set_precision("elapsed", 4);
 
