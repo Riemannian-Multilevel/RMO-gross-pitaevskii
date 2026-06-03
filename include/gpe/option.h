@@ -11,7 +11,7 @@ namespace gpe
 namespace po = boost::program_options;
 
 BOOST_DESCRIBE_STRUCT(DescentOptions, (),
-    (tol_lambda, tol_residual, step_size, max_iter, line_search, ls));
+    (tol_residual, step_size, max_iter, line_search, ls));
 BOOST_DESCRIBE_STRUCT(DescentOptions::LineSearchOptions, (),
     (max_iter, alpha, beta, sigma, min));
 BOOST_DESCRIBE_STRUCT(SolverOptions, (),
@@ -65,7 +65,8 @@ inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 
     // min_level >= 0
     const int min_i = vm["min-level"].as<int>();
-    mg.min_level    = to_unsigned_nonneg(min_i, "min-level");
+    const unsigned min_u = to_unsigned_nonneg(min_i, "min-level");
+    mg.min_level         = (min_u == 0) ? mg.n_levels : min_u;
 
     // max_level >= 0, default n_levels
     const int max_i      = vm["max-level"].as<int>();
@@ -97,7 +98,9 @@ inline po::options_description gpe_cli_options() {
         ("beta", po::value<double>()->default_value(100.0),
             "non-linearity factor")
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
-            "type of mesh elements used (quadrilateral|simplex)");
+            "type of mesh elements used (quadrilateral|simplex)")
+        ("reference", po::value<double>()->default_value(-1.0),
+            "reference solution for table output");
     return d;
 }
 
@@ -113,6 +116,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
+    options.reference = vm["reference"].as<double>();
 }
 
 
@@ -125,8 +129,6 @@ inline po::options_description descent_cli_options() {
             "maximum number of iterations")
         ("tol-residual", po::value<double>()->default_value(1e-4),
             "tolerance for M-residual")
-        ("tol-lambda", po::value<double>()->default_value(1e-8),
-            "tolerance for rayleigh quotient")
         ("step-size", po::value<double>()->default_value(1.0),
             "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
@@ -148,7 +150,6 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.step_size    = vm["step-size"].as<double>();
     options_rgd.max_iter     = vm["max-iter"].as<int>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
-    options_rgd.tol_lambda   = vm["tol-lambda"].as<double>();
     options_rgd.line_search  = vm["line-search"].as<bool>();
     options_rgd.ls.max_iter  = vm["ls-max-iter"].as<int>();
     options_rgd.ls.alpha     = vm["ls-alpha"].as<double>();

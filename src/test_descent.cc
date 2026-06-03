@@ -7,7 +7,7 @@
 using namespace gpe;
 
 template <int dim>
-void check_adaptive_descent_condition(const GrossPitaevskiiProblem<dim>& problem,
+void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
                                       double beta, SolverOptions options_slv)
 {
     const unsigned n_dofs = problem.n_dofs();

@@ -10,6 +10,8 @@
 #include <deal.II/grid/grid_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 
 namespace gpe
 {
@@ -180,58 +182,72 @@ private:
     SparseMatrix<double> R;
 
     void build_interpolation_matrix(const dealii::DoFHandler<dim>& dof_src,
-                                    const dealii::DoFHandler<dim>& dof_dst,
-                                    dealii::SparsityPattern& sparsity_pattern,
-                                    dealii::SparseMatrix<double>& interpolation_matrix)
+                                const dealii::DoFHandler<dim>& dof_dst,
+                                SparsityPattern& sparsity_pattern,
+                                SparseMatrix<double>& interpolation_matrix)
     {
         const unsigned int n_src = dof_src.n_dofs();
         const unsigned int n_dst = dof_dst.n_dofs();
 
-        // Matrix maps from src -> dst, so dimensions are (n_dst) x (n_src)
-        dealii::DynamicSparsityPattern dsp(n_dst, n_src);
+        DynamicSparsityPattern dsp(n_dst, n_src);
 
         struct MatrixEntry {
             global_dof_index row;
             global_dof_index col;
             double value;
         };
-        std::vector<MatrixEntry> cached_entries;
 
-        // Estimate ~9-27 non-zeros per column depending on dimension
-        cached_entries.reserve(n_src * dof_dst.get_fe().dofs_per_cell);
+        // 1. Lock-free storage: A dedicated vector for every column.
+        // Threads write to column_entries[j] concurrently without needing mutexes.
+        std::vector<std::vector<MatrixEntry>> column_entries(n_src);
 
-        Vector<double> unit_src(n_src);
-        Vector<double> column_dst(n_dst);
+        // --- THE PARALLEL PROBING LOOP ---
+        tbb::parallel_for(tbb::blocked_range<unsigned int>(0, n_src),
+            [&](const tbb::blocked_range<unsigned int>& range) {
 
-        // --- THE PROBING LOOP ---
-        // We push a 1.0 through each source DoF. The resulting interpolated
-        // destination vector is exactly one column of the transfer matrix.
-        for (unsigned int j = 0; j < n_src; ++j) {
-            if (j % 1000 == 0) std::cerr << j << "..";
+                // 2. Thread-local memory: Every thread needs its own vectors
+                // so they don't overwrite each other's data during interpolation.
+                Vector<double> local_unit_src(n_src);
+                Vector<double> local_column_dst(n_dst);
 
-            // 1. Create the unit vector
-            unit_src = 0.0;
-            unit_src[j] = 1.0;
+                for (unsigned int j = range.begin(); j != range.end(); ++j) {
 
-            // 2. Let deal.II handle all the nasty constraint/boundary math!
-            dealii::VectorTools::interpolate_to_different_mesh(
-            dof_src, unit_src, dof_dst, column_dst);
+                    local_unit_src = 0.0;
+                    local_unit_src[j] = 1.0;
 
-            // 3. Record the non-zero entries for this column
-            for (unsigned int i = 0; i < n_dst; ++i) {
-                if (std::abs(column_dst[i]) > 1e-14) {
-                    dsp.add(i, j);
-                    cached_entries.push_back({i, j, column_dst[i]});
+                    // 3. Thread-safe read operations
+                    dealii::VectorTools::interpolate_to_different_mesh(
+                        dof_src, local_unit_src, dof_dst, local_column_dst);
+
+                    // Reserve memory to prevent reallocations
+                    column_entries[j].reserve(dof_dst.get_fe().dofs_per_cell);
+
+                    for (unsigned int i = 0; i < n_dst; ++i) {
+                        if (std::abs(local_column_dst[i]) > 1e-14) {
+                            column_entries[j].push_back({i, j, local_column_dst[i]});
+                        }
+                    }
                 }
+            });
+
+        std::cerr << "Probing complete. Assembling matrix..." << std::endl;
+
+        // --- SERIAL ASSEMBLY ---
+        // 4. Writing to the sparsity pattern and sparse matrix must be done serially.
+        // Because the geometry probing is the bottleneck, this serial phase is virtually instant.
+        for (unsigned int j = 0; j < n_src; ++j) {
+            for (const auto& entry : column_entries[j]) {
+                dsp.add(entry.row, entry.col);
             }
         }
-        std::cerr << std::endl;
-        // 4. Initialize and fill the sparse matrix
+
         sparsity_pattern.copy_from(dsp);
         interpolation_matrix.reinit(sparsity_pattern);
 
-        for (const auto& entry : cached_entries) {
-            interpolation_matrix.set(entry.row, entry.col, entry.value);
+        for (unsigned int j = 0; j < n_src; ++j) {
+            for (const auto& entry : column_entries[j]) {
+                interpolation_matrix.set(entry.row, entry.col, entry.value);
+            }
         }
     }
 

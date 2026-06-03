@@ -39,15 +39,14 @@ R scripts are provided for advanced plotting of the provided results.
 
 ## Implementation Details
 
-### Lazy Assembly with `mutable`
+### Lazy Assembly
 
-All classes are const-correct, with the exception of `GrossPitaevskiiProblem`, which
-includes `Mpp` as a `mutable` variable. This is because `Mpp` needs to be recomputed whenever
-the solution density `|phi|^2` changes. Function and gradient evaluation
+Function and gradient evaluation
 require `Mpp` to be kept updated at all times.
 
-_Mechanism_: the Oracle can trigger `assemble_nonlinear_term(x)` inside its `update()` method even when holding a `const` reference to the problem. 
-This keeps the API clean while ensuring the physics are updated before every gradient calculation.
+_Mechanism_: the Oracle can trigger `assemble_nonlinear_term(x)` inside its `update()` method. This assumes a non-const
+reference, so that `gradient()` or `value()` methods which are purely evaluative (and thus, `const`) cannot trigger 
+a matrix assembly by accident.
 
 ---
 

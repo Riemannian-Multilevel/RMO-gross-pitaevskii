@@ -1,6 +1,7 @@
 #ifndef GPE_DESCENT_H
 #define GPE_DESCENT_H
 
+#include <gpe/problem/oracle.h>
 #include <gpe/ropt/manifold.h>
 #include <gpe/lac.h>
 #include <gpe/option_types.h>
@@ -39,6 +40,7 @@ struct SolverInfo {
 /**
  * @brief Performs the Armijo backtracking line search on the manifold.
  * @param oracle The manifold and objective function interface.
+ * @param manifold
  * @param x [in-out] Current base point.
  * @param eta Search direction (must be a descent direction).
  * @param fx Function value at current point f(x).
@@ -50,6 +52,7 @@ struct SolverInfo {
 //       of the problem state (large sparse matrix term Mpp) is made
 template <typename VectorType, typename OracleType>
 double armijo_line_search(OracleType& oracle,
+                          const ManifoldBase& manifold,
                           VectorType& x,
                           const VectorType& eta,
                           const double fx,
@@ -63,11 +66,15 @@ double armijo_line_search(OracleType& oracle,
     double alpha = options.ls.alpha;
     Vector<double> x_trial(x);
 
+    // Avoid numerical issues when close to the solution
+    const double eps = std::numeric_limits<double>::epsilon();
+    const double noise_tol = 10.0 * eps * std::max(1.0, std::abs(fx));
+
     for (unsigned int ls_iter = 0; ls_iter < options.ls.max_iter; ++ls_iter) {
         // Compute tentative step alpha*eta_x and retract
         VectorType step(eta);
         step *= alpha;
-        oracle.retract(x, step, x_trial);
+        manifold.retract(step, x, x_trial);
 
         // Evaluate function at the new point
         // TODO: this requires a new assembly of A_x - use matrix-free evaluation
@@ -76,7 +83,7 @@ double armijo_line_search(OracleType& oracle,
 
         // Armijo condition:
         //   f(Ret_x(alpha * eta)) <= f(x) + sigma * alpha * <grad, eta>_x
-        if (fx_new <= fx + options.ls.sigma * alpha * dir_deriv) {
+        if (fx_new <= fx + options.ls.sigma * alpha * dir_deriv + noise_tol) {
             x = x_trial;    // step accepted, write x
             return alpha;
         }
@@ -94,55 +101,42 @@ double armijo_line_search(OracleType& oracle,
     return options.ls.min;  // TODO: throw exception that can be caught
 }
 
-struct EmptyCheck
-{
-    bool operator()(iteration::State, iteration::State)
-    {
-        return false;
-    }
-};
 
 //! Riemannian gradient descent for the GPE energy minimization
 //! @param oracle Oracle for function value and (Riemannian) gradient.
+//! @param manifold
 //! @param x0 Starting value.
 //! @param options Parameters for gradient descent, such as step-size.
 //! @param os Output stream for diagnostics.
-//! @param check_convergence Strategy for verifying if gradient descent converged.
 //! @return
-// TODO: split into cycle() and eval(), compare FullApproximationScheme
-template <typename OracleType, typename CheckType = EmptyCheck>
+// TODO: use callback method
+template <typename OracleType>
 Vector<double>
-gradient_descent(OracleType& oracle, const Vector<double>& x0,
-                 DescentOptions options, std::ostream& os,
-                 CheckType check_convergence = {})
+gradient_descent(OracleType& oracle,
+                 const ManifoldBase& manifold,
+                 const Vector<double>& x0,
+                 DescentOptions options, std::ostream& os)
 {
     Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
     Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
 
-    // Keep track of states locally
-    iteration::State current_state;
-    iteration::State previous_state;
-
     // Define the timer
     dealii::Timer timer;
-    timer.reset();
+    timer.restart();
 
     Vector x(x0);
     dealii::ConvergenceTable convergence_table;
     oracle.update(x);
 
-    current_state = oracle.residual(x);
-    double Ex = oracle.value(x);
-    current_state.energy = Ex;
-    unsigned int lac_iter = 0;  // number of iterations in inner solver taken
+    // TODO: "residual" class returned by Oracle (values + criterion)
+    double residual = oracle.residual(x);
+    double energy   = oracle.value(x);
 
     // TODO: move to function.h
     convergence_table.add_value("iter", 0);
-    convergence_table.add_value("lac_iter", lac_iter);
-    convergence_table.add_value("mass", current_state.mass);
-    convergence_table.add_value("lambda", current_state.lambda);
-    convergence_table.add_value("residual", current_state.residual);
-    convergence_table.add_value("energy", current_state.energy);
+    convergence_table.add_value("lac_iter", 0);
+    convergence_table.add_value("residual", residual);
+    convergence_table.add_value("energy", energy);
     convergence_table.add_value("step",0);
     convergence_table.add_value("elapsed", 0);  // does not include setup time
 
@@ -151,22 +145,21 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
 
     // Begin RGD iteration
     Vector<double> g(x.size());
+    GradInfo g_info{};
 
     for (unsigned int iter = 1; iter <= options.max_iter; iter++) {
         // TODO: check_every, ConvergenceTable == true -> check_every = 1
         std::cerr << iter << "..";
 
-        if (check_convergence(current_state, previous_state)) {
+        if (residual < options.tol_residual) {
             // trick so that convergence_table is updated for last step
             // n iterations + starting solution -> n+1 table entries
             break;
         }
 
-        // ---- Timed section
-        timer.start();
         // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
         // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-        lac_iter = oracle.gradient(x, g);
+        g_info = oracle.gradient(x, g, residual);
         double step_size = options.step_size;
         // Retraction: x <- (x - h g) / ||x - h g||_M
 
@@ -176,44 +169,35 @@ gradient_descent(OracleType& oracle, const Vector<double>& x0,
             eta *= -1.0;
             double dd = oracle.directional_derivative(x, eta);  // <grad f(x), eta>_x = Df(x)[eta]
             // runs O.retract(), O.update()
-            double h = armijo_line_search(oracle, x, eta, Ex, dd, options);
+            double h = armijo_line_search(oracle, manifold, x, eta, energy, dd, options);
             //if (h > 0) x = x_new;
             if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
             step_size = h;
         }
         else {
-            oracle.retract(g, x, -options.step_size);
+            manifold.retract(g, x, -options.step_size);
             oracle.update(x);
         }
-        // ---- End timed section
-        timer.stop();
 
-        current_state = oracle.residual(x);
-        Ex = oracle.value(x);
-        current_state.energy = Ex;
+        residual = oracle.residual(x);
+        energy   = oracle.value(x);
+
         convergence_table.add_value("iter", iter);
-        convergence_table.add_value("lac_iter", lac_iter);
-        convergence_table.add_value("mass", current_state.mass);
-        convergence_table.add_value("lambda", current_state.lambda);
-        convergence_table.add_value("residual", current_state.residual);
-        convergence_table.add_value("energy", current_state.energy);
+        convergence_table.add_value("lac_iter", g_info.num_iter);
+        convergence_table.add_value("residual", residual);
+        convergence_table.add_value("energy", energy);
         convergence_table.add_value("step",step_size);
         convergence_table.add_value("elapsed",timer.cpu_time());
-
-        // Store current state for the next iteration's delta check
-        previous_state = current_state;
     }
+    // ---- End timed section
+    timer.stop();
 
     std::cerr << std::endl << std::endl;
-    convergence_table.set_precision("mass", 2);
-    convergence_table.set_precision("lambda", 2);
     convergence_table.set_precision("residual", 4);
     convergence_table.set_precision("energy", 16);
     convergence_table.set_precision("step", 2);
     convergence_table.set_precision("elapsed", 2);
 
-    //convergence_table.set_scientific("mass",true);
-    convergence_table.set_scientific("lambda", true);
     convergence_table.set_scientific("residual", true);
     convergence_table.set_scientific("energy", true);
     convergence_table.set_scientific("step", true);

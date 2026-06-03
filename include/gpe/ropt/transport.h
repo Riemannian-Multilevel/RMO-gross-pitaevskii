@@ -16,17 +16,17 @@ public:
     virtual ~ManifoldTransferBase() = default;
 
     // Mandatory operations
-    virtual void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const = 0;
+    virtual void restriction(const Vector<double>&, Vector<double>&) const = 0;
 
-    virtual void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const = 0;
+    virtual void prolongation(const Vector<double>&, Vector<double>&) const = 0;
 
     // Optional operations
-    virtual void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const
+    virtual void diff_restriction(const Vector<double>&, const Vector<double>&, Vector<double>&) const
     {
         throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
     }
 
-    virtual void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const
+    virtual void diff_prolongation(const Vector<double>&, const Vector<double>&, Vector<double>&) const
     {
         throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
     }
@@ -89,6 +89,7 @@ public:
     void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const override
     {
         transfer.to_fine_mesh(y_coarse, x_fine);
+
         ellipsoid::retract_by_norm(M_fine, x_fine);
     }
 
@@ -248,8 +249,10 @@ public:
      * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
      * where $I_H^h$ is the standard linear prolongation operator.
      */
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& x_fine,
+                             [[maybe_unused]] const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse,
+                             Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -265,8 +268,10 @@ public:
      * $$\mathcal{T}_{h \to H}(v) = P_{T_x \mathcal{S}_H} (I_h^H v)$$
      * where $I_h^H$ is the standard linear restriction operator.
      */
-    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    void vector_restriction(const Vector<double>& y_coarse,
+                            [[maybe_unused]] const Vector<double>& x_fine,
+                            const Vector<double>& v_fine,
+                            Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
@@ -296,8 +301,10 @@ public:
         : M_coarse(M_coarse), M_fine(M_fine), transfer(I)
     {}
 
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    void vector_prolongation(const Vector<double>& x_fine,
+                             [[maybe_unused]] const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse,
+                             Vector<double>& dst) const override
     {
         // Tangent vector interpolated to fine ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -307,8 +314,10 @@ public:
         ellipsoid::frobenius::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
     }
 
-    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    void vector_restriction(const Vector<double>& y_coarse,
+                            [[maybe_unused]] const Vector<double>& x_fine,
+                            const Vector<double>& v_fine,
+                            Vector<double>& dst) const override
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
@@ -392,7 +401,7 @@ public:
      * $$\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})$$
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-        const Vector<double>& v_fine, Vector<double>& dst) const override
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
     {
         // Differential D_r(y): T_y S_h -> T_r(y) S_H
         Vector<double> D_ry(point_transfer.n_coarse());
@@ -424,21 +433,24 @@ class AdjointRestrictionTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "V2Restr";
 
+    // TODO: set tolerance inside vector_restriction() instead of global tolerance
     AdjointRestrictionTransport(const LinearTransferBase& I,
                                 const MatrixType& M_coarse,
                                 const MatrixType& M_fine,
-                                const InverseMatrixType& Minv_coarse)
+                                const InverseMatrixType& M_inv_coarse)
         : transfer(I),
           M_coarse(M_coarse),
           M_fine(M_fine),
-          Minv_coarse(Minv_coarse)
+          M_inv_coarse(M_inv_coarse)
     {}
 
     /**
      * @brief Version II Prolongation: P(v) = Pi_\phi ( I_H^h v )
      */
-    virtual void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                                     const Vector<double>& v_coarse, Vector<double>& dst) const override
+    virtual void vector_prolongation(const Vector<double>& x_fine,
+                                     [[maybe_unused]] const Vector<double>& y_coarse,
+                                     const Vector<double>& v_coarse,
+                                     Vector<double>& dst) const override
     {
         // 1. Linear prolongation to ambient space
         Vector<double> Iv(transfer.n_fine());
@@ -453,8 +465,10 @@ public:
      * * Version II: R(v) = (I - \psi \psi^T M_H) M_H^{-1} (I_H^h)^T M_h v
      * Version V:  R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
      */
-    virtual void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
-                                    const Vector<double>& v_fine, Vector<double>& dst) const override
+    virtual void vector_restriction(const Vector<double>& y_coarse,
+                                    [[maybe_unused]] const Vector<double>& x_fine,
+                                    const Vector<double>& v_fine,
+                                    Vector<double>& dst) const override
     {
         // 1. Compute M_h * v_fine
         Vector<double> M_v(transfer.n_fine());
@@ -466,7 +480,7 @@ public:
 
         // 3. Apply inverse coarse mass matrix: M_H^{-1} * IT_M_v
         Vector<double> w(transfer.n_coarse());
-        Minv_coarse.vmult(w, IT_M_v);
+        M_inv_coarse.vmult(w, IT_M_v);
 
         // 4. Project onto target tangent space T_\psi S_H
         ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, w, dst);
@@ -476,7 +490,7 @@ protected:
     const LinearTransferBase& transfer;
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
-    const InverseMatrixType& Minv_coarse;
+    const InverseMatrixType& M_inv_coarse;
 };
 
 
@@ -491,6 +505,7 @@ class AdjointRestrictionTransportScaled : public AdjointRestrictionTransport<Mat
 {
 public:
     static constexpr const char* id = "V5restr";
+    // TODO: set tolerance inside vector_restriction() instead of global tolerance
     using AdjointRestrictionTransport<MatrixType, InverseMatrixType>::AdjointRestrictionTransport;
 
     /**
