@@ -500,59 +500,95 @@ protected:
 
 /**
  * @brief Adjoint-based Vector Transport implementing Version V Restriction.
- *
- * Formula: R(v) = (1 / ||I_H^h \psi||_{M_h}) * VersionII(v)
- * Inherits the base calculation from Version2RestrictionTransport.
  */
 template <typename MatrixType, typename InverseMatrixType>
-class AdjointRestrictionTransportScaled : public AdjointRestrictionTransport<MatrixType, InverseMatrixType>
+class AdjointDifferentialTransport : public VectorTransportBase
 {
 public:
     static constexpr const char* id = "V5restr";
-    // TODO: set tolerance inside vector_restriction() instead of global tolerance
-    using AdjointRestrictionTransport<MatrixType, InverseMatrixType>::AdjointRestrictionTransport;
 
-    /**
-      * @brief Version V Prolongation: Dp(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
-      */
-    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    // ADDED: LinearTransferBase and InverseMatrixType are mathematically required
+    // to compute the adjoint restriction (transpose of I_H^h and M_H^{-1}).
+    explicit AdjointDifferentialTransport(const LinearTransferBase& transfer,
+                                          const ManifoldTransferBase& pt,
+                                          const MatrixType& M_coarse,
+                                          const MatrixType& M_fine,
+                                          const InverseMatrixType& M_inv_coarse)
+        : transfer(transfer), point_transfer(pt),
+          M_coarse(M_coarse), M_fine(M_fine), M_inv_coarse(M_inv_coarse)
+    {}
+
+    void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
+                             Vector<double>& dst) const
     {
-        // 1. Execute base Version II prolongation
-        AdjointRestrictionTransport<MatrixType, InverseMatrixType>::vector_prolongation(x_fine, y_coarse, v_coarse, dst);
-
-        // 2. Compute the version V scaling factor
-        Vector<double> p_psi(this->transfer.n_fine());
-        this->transfer.to_fine_mesh(y_coarse, p_psi);
-
-        Vector<double> M_p_psi(this->transfer.n_fine());
-        this->M_fine.vmult(M_p_psi, p_psi);
-
-        const double n_h = std::sqrt(p_psi * M_p_psi);
-        dst /= n_h;
+        point_transfer.diff_prolongation(y_coarse, v_coarse, dst);
     }
 
     /**
-     * @brief Version V Restriction: R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
+     * @brief Prolongs a tangent vector by computing the differential of the prolongation map.
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Differential D_p(x): T_x S_H -> T_p(x) S_h
+        Vector<double> D_px(point_transfer.n_fine());
+        vector_prolongation(y_coarse, v_coarse, D_px);
+
+        // Vector transport T_p(x) S_h -> T_y S_h using mass metric projection
+        ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
+    }
+
+    /**
+     * @brief Version V Restriction: R(v) = (1 / ||I_H^h \psi||_{M_h}) * (I - \psi\psi^T M_H) M_H^{-1} (I_H^h)^T M_h (I - \Pi_{I_H^h \psi, M_h}) v
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
     {
-        // 1. Execute the base Version II algorithm to populate 'dst'
-        AdjointRestrictionTransport<MatrixType, InverseMatrixType>::vector_restriction(y_coarse, x_fine, v_fine, dst);
+        // Let \psi = y_coarse
+        // 1. Compute \tilde{\psi} = I_H^h \psi (Prolonged base point)
+        Vector<double> psi_tilde(transfer.n_fine());
+        transfer.to_fine_mesh(y_coarse, psi_tilde);
 
-        // 2. Compute the version V scaling factor
-        Vector<double> p_psi(this->transfer.n_fine());
-        this->transfer.to_fine_mesh(y_coarse, p_psi);
+        // 2. Compute M_h * \tilde{\psi}
+        Vector<double> M_psi_tilde(transfer.n_fine());
+        M_fine.vmult(M_psi_tilde, psi_tilde);
 
-        Vector<double> M_p_psi(this->transfer.n_fine());
-        this->M_fine.vmult(M_p_psi, p_psi);
+        // 3. Compute norm squared: ||I_H^h \psi||_{M_h}^2  and inner product (I_H^h \psi)^T M_h v_fine
+        const double norm_sq = psi_tilde * M_psi_tilde;
+        const double norm    = std::sqrt(norm_sq);
 
-        const double n_h = std::sqrt(p_psi * M_p_psi);
-        dst /= n_h;
+        Vector<double> M_v(transfer.n_fine());
+        M_fine.vmult(M_v, v_fine);
+        const double inner_prod = psi_tilde * M_v;
+
+        // 4. Evaluate M_h * [ (I - \Pi) v_fine ]
+        // Equivalent to M_h v_fine - [((I_H^h \psi)^T M_h v_fine) / ||I_H^h \psi||_{M_h}^2] * (M_h I_H^h \psi)
+        Vector<double> M_v_proj = M_v;
+        M_v_proj.add(-inner_prod / norm_sq, M_psi_tilde);
+
+        // 5. Apply transpose of prolongation: (I_H^h)^T [ M_h (I - \Pi) v_fine ]
+        Vector<double> IT_M_v_proj(transfer.n_coarse());
+        transfer.Tfine(M_v_proj, IT_M_v_proj);
+
+        // 6. Apply inverse coarse mass matrix: M_H^{-1} * (I_H^h)^T ...
+        Vector<double> w(transfer.n_coarse());
+        M_inv_coarse.vmult(w, IT_M_v_proj);
+
+        // 7. Scale by (1 / ||I_H^h \psi||_{M_h})
+        w /= norm;
+
+        // 8. Project onto the target tangent space T_\psi S_H
+        ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, w, dst);
     }
-};
 
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransferBase& point_transfer;
+
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& M_inv_coarse;
+};
 
 } // namespace gpe
 

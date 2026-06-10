@@ -47,8 +47,8 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
     else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION) {
         vector_transport = std::make_shared<AdjointRestrictionTransport<OperatorType, InverseOpType>>(*transfer, M_c, M_f, M_inv_c);
     }
-    else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION_SCALED) {
-        vector_transport = std::make_shared<AdjointRestrictionTransportScaled<OperatorType, InverseOpType>>(*transfer, M_c, M_f, M_inv_c);
+    else if (options_fas.transport_t == Transport::ADJOINT_DIFFERENTIAL) {
+        vector_transport = std::make_shared<AdjointDifferentialTransport<OperatorType, InverseOpType>>(*transfer, *point_transfer, M_c, M_f, M_inv_c);
     }
     else {
         std::abort();
