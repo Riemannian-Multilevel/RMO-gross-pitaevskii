@@ -16,8 +16,79 @@
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_simplex_p_bubbles.h>  // for higher degree simplex elements with mass lumping
 
+#include <numbers>
+
 namespace gpe
 {
+
+namespace potential
+{
+/**
+ * @brief Functor computing the square of the Euclidean norm of a point.
+ *
+ * Computes \f$ f(p) = \sum_{d=0}^{dim-1} p_d^2 \f$.
+ * Used primarily for initializing test cases or potentials.
+ *
+ * @tparam dim The spatial dimension of the point.
+ */
+template <int dim>
+class Square
+{
+public:
+    double operator()(const Point<dim>& p) const {
+        typename Point<dim>::value_type out = 0.0;
+
+        for (unsigned d = 0; d < dim; d++) {
+            out += p[d]*p[d];
+        }
+        return out;
+    }
+};
+
+
+template <int dim>
+class OpticalLattice
+{
+public:
+    explicit OpticalLattice(const double nu = 100)
+        : m_nu(nu)
+    {}
+
+    double operator()(const Point<dim>& p) const
+    {
+        typename Point<dim>::value_type out = 0.0;
+
+        for (unsigned d = 0; d < dim; d++) {
+            const double spx = std::sin(0.5*std::numbers::pi*p[d]);
+            out += 0.5*p[d]*p[d] + m_nu*spx*spx;
+        }
+        return out;
+    }
+
+private:
+    const double m_nu;
+};
+
+
+template <int dim>
+using PVar = std::variant<Square<dim>, OpticalLattice<dim>>;
+
+template <int dim>
+PVar<dim>
+get_potential(Potential potential_t) {
+    switch (potential_t)
+    {
+        case Potential::SQUARE:
+            return Square<dim>();
+        case Potential::OPTICAL_LATTICE:
+            return OpticalLattice<dim>();
+        default:
+            throw std::invalid_argument("Unknown potential type");
+    }
+}
+
+} // namespace potential
+
 
 /**
  * @brief Handles the assembly and storage of matrices for the Gross-Pitaevskii equation.

@@ -7,85 +7,9 @@
 #include <gpe/ropt/transport.h>
 
 #include <deal.II/base/timer.h>
-#include <numbers>
 
 namespace gpe
 {
-/**
- * @brief Functor computing the square of the Euclidean norm of a point.
- *
- * Computes \f$ f(p) = \sum_{d=0}^{dim-1} p_d^2 \f$.
- * Used primarily for initializing test cases or potentials.
- *
- * @tparam dim The spatial dimension of the point.
- */
-template <int dim>
-class Square
-{
-public:
-    double operator()(const Point<dim>& p) const {
-        typename Point<dim>::value_type out = 0.0;
-
-        for (unsigned d = 0; d < dim; d++) {
-            out += p[d]*p[d];
-        }
-        return out;
-    }
-};
-
-
-template <int dim>
-class OpticalLattice
-{
-public:
-    explicit OpticalLattice(const double nu = 100)
-        : m_nu(nu)
-    {}
-
-    double operator()(const Point<dim>& p) const
-    {
-        typename Point<dim>::value_type out = 0.0;
-
-        for (unsigned d = 0; d < dim; d++) {
-            const double spx = std::sin(0.5*std::numbers::pi*p[d]);
-            out += 0.5*p[d]*p[d] + m_nu*spx*spx;
-        }
-        return out;
-    }
-
-private:
-    const double m_nu;
-};
-
-
-template <int dim>
-using PVar = std::variant<Square<dim>, OpticalLattice<dim>>;
-
-template <int dim>
-PVar<dim>
-get_potential(Potential potential_t) {
-    switch (potential_t)
-    {
-        case Potential::SQUARE:
-            return Square<dim>();
-        case Potential::OPTICAL_LATTICE:
-            return OpticalLattice<dim>();
-        default:
-            throw std::invalid_argument("Unknown potential type");
-    }
-}
-
-
-// Fields for gradient computation with inner solver
-// TODO: move to option_types.h?
-struct GradInfo
-{
-    double residual;
-    unsigned num_iter;
-    double tolerance;
-    double elapsed_time;
-};
-
 
 template <int dim>
 class GrossPitaevskiiResidual
@@ -153,7 +77,8 @@ public:
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;  // method for setting tolerance
 
-    // TODO: move this to a separate interface? (-> class Metric)
+    // TODO: move this to a separate interface?
+    //       (-> class Metric - arguments may differ from evaluation point)
     virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
     virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
     // TODO: improve name
@@ -161,7 +86,8 @@ public:
     virtual MetricKind get_metric() const { return MetricKind::NONE; }
     virtual unsigned n_dofs() const = 0;
 
-    // TODO: move this to a separate interface? (-> class Residual or GrossPitaevskiiFunctional)
+    // TODO: move this to a separate interface?
+    //       (-> class Residual or GrossPitaevskiiFunctional - matches evaluation point)
     virtual double residual(const Vector<double>&) const = 0;
 };
 

@@ -161,9 +161,9 @@ public:
 
         // 3. Build Transfer/Transport operators bridging each consecutive level
         for (unsigned l = min_level + 1; l <= max_level; ++l) {
-            const auto&   dofs_c   = builders[l - min_level - 1]->get_package().get_dofs();
-            const auto&   constr_c = builders[l - min_level - 1]->get_package().get_constraints();
-            const auto&   M_c      = objective_mg[l-1]->get_M();
+            const auto& dofs_c   = builders[l - min_level - 1]->get_package().get_dofs();
+            const auto& constr_c = builders[l - min_level - 1]->get_package().get_constraints();
+            const auto& M_c      = objective_mg[l-1]->get_M();
             InverseOpType& M_inv_c = objective_mg[l-1]->get_M_inv();
 
             const auto& dofs_f   = builders[l - min_level]->get_package().get_dofs();
@@ -201,6 +201,9 @@ public:
             fas_solver->template cycle<MassOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
                 O_fine, x0, max_level, os
             );
+        }
+        else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {
+            throw std::invalid_argument("metric not supported for coarse model");
         }
         else {
             std::abort();
@@ -265,7 +268,7 @@ int main(int argc, char* argv[])
             const unsigned n_levels     = options_mg.max_level;
             const unsigned n_levels_min = options_mg.min_level == n_levels ? n_levels - 1 : options_mg.min_level;
 
-            auto potential_v = get_potential<dim>(options.potential);
+            auto potential_v = potential::get_potential<dim>(options.potential);
 
             if (options_fas.metric_t == MetricKind::NONE) {
                 // Run standard single-level Riemannian gradient descent on the finest level

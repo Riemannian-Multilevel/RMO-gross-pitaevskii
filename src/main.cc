@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
             constexpr int dim        = T0::value;
             unsigned int min_level   = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
             unsigned int max_level   = options_mg.max_level;
-            auto potential_v         = get_potential<dim>(options.potential);
+            auto potential_v         = potential::get_potential<dim>(options.potential);
 
             for (unsigned int level = min_level; level < max_level; ++level) {
                 // Set up the grid (Package) and finite element space
