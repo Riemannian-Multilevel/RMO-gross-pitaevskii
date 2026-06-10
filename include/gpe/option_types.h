@@ -139,6 +139,17 @@ struct FAS_Options
                             // should be consistent with metric_t
 };
 
+// Fields for gradient computation with inner solver
+// TODO: move to descent.h?
+struct GradInfo
+{
+    double residual;
+    unsigned num_iter;
+    double tolerance;
+    double elapsed_time;
+};
+
+
 } // namespace gpe
 
 #endif //GPE_OPTION_TYPES_H

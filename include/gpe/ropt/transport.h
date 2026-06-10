@@ -384,6 +384,7 @@ public:
 
         // Vector transport T_p(x) S_h -> T_y S_h
         // TODO: which metric to choose for orthogonal projection?
+        // -> Use inheritance from DifferentialTransport base class (FrobeniusDifferentialTransport, MassDifferentialTransport)
         ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
     }
 
@@ -421,11 +422,10 @@ private:
 
 
 /**
- * @brief Adjoint-based Vector Transport implementing Version II and V Restrictions.
+ * @brief Adjoint-based Vector Transport implementing Version II.
  *
- * This class computes the exact mathematical adjoint of the corresponding
+ * This class computes the mathematical adjoint of the corresponding
  * prolongation maps in the mass-weighted metric.
- * * Requires inverse matrix operators to solve the dense mass systems.
  */
 template <typename MatrixType, typename InverseMatrixType>
 class AdjointRestrictionTransport : public VectorTransportBase
@@ -457,6 +457,8 @@ public:
         transfer.to_fine_mesh(v_coarse, Iv);
 
         // 2. Orthogonal projection onto the target tangent space
+        // TODO: which metric to choose for orthogonal projection?
+        // -> Use inheritance from DifferentialTransport base class (FrobeniusDifferentialTransport, MassDifferentialTransport)
         ellipsoid::mass::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
     }
 
@@ -483,6 +485,8 @@ public:
         M_inv_coarse.vmult(w, IT_M_v);
 
         // 4. Project onto target tangent space T_\psi S_H
+        // TODO: which metric to choose for orthogonal projection?
+        // -> Use inheritance from DifferentialTransport base class (FrobeniusDifferentialTransport, MassDifferentialTransport)
         ellipsoid::mass::project_onto_tangent_space(y_coarse, M_coarse, w, dst);
     }
 
