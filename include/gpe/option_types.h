@@ -63,11 +63,15 @@ enum class MetricKind
 
 enum class Transport
 {
-    FROBENIUS,
-    MASS,
-    DIFFERENTIAL,
-    ADJOINT_RESTRICTION,
-    ADJOINT_RESTRICTION_SCALED,
+    FROBENIUS,            // Version I   (orth. proj. Frobenius)
+    MASS,                 // Version I   (orth. proj. Mass)
+    DIFFERENTIAL,         // Version VI  (Mixed)
+    ADJOINT_RESTRICTION,  // Version II
+    ADJOINT_DIFFERENTIAL, // Version V
+    // DIFFERENTIAL_MASS,
+    // ADJOINT_DIFFERENTIAL_MASS,
+    // DIFFERENTIAL_FROBENIUS,
+    // ADJOINT_DIFFERENTIAL_FROBENIUS
 };
 
 enum class Interpolate
