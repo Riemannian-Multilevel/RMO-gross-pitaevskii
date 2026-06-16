@@ -98,7 +98,7 @@ int main()
 
     for (unsigned level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
         dealii::Timer timer;
-        ModelBuilder<DIM> model(Square<DIM>(), options, level);
+        ModelBuilder<DIM> model(potential::Square<DIM>(), options, level);
 
         auto& system = model.get_system();
         const auto& eval = model.get_eval(options.beta, SolverOptions{});

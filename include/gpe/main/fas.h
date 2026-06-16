@@ -20,6 +20,13 @@ namespace gpe
 {
 using dealii::MGLevelObject;
 
+struct ConvergenceTable : dealii::ConvergenceTable {
+    bool has_column(const std::string& key) const {
+        return columns.count(key) > 0;
+    }
+};
+
+
 // Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
@@ -28,26 +35,44 @@ class FullApproximationScheme
 {
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
+    // TODO: dependency injection
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
                             MGLevelObject<std::shared_ptr<VectorTransportBase>>   vector_transport_mg,
-                            // TODO: later generalization: shared_ptr<FunctionalBase> (base for constructing oracles)
+                            // TODO: generalization: shared_ptr<FunctionalBase> (base for constructing oracles)
                             MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>>  objective_mg,
+                            const std::vector<unsigned> &level_indices,
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
                             FAS_Options options_fas)
-        : m_manifold_mg         (std::move(manifold_mg))
+        : level_indices(level_indices)
+        , m_manifold_mg         (std::move(manifold_mg))
         , m_point_transfer_mg   (std::move(point_transfer_mg))
         , m_vector_transport_mg (std::move(vector_transport_mg))
-    // TODO: dependency injection
         , m_objective_mg        (std::move(objective_mg))
         , options_descent_mg    (std::move(options_descent_mg))
         , options_solver_mg     (std::move(options_solver_mg))
         , options_fas(options_fas)
     {
+        // Check that level indices are strictly ascending
+        Assert(std::ranges::adjacent_find(level_indices, std::greater_equal<unsigned>()) == level_indices.end(),
+            dealii::ExcInternalError("level indices not sorted in strictly ascending order"));
+
+        // Check that MG objects are of the same size
         min_level = m_manifold_mg.min_level();
         max_level = m_manifold_mg.max_level();
+        AssertDimension(m_point_transfer_mg.min_level(),   min_level);
+        AssertDimension(m_point_transfer_mg.max_level(),   max_level);
+        AssertDimension(m_vector_transport_mg.min_level(), min_level);
+        AssertDimension(m_vector_transport_mg.max_level(), max_level);
+        AssertDimension(m_objective_mg.min_level(),        min_level);
+        AssertDimension(m_objective_mg.max_level(),        max_level);
 
+        // Check that level indices are contained within MGLevelObject
+        AssertIndexRange(min_level, level_indices.front()+1);  // open range
+        AssertIndexRange(max_level, level_indices.back() +1);
+
+        // Create a convergence table for every level
         conv_table_mg.resize(min_level, max_level);
     }
 
@@ -55,13 +80,15 @@ public:
     // CoarseModelType: The coarse descent model (e.g. MassCoarseOracleEnergyAdaptive)
     // OracleBase&:     The oracle used to evaluate the level objective
     template <typename TiltOracleType, typename CoarseModelType>
-    void cycle(OracleBase& O_level, Vector<double>& x, unsigned level)
+    void cycle(OracleBase& O_level, Vector<double>& x, unsigned level_idx)
     {
+        AssertIndexRange(level_idx, level_indices.size());
+        unsigned level = level_indices.at(level_idx);
         std::cerr << "level: " << level << std::endl;
-        AssertIndexRange(level - min_level, max_level - min_level + 1);
+        //AssertIndexRange(level - min_level, max_level - min_level + 1);
 
         // Clear and start the clock on finest level
-        if (level == max_level) {
+        if (level_idx == level_indices.size() - 1) {
             timer.restart();
         }
         // Clear table for (W-)cycle
@@ -77,7 +104,8 @@ public:
         // This matches m_objective_mg[level]->update(x)
         O_level.update(x);
 
-        if (level == min_level) {
+        if (level_idx == 0) {
+        //if (level == min_level) {
             // Coarse condition is always false on coarsest level
             // -> gradient descent
             for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
@@ -98,16 +126,19 @@ public:
         }
 
         // Reference coarse oracle for next level
-        TiltOracleType T_coarse(*m_objective_mg[level-1], options_solver_mg[level-1]);
-        TiltOracleType T_level (*m_objective_mg[level],   options_solver_mg[level]);
+        unsigned coarse_level_idx = level_idx - 1;
+        unsigned coarse_level     = level_indices.at(coarse_level_idx);
+
+        TiltOracleType T_coarse(*m_objective_mg[coarse_level], options_solver_mg[coarse_level]);
+        TiltOracleType T_level (*m_objective_mg[level], options_solver_mg[level]);
 
         // Define the coarse model (for levels min_level+1..max_level)
         // Required to evaluate the coarse condition
         // Note: CoarseOracleBase is problem-independent and only depends on the OracleBase interface
         CoarseOracleBase<dim> qk_base(T_level, T_coarse,
-            *m_manifold_mg[level-1], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
+            *m_manifold_mg[coarse_level], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
         // Evaluation of coarse model
-        CoarseModelType qk(qk_base, options_solver_mg[level-1]);
+        CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
 
         // T_level.update(x)
         // TODO: clearly encode that T_level and O_level point to the same GrossPitaevskiiSystem (~Functional)
@@ -141,12 +172,12 @@ public:
 
                     // Solve the coarse model q_k(zk)
                     // TODO: pass on ostream (-> callback strategy)
-                    this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, level-1, std::cerr);
+                    this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, coarse_level_idx, std::cerr);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
 #endif
-                    m_manifold_mg[level-1]->retract_inv(zk, state.y);
+                    m_manifold_mg[coarse_level]->retract_inv(zk, state.y);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: vector prolongation\n";
@@ -155,8 +186,7 @@ public:
 
                     // Pass fine_manifold into cycle_smooth
                     // -> runs O_level.update(x)
-                    CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x,
-                        dk, timer, options_descent_mg[level]);
+                    CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, timer, options_descent_mg[level]);
                     info.iter      = i;
                     info.coarse    = true;
                     info.lac_iter  = 0;
@@ -178,8 +208,7 @@ fine_step:
 
                 // Pass fine_manifold into cycle_smooth
                 // -> runs O_fine.update(x)
-                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x,
-                    dk, timer, options_descent_mg[level]);
+                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, timer, options_descent_mg[level]);
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
@@ -188,31 +217,36 @@ fine_step:
                 cycle_eval(O_level, x, convergence_table, info);
             }
         }
-        if (level == max_level) {
+        if (level_idx == level_indices.size() - 1) {
             timer.stop();
         }
     }
 
     // TODO: only output on certain levels OR include the current level in the table
     template <typename TiltOracleType, typename CoarseModelType>
-    void cycle(OracleBase& O_level, Vector<double>& x, unsigned level, std::ostream& os)
+    void cycle(OracleBase& O_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
     {
-        cycle<TiltOracleType, CoarseModelType>(O_level, x, level);
+        cycle<TiltOracleType, CoarseModelType>(O_level, x, level_idx);
+
+        unsigned level = level_indices.at(level_idx);
         auto& convergence_table = conv_table_mg[level];
 
-        convergence_table.set_precision("grad_restr_norm", 4);
-        convergence_table.set_precision("grad_norm", 4);
-        convergence_table.set_scientific("grad_restr_norm", true);
-        convergence_table.set_scientific("grad_norm", true);
-
+        // TODO: this is only set if an actual coarse step was taken
+        for (const char* col : {"grad_norm", "grad_restr_norm"}) {
+            if (convergence_table.has_column(col)) {
+                convergence_table.set_precision(col, 4);
+                convergence_table.set_scientific(col, true);
+            }
+        }
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
 
 private:
-    MGLevelObject<dealii::ConvergenceTable> conv_table_mg;
+    MGLevelObject<ConvergenceTable> conv_table_mg;
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
+    std::vector<unsigned> level_indices;
 
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
@@ -221,6 +255,7 @@ private:
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
     FAS_Options                                           options_fas;
+
 };
 
 } // namespace gpe

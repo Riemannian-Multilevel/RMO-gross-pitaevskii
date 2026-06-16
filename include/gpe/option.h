@@ -5,6 +5,8 @@
 #include <gpe/util/util.h>
 
 #include <boost/program_options.hpp>
+#include <ranges>
+#include <string_view>
 
 namespace gpe
 {
@@ -17,7 +19,7 @@ BOOST_DESCRIBE_STRUCT(DescentOptions::LineSearchOptions, (),
 BOOST_DESCRIBE_STRUCT(SolverOptions, (),
     (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
-    (multilevel, n_levels, min_level, max_level));
+    (n_levels, v_levels));
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
@@ -39,44 +41,72 @@ BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 inline po::options_description mg_cli_options() {
     po::options_description d("multilevel options");
     d.add_options()
-        ("levels", po::value<int>()->default_value(3),
+        ("levels", po::value<int>(),
             "number of times to globally refine the mesh")
-        ("multilevel", po::value<bool>()->default_value(false)->implicit_value(true),
-            "enable multilevel (0|1)")
-        ("min-level", po::value<int>()->default_value(0),
-            "minimal level for multilevel")
-        ("max-level", po::value<int>()->default_value(0),
-            "maximal level for multilevel");
+        ("multilevel", po::value<std::string>(),
+            "levels for the multilevel hierarchy");
+        // ("min-level", po::value<int>()->default_value(0),
+        //     "minimal level for multilevel")
+        // ("max-level", po::value<int>()->default_value(0),
+        //     "maximal level for multilevel");
     return d;
 }
 
 // Integer validation
 static unsigned int to_unsigned_nonneg(int v, const char* opt_name) {
-    if (v < 0)
+    if (v < 0) {
         throw po::validation_error(po::validation_error::invalid_option_value, opt_name,
                                    std::to_string(v));
+    }
     return static_cast<unsigned int>(v);
 }
 
 inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 {
-    mg.multilevel = vm["multilevel"].as<bool>();
-    mg.n_levels   = vm["levels"].as<int>();
+    if (!vm.contains("levels") && !vm.contains("multilevel")) {
+        throw po::required_option("levels or multilevel");
+    }
 
-    // min_level >= 0
-    const int min_i = vm["min-level"].as<int>();
-    const unsigned min_u = to_unsigned_nonneg(min_i, "min-level");
-    mg.min_level         = (min_u == 0) ? mg.n_levels : min_u;
+    std::vector<unsigned> v_levels;
+    if (vm.contains("multilevel")) {
+        auto level_str = vm["multilevel"].as<std::string>();
 
-    // max_level >= 0, default n_levels
-    const int max_i      = vm["max-level"].as<int>();
-    const unsigned max_u = to_unsigned_nonneg(max_i, "max-level");
-    mg.max_level         = (max_u == 0) ? mg.n_levels : max_u;
+        for (const auto word: std::views::split(level_str,',')) {
+            std::string_view sv(word.begin(), word.end());
+            if (sv.empty()) continue;   // handles default "" case
 
-    // min_level <= max_level
-    if (mg.max_level < mg.min_level) {
-        throw po::validation_error(po::validation_error::invalid_option_value,
-            "max-level", "must be >= min-level");
+            int val = 0;
+            std::from_chars(sv.data(), sv.data() + sv.size(), val);
+            v_levels.emplace_back(to_unsigned_nonneg(val, "multilevel"));
+        }
+    }
+
+    unsigned n_levels = 0;
+    if (vm.contains("levels")) {
+        n_levels = to_unsigned_nonneg(vm["levels"].as<int>(), "levels");
+    }
+
+    // min_level, max_level >= 0
+    if (v_levels.empty()) {
+        AssertThrow(n_levels > 0, dealii::ExcMessage("--levels must be greater 0"));
+
+        mg.v_levels = {n_levels};
+        mg.n_levels = n_levels;
+    }
+    else {
+        //const unsigned min_u = *std::ranges::min_element(v_levels);
+        const unsigned max_u = *std::ranges::max_element(v_levels);
+        AssertThrow(max_u > 0, dealii::ExcMessage("--multilevel must contain a level greater 0"));
+
+        mg.v_levels = v_levels;
+
+        if (n_levels == 0) {
+            mg.n_levels = max_u;
+        }
+        else {
+            AssertThrow(n_levels == max_u, dealii::ExcDimensionMismatch(n_levels, max_u));
+            mg.n_levels = n_levels;
+        }
     }
 }
 

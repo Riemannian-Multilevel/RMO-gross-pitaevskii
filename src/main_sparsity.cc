@@ -95,15 +95,13 @@ int main(int argc, char** argv)
         apply_gpe_options(vm, options);
         apply_mg_options(vm, options_mg);
 
-        with_dimension(options.dimension, [&]<typename T0>(T0 D)
+        with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
-            unsigned int min_level = options_mg.multilevel ? options_mg.min_level : options_mg.max_level-1;
-            unsigned int max_level = options_mg.max_level;
 
-            for (unsigned int i = min_level; i < max_level; ++i) {
-                Sparsity<dim> GS(options, i+1);
-                GS.run("domain", i);
+            for (unsigned int level: options_mg.v_levels) {
+                Sparsity<dim> GS(options, level+1);
+                GS.run("domain", level);
             }
         });
     }

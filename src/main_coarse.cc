@@ -122,10 +122,18 @@ class MultiLevelExperiment
 {
 public:
     template <typename Potential>
-    MultiLevelExperiment(Potential&& V, unsigned min_level, unsigned max_level,
+    MultiLevelExperiment(Potential&& V, const std::vector<unsigned> &levels,
                          GPE_Options options, FAS_Options options_fas,
                          SolverOptions options_slv, DescentOptions options_gd)
-        : min_level(min_level), max_level(max_level)
+    // The level vector approach assumes that
+    // 1. not every level may be populated in the multilevel hierarchy
+    // 2. the exact level is required, since meshes are defined by number of refinements
+    // 3. levels are processed from fine (N) to coarse (n), N > n refinements
+        : m_levels(levels)
+    // TODO: set min_level, max_level from m_levels in constructor body
+        , min_level(*std::ranges::min_element(levels))
+        , max_level(*std::ranges::max_element(levels))
+        , builders_mg         (min_level, max_level)
         , objective_mg        (min_level, max_level)
         , manifold_mg         (min_level, max_level)
         , transfer_mg         (min_level, max_level)
@@ -134,9 +142,17 @@ public:
         , options_descent_mg  (min_level, max_level)
         , options_solver_mg   (min_level, max_level)
     {
+        // TODO: duplicate effort with min_element, max_element
+        // sort in ascending order, coarse -> fine
+        std::ranges::sort(m_levels, std::ranges::less{});
+
+        // TODO: use AssertThrow or always use the unique_copy
+        Assert(std::ranges::adjacent_find(m_levels) == m_levels.end(),
+            dealii::ExcInternalError("level indices are not unique"));
+
         // 1. Build Physics and Manifolds for all levels
-        for (unsigned l = min_level; l <= max_level; ++l) {
-            builders.emplace_back(std::make_unique<ModelBuilder<dim>>(V, options, l));
+        for (auto l: m_levels) {
+            builders_mg[l] = std::make_unique<ModelBuilder<dim>>(V, options, l);
 
             options_descent_mg[l] = options_gd;
             options_solver_mg [l] = options_slv;
@@ -144,31 +160,41 @@ public:
             // Use shared_ptr to safely store objects with reference members
             // (default copy assignment operator for MGLevelObject)
             objective_mg[l] = std::make_shared<GrossPitaevskiiFunctional<dim>>(
-                builders.back()->get_system(), options.beta, options_solver_mg[l]
+                builders_mg[l]->get_system(), options.beta, options_solver_mg[l]
             );
-            manifold_mg [l] = std::make_shared<UnitMassSphere<dim, OperatorType>>(
+            manifold_mg[l] = std::make_shared<UnitMassSphere<dim, OperatorType>>(
                 objective_mg[l]->get_M()
             );
         }
 
         // 2. Configure looser bounds for coarse grids
         // TODO: configurable (option.h)
-        for (unsigned l = min_level; l < max_level; ++l) {
+        for (auto l: m_levels) {
+            if (l == max_level) {  // use global options for finest level
+                continue;
+            }
             options_descent_mg[l].max_iter = 4;
             //options_descent_mg[l].line_search = false;
             // TODO: set options_solver_mg[], options_descent_mg[] per level
         }
 
         // 3. Build Transfer/Transport operators bridging each consecutive level
-        for (unsigned l = min_level + 1; l <= max_level; ++l) {
-            const auto& dofs_c   = builders[l - min_level - 1]->get_package().get_dofs();
-            const auto& constr_c = builders[l - min_level - 1]->get_package().get_constraints();
-            const auto& M_c      = objective_mg[l-1]->get_M();
-            InverseOpType& M_inv_c = objective_mg[l-1]->get_M_inv();
+        // TODO: use set indices to iterate over consecutive levels
+        //for (auto l: level_set) {
+        for (unsigned i = 1; i < m_levels.size(); i++) {  // assumes (strictly) ascending sort order on levels()
 
-            const auto& dofs_f   = builders[l - min_level]->get_package().get_dofs();
-            const auto& constr_f = builders[l - min_level]->get_package().get_constraints();
-            const auto& M_f   = objective_mg[l]->get_M();
+            unsigned l   = m_levels.at(i);
+            unsigned l_c = m_levels.at(i - 1);  // next coarsest level
+            Assert(l > min_level, dealii::ExcMessage("min_level found in position > 0"));
+
+            const auto& dofs_c= builders_mg[l_c]->get_package().get_dofs();
+            const auto& constr_c = builders_mg[l_c]->get_package().get_constraints();
+            const auto& M_c= objective_mg[l_c]->get_M();
+            InverseOpType& M_inv_c = objective_mg[l_c]->get_M_inv();
+
+            const auto& dofs_f = builders_mg[l]->get_package().get_dofs();
+            const auto& constr_f = builders_mg[l]->get_package().get_constraints();
+            const auto& M_f = objective_mg[l]->get_M();
 
             auto [t, pt, vt] = build_transfers(
                 dofs_c, dofs_f, constr_c, constr_f, M_c, M_f, M_inv_c, options_fas);
@@ -179,13 +205,13 @@ public:
         }
 
         fas_solver = std::make_unique<FullApproximationScheme<dim>>(
-            manifold_mg, point_transfer_mg, vector_transport_mg,
-            objective_mg, options_descent_mg, options_solver_mg, options_fas
+            manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
+            options_descent_mg, options_solver_mg, options_fas
         );
     }
 
-    unsigned n_dofs() const { return builders.back()->n_dofs(); }
-    void distribute(Vector<double>& x) const { builders.back()->distribute(x); }
+    unsigned n_dofs() const { return builders_mg[max_level]->n_dofs(); }
+    void distribute(Vector<double>& x) const { builders_mg[max_level]->distribute(x); }
 
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
@@ -194,12 +220,12 @@ public:
 
         if (metric_t == MetricKind::FROBENIUS) {
             fas_solver->template cycle<FrobeniusOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive<dim>>(
-                O_fine, x0, max_level, os
+                O_fine, x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::MASS) {
             fas_solver->template cycle<MassOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
-                O_fine, x0, max_level, os
+                O_fine, x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {
@@ -211,8 +237,9 @@ public:
     }
 
 private:
+    std::vector<unsigned> m_levels;
     unsigned min_level, max_level;
-    std::vector<std::unique_ptr<ModelBuilder<dim>>> builders;
+    MGLevelObject<std::unique_ptr<ModelBuilder<dim>>> builders_mg;
 
     MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>> objective_mg;
     MGLevelObject<std::shared_ptr<ManifoldBase>>                   manifold_mg;
@@ -264,13 +291,10 @@ int main(int argc, char* argv[])
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
-
-            const unsigned n_levels     = options_mg.max_level;
-            const unsigned n_levels_min = options_mg.min_level == n_levels ? n_levels - 1 : options_mg.min_level;
-
+            const unsigned n_levels  = options_mg.n_levels;
             auto potential_v = potential::get_potential<dim>(options.potential);
 
-            if (options_fas.metric_t == MetricKind::NONE) {
+            if (options_fas.metric_t == MetricKind::NONE || options_mg.v_levels.size() == 1) {
                 // Run standard single-level Riemannian gradient descent on the finest level
                 auto exp = std::visit([&](auto&& arg) {
                     return SingleLevelExperiment<dim>(arg, n_levels, options, options_slv, options_gd);
@@ -284,8 +308,7 @@ int main(int argc, char* argv[])
             }
             else {
                 auto exp = std::visit([&](auto&& arg) {
-                    return MultiLevelExperiment<dim>(arg, n_levels_min, n_levels,
-                        options, options_fas, options_slv, options_gd);
+                    return MultiLevelExperiment<dim>(arg, options_mg.v_levels, options, options_fas, options_slv, options_gd);
                 }, potential_v);
 
                 Vector<double> x0(exp.n_dofs());

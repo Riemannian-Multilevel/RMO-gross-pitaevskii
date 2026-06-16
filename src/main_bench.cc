@@ -67,7 +67,7 @@ int main()
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
-            Square<dim> V;
+            potential::Square<dim> V;
 
             // Adjust tolerances per level
             MGLevelObject<SolverOptions> options_slv_level(ref_min, ref_max);
