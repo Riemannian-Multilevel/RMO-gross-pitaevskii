@@ -167,7 +167,8 @@ public:
         : GrossPitaevskiiIteration<dim>(func, x_ptr)
     {}
 
-    GradInfo gradient(Vector<double>& output) const final  // override from base, no matrix inversions (tolerance) needed
+    // override from base, no matrix inversions (tolerance) needed
+    GradInfo gradient(Vector<double>& output) const final
     {
         return gradient(output, -1.0);
     }

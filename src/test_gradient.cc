@@ -187,7 +187,7 @@ int main()
 
     constexpr unsigned int n_levels = 8;
     GrossPitaevskiiPackage<2> GS(options, n_levels);
-    GrossPitaevskiiSystem<2> system = GS.system(Square<2>());
+    GrossPitaevskiiSystem<2> system = GS.system(potential::Square<2>());
     const unsigned n_dofs = GS.n_dofs();
 
     {

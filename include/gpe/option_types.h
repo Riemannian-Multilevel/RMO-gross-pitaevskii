@@ -4,6 +4,7 @@
 
 #ifndef GPE_OPTION_TYPES_H
 #define GPE_OPTION_TYPES_H
+#include <vector>
 
 namespace gpe
 {
@@ -111,10 +112,11 @@ struct SolverOptions
 
 struct MG_Options
 {
-    bool multilevel;            // build a multilevel hierarchy
+    //bool multilevel;
     unsigned int n_levels;      // number of levels for global refinement
-    unsigned int min_level;     // minimum level for multilevel algorithms
-    unsigned int max_level;     // maximum level for multilevel algorithms
+    //unsigned int min_level;     // minimum level for multilevel algorithms
+    //unsigned int max_level;     // maximum level for multilevel algorithms
+    std::vector<unsigned> v_levels;
 };
 
 struct GPE_Options
