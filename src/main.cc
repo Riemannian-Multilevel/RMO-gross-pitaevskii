@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
             for (unsigned int level : options_mg.v_levels) {
                 // Set up the grid (Package) and finite element space
                 auto context = std::visit([&](auto&& arg) {
-                    return ModelBuilder<dim>(arg, options, level + 1);
+                    return ModelBuilder<dim>(arg, options, level);
                 }, potential_v);
 
                 // Set starting value, sufficiently far from an optimal solution
