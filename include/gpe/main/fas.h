@@ -109,6 +109,8 @@ public:
             // Coarse condition is always false on coarsest level
             // -> gradient descent
             for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
+                level_log.push_back(level);
+
                 auto info_grad = O_level.gradient(x, x_grad);
                 dk  = x_grad;
                 dk *= -1.0;
@@ -119,6 +121,7 @@ public:
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
+                info.level     = level;
 
                 cycle_eval(O_level, x, convergence_table, info);
             }
@@ -147,6 +150,8 @@ public:
 
         // Begin (W-)cycle
         for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
+            level_log.push_back(level_indices.at(level_idx));
+
             if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
@@ -241,12 +246,17 @@ fine_step:
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
+    const std::vector<unsigned> cycle_log() const
+    {
+        return level_log;
+    }
 
 private:
     MGLevelObject<ConvergenceTable> conv_table_mg;
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
     std::vector<unsigned> level_indices;
+    std::vector<unsigned> level_log;
 
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
