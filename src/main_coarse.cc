@@ -236,6 +236,20 @@ public:
         }
     }
 
+    void log(std::ostream& os) const
+    {
+        auto levels = fas_solver->cycle_log();
+        os << "Total iterations: " << levels.size() << std::endl;
+
+        if (levels.size()) {
+            os << "[";
+            for (auto it = levels.begin(); it != levels.end()-1; ++it) {
+                os << *it << ",";
+            }
+            os << levels.back() << "]";
+        }
+    }
+
 private:
     std::vector<unsigned> m_levels;
     unsigned min_level, max_level;
@@ -316,6 +330,7 @@ int main(int argc, char* argv[])
                 exp.distribute(x0);
 
                 exp.run(x0, options_fas.metric_t, std::cout);
+                exp.log(std::cerr);
             }
         });
     }
