@@ -5,3 +5,4 @@ doc/
 *.cmake
 compile_commands.json
 Makefile
+interpolate_test/

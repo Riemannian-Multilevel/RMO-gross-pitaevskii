@@ -32,7 +32,7 @@ struct CoarseState
 
 
 // Class which implements all needed terms for the Nash coarse model. It assumes an oracle on a fine and coarse
-// level of discretization (implementing Riemannain gradient descent for a certain metric),
+// level of discretization (implementing Riemannian gradient descent for a certain metric),
 // used to compute a correction vector between coarse and fine gradients.
 // Note: generic methods which is compatible with OracleBase
 template <int dim>
@@ -41,16 +41,16 @@ class CoarseOracleBase
 public:
     static constexpr int dimension = dim;
 
-    CoarseOracleBase(OracleBase &O_fine,
-                     OracleBase &O_coarse,
+    CoarseOracleBase(OracleBase &T_fine,
+                     OracleBase &T_coarse,
                      const ManifoldBase &coarse_manifold,
                      const ManifoldTransferBase &point_transfer,
                      const VectorTransportBase  &vector_transport)
     // Problem evaluation
-        : O_fine(O_fine), O_coarse(O_coarse)
+        : T_fine(T_fine), T_coarse(T_coarse)
         , coarse_manifold(coarse_manifold)
-        , n_fine(O_fine.n_dofs())
-        , n_coarse(O_coarse.n_dofs())
+        , n_fine(T_fine.n_dofs())
+        , n_coarse(T_coarse.n_dofs())
 
     // Grid transfer
         , point_transfer(point_transfer)
@@ -59,7 +59,7 @@ public:
     // Coarse parameter initialization
         , m_state(n_fine, n_coarse)
     {
-        AssertThrow(O_fine.get_metric() == O_coarse.get_metric(),
+        AssertThrow(T_fine.get_metric() == T_coarse.get_metric(),
             dealii::ExcInternalError("non-corresponding metrics for coarse and fine oracle types"));
     }
 
@@ -70,7 +70,7 @@ public:
     {
         AssertDimension(x_fine.size(), n_fine);
         m_state.x = x_fine;
-        // TODO: Underlying state of O_fine assumed to match x (OracleBase::update -> GrossPitaevskiiSystem::update)
+        // TODO: Underlying state of T_fine assumed to match x (OracleBase::update -> GrossPitaevskiiSystem::update)
 
         // Compute base point for coarse model
 #ifdef CPU_TIME
@@ -82,29 +82,29 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: assemble matrix\n";
 #endif
-        O_coarse.update(m_state.y);
+        T_coarse.update(m_state.y);
 
         // Compute coarse (F or M)-gradient
 #ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_coarse.id() << "-coarse gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_coarse.id() << "-coarse gradient\n";
 #endif
         // Set tolerance for coarse gradient defining the coarse model
         if (model_tol > 0.0) {
-            O_coarse.gradient(m_state.y, m_state.y_grad, model_tol);
+            T_coarse.gradient(m_state.y, m_state.y_grad, model_tol);
         } else {
-            O_coarse.gradient(m_state.y, m_state.y_grad);  // set based on residual of coarse objective
+            T_coarse.gradient(m_state.y, m_state.y_grad);  // set based on residual of coarse objective
         }
         AssertDimension(m_state.y_grad.size(), n_coarse);
 
         // Compute fine (F or M)-gradient
 #ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << O_fine.id() << "-fine gradient\n";
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_fine.id() << "-fine gradient\n";
 #endif
         // Set tolerance for fine gradient defining the coarse model
         if (model_tol > 0.0) {
-            O_fine.gradient(m_state.x, m_state.x_grad, model_tol);
+            T_fine.gradient(m_state.x, m_state.x_grad, model_tol);
         } else {
-            O_fine.gradient(m_state.x, m_state.x_grad);   // set based on residual of fine objective
+            T_fine.gradient(m_state.x, m_state.x_grad);   // set based on residual of fine objective
         }
 
         AssertDimension(m_state.x_grad.size(), n_fine);
@@ -121,24 +121,34 @@ public:
         m_state.w.add(-1.0, m_state.x_grad_restr);
     }
 
-    double norm(const Vector<double> &x) const { return O_coarse.norm(x); }
-    double metric(const Vector<double> &x, const Vector<double> &z) const { return O_coarse.metric(x, z); }
+    double norm(const Vector<double> &x) const
+    {
+        return T_coarse.norm(x);
+    }
+    double metric(const Vector<double> &x, const Vector<double> &z) const
+    {
+        return T_coarse.metric(x, z);
+    }
+    void apply_metric(const Vector<double>& src, Vector<double>& dst) const
+    {
+        return T_coarse.apply_metric(src, dst);
+    }
 
     void set_timer(const dealii::Timer& timer_new) const { timer = timer_new; }
     const CoarseState& get_state() const { return m_state; }
 
-    const OracleBase& fine() const { return O_fine; }  // fine tilt oracle
-    OracleBase& fine() { return O_fine; }
+    const OracleBase& fine() const { return T_fine; }  // fine tilt oracle
+    OracleBase& fine() { return T_fine; }
 
-    const OracleBase& coarse() const { return O_coarse; }  // coarse tilt oracle
-    OracleBase& coarse() { return O_coarse; }
+    const OracleBase& coarse() const { return T_coarse; }  // coarse tilt oracle
+    OracleBase& coarse() { return T_coarse; }
 
     const ManifoldBase& manifold() const { return coarse_manifold; }
 
 
 protected:
     // Coarse and fine level evaluation for correction vector w
-    OracleBase &O_fine, &O_coarse;
+    OracleBase &T_fine, &T_coarse;
     const ManifoldBase &coarse_manifold;
     unsigned n_fine, n_coarse;
 
@@ -192,7 +202,7 @@ protected:
 
         // This varies for different coarse models
         Vector<double> grad_tilt(x.size());
-        m_model.coarse().apply_metric(grad_tilt, u);
+        m_model.apply_metric(grad_tilt, u);
 
         // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
         Vector<double> Ax(x.size());
@@ -237,7 +247,8 @@ class MassCoarseOracle : public OracleBase
 {
 public:
     const char* id() const override { return "MC"; }
-    static constexpr auto metric_t = MetricKind::MASS;
+    static constexpr auto model_t  = MetricKind::MASS;  // coarse model evaluated in M-metric
+    static constexpr auto metric_t = MetricKind::MASS;  // gradient evaluated in M-metric
 
     MassCoarseOracle(CoarseOracleBase<dim>& model, SolverOptions options)
         : m_model(model)
@@ -250,7 +261,7 @@ public:
         , M_inv_coarse(gp_coarse.get_M_inv())
         , m_norm(M_coarse)
     {
-        AssertThrow(model.coarse().get_metric() == metric_t, dealii::ExcInternalError("mass metric expected"));
+        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("mass metric expected"));
     }
 
     // Update for _evaluation_ of the coarse model
@@ -363,7 +374,8 @@ class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     const char* id() const override { return "MCA"; }
-    static constexpr auto metric_t = MetricKind::MASS;
+    static constexpr auto model_t  = MetricKind::MASS;             // coarse model evaluated in M-metric
+    static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;  // gradient evaluated in A-metric
 
     MassCoarseOracleEnergyAdaptive(CoarseOracleBase<dim>& model, SolverOptions options)
         : m_model(model)
@@ -374,9 +386,10 @@ public:
         , M_coarse(gp_coarse.get_M())
         , A_coarse(gp_coarse.get_A())
         , A_inv_coarse(gp_coarse.get_A_inv())
-        , m_norm(M_coarse)
+        //, m_norm(M_coarse)
+        , m_norm(A_coarse)
     {
-        AssertThrow(model.coarse().get_metric() == metric_t, dealii::ExcInternalError("mass metric expected"));
+        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("mass metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -457,9 +470,10 @@ public:
         return m_norm(x, z);
     }
 
+    // TODO: apply_model_metric?  (residual computations)
     void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
     {
-        M_coarse.vmult(dst, src);
+        A_coarse.vmult(dst, src);
     }
 
     MetricKind get_metric() const override { return metric_t; }
@@ -490,9 +504,10 @@ class FrobeniusCoarseOracle : public OracleBase
 {
 public:
     const char* id() const override { return "FC"; }
-    static constexpr auto metric_t = MetricKind::FROBENIUS;
+    static constexpr auto model_t  = MetricKind::FROBENIUS;  // coarse model evaluated in F-metric
+    static constexpr auto metric_t = MetricKind::FROBENIUS;  // gradient evaluated in F-metric
 
-    FrobeniusCoarseOracle(CoarseOracleBase<dim>& model)
+    FrobeniusCoarseOracle(CoarseOracleBase<dim>& model, SolverOptions options = {})
         : m_model(model)
         , m_coarse_res(model)
     // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
@@ -500,7 +515,7 @@ public:
         , M_coarse(gp_coarse.get_M())
         , A_coarse(gp_coarse.get_A())
     {
-        AssertThrow(model.coarse().get_metric() == metric_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -582,7 +597,7 @@ private:
     CoarseOracleBase<dim> &m_model;
     GrossPitaevskiiCoarseResidual<dim> m_coarse_res;
 
-    const GrossPitaevskiiOracle<dim> &gp_coarse;
+    GrossPitaevskiiOracle<dim> &gp_coarse;
     const OperatorType &M_coarse, &A_coarse;
 };
 
@@ -592,7 +607,8 @@ class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
     const char* id() const override { return "FCA"; }
-    static constexpr auto metric_t = MetricKind::FROBENIUS;
+    static constexpr auto model_t  = MetricKind::FROBENIUS;        // coarse model evaluated in F-metric
+    static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;  // gradient evaluated in A-metric
 
     FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase<dim>& model, SolverOptions options)
         : m_model(model)
@@ -603,8 +619,9 @@ public:
         , M_coarse(gp_coarse.get_M())
         , A_coarse(gp_coarse.get_A())
         , A_inv_coarse(gp_coarse.get_A_inv())
+        , m_norm(A_coarse)
     {
-        AssertThrow(model.coarse().get_metric() == metric_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -678,19 +695,21 @@ public:
 
     double norm(const Vector<double>& v) const override
     {
-        return std::sqrt(v*v);
+        return m_norm(v);
     }
 
     double metric(const Vector<double>& x, const Vector<double>& z) const override
     {
-        return x * z;
+        return m_norm(x, z);
     }
 
+    // TODO: apply_model_metric?  (residual computations)
     void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
     {
-        dst = src;
+        A_coarse.vmult(dst, src);
     }
 
+    //MetricKind get_model() const { return model_t; }
     MetricKind get_metric() const override { return metric_t; }
 
 
@@ -705,6 +724,8 @@ private:
     GrossPitaevskiiOracle<dim> &gp_coarse;
     const OperatorType& M_coarse, &A_coarse;
     InverseOpType &A_inv_coarse;
+
+    SpdNorm<OperatorType> m_norm;
 };
 
 } // namespace gpe

@@ -76,11 +76,12 @@ public:
         conv_table_mg.resize(min_level, max_level);
     }
 
-    // TiltOracleType:  The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
-    // CoarseModelType: The coarse descent model (e.g. MassCoarseOracleEnergyAdaptive)
-    // OracleBase&:     The oracle used to evaluate the level objective
-    template <typename TiltOracleType, typename CoarseModelType>
-    void cycle(OracleBase& O_level, Vector<double>& x, unsigned level_idx)
+    // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
+    // CoarseModelType:      The coarse descent model (e.g. MassCoarseOracleEnergyAdaptive)
+    // TiltCoarseModelType:  The coarse descent model for recursive evaluation (e.g. MassCoarseOracle)
+    // OracleBase&:          The oracle used to evaluate the level objective
+    template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
+    void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
     {
         AssertIndexRange(level_idx, level_indices.size());
         unsigned level = level_indices.at(level_idx);
@@ -103,6 +104,7 @@ public:
         // Update the level oracle on the initial guess
         // This matches m_objective_mg[level]->update(x)
         O_level.update(x);
+        // TODO: O_level and T_level should point to same underlying state (GrossPitaevskiiSystem)
 
         if (level_idx == 0) {
         //if (level == min_level) {
@@ -133,15 +135,19 @@ public:
         unsigned coarse_level     = level_indices.at(coarse_level_idx);
 
         TiltOracleType T_coarse(*m_objective_mg[coarse_level], options_solver_mg[coarse_level]);
-        TiltOracleType T_level (*m_objective_mg[level], options_solver_mg[level]);
 
         // Define the coarse model (for levels min_level+1..max_level)
         // Required to evaluate the coarse condition
         // Note: CoarseOracleBase is problem-independent and only depends on the OracleBase interface
-        CoarseOracleBase<dim> qk_base(T_level, T_coarse,
-            *m_manifold_mg[coarse_level], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
-        // Evaluation of coarse model
+        // Recursive call (example)
+        // - T_level:  MassCoarseOracle
+        // - T_coarse: MassOracle
+        // - O_level:  MassCoarseOracleEnergyAdaptive
+        CoarseOracleBase<dim> qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
+        // Evaluation of coarse model gradient  (-> descent direction, A-gradient)
         CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
+        // Evaluation of coarse model objective (-> correction term w, M-gradient)
+        TiltCoarseOracleType qk_m(qk_base, options_solver_mg[coarse_level]);
 
         // T_level.update(x)
         // TODO: clearly encode that T_level and O_level point to the same GrossPitaevskiiSystem (~Functional)
@@ -177,7 +183,7 @@ public:
 
                     // Solve the coarse model q_k(zk)
                     // TODO: pass on ostream (-> callback strategy)
-                    this->template cycle<TiltOracleType, CoarseModelType>(qk, zk, coarse_level_idx, std::cerr);
+                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(qk, qk_m, zk, coarse_level_idx, std::cerr);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -228,10 +234,10 @@ fine_step:
     }
 
     // TODO: only output on certain levels OR include the current level in the table
-    template <typename TiltOracleType, typename CoarseModelType>
-    void cycle(OracleBase& O_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
+    template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
+    void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
     {
-        cycle<TiltOracleType, CoarseModelType>(O_level, x, level_idx);
+        cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(O_level, T_level, x, level_idx);
 
         unsigned level = level_indices.at(level_idx);
         auto& convergence_table = conv_table_mg[level];
