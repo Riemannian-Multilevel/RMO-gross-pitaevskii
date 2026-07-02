@@ -77,8 +77,8 @@ public:
     }
 
     // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
-    // CoarseModelType:      The coarse descent model (e.g. MassCoarseOracleEnergyAdaptive)
-    // TiltCoarseModelType:  The coarse descent model for recursive evaluation (e.g. MassCoarseOracle)
+    // TiltCoarseModelType:  The coarse oracle used for building 'w' (e.g. MassCoarseOracle)
+    // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // OracleBase&:          The oracle used to evaluate the level objective
     template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
