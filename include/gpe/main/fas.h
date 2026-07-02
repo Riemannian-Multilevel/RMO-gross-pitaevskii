@@ -117,9 +117,12 @@ public:
                 dk  = x_grad;
                 dk *= -1.0;
 
+                double dir_deriv = O_level.directional_derivative(x, dk);
+
                 // Pass level manifold into cycle_smooth()
                 // -> runs O_level.update(x)
-                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, timer, options_descent_mg[level]);
+                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, dir_deriv,
+                    timer, options_descent_mg[level]);
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
@@ -183,7 +186,9 @@ public:
 
                     // Solve the coarse model q_k(zk)
                     // TODO: pass on ostream (-> callback strategy)
-                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(qk, qk_m, zk, coarse_level_idx, std::cerr);
+                    //       throw/catch exception when we do not have a descent direction on the fine level
+                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(qk, qk_m,
+                        zk, coarse_level_idx, std::cerr);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -195,16 +200,30 @@ public:
 #endif
                     m_vector_transport_mg[level]->vector_prolongation(state.x, state.y, zk, dk);
 
+                    // Fallback to gradient descent in case of ascend direction
+                    // TODO: skip coarse steps for remainder of the cycle?
+                    double dir_deriv = O_level.directional_derivative(x, dk);
+
+                    if (dir_deriv >= 0) {
+                        std::cerr << "warning: not a descent direction (" << dir_deriv
+                                  << std::setprecision(12) << ")" << std::endl;
+                        std::cerr << "falling back to gradient step" << std::endl;
+
+                        goto fine_step;
+                    }
+
                     // Pass fine_manifold into cycle_smooth
                     // -> runs O_level.update(x)
-                    CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, timer, options_descent_mg[level]);
+                    CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, dir_deriv,
+                        timer, options_descent_mg[level]);
                     info.iter      = i;
                     info.coarse    = true;
                     info.lac_iter  = 0;
                     info.level     = level;
 
                     cycle_eval(O_level, x, convergence_table, info);
-                } else {
+                }
+                else {
                     goto fine_step;
                 }
             }
@@ -217,9 +236,14 @@ fine_step:
                 dk  = x_grad;
                 dk *= -1.0;
 
+                // TODO: this can still be an ascend direction for coarser levels (numerical issues?)
+                //       return early from the cycle in this case?
+                double dir_deriv = O_level.directional_derivative(x, dk);
+
                 // Pass fine_manifold into cycle_smooth
                 // -> runs O_fine.update(x)
-                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, timer, options_descent_mg[level]);
+                CycleInfo info = cycle_smooth(O_level, *m_manifold_mg[level], x, dk, dir_deriv,
+                    timer, options_descent_mg[level]);
                 info.iter      = i;
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
