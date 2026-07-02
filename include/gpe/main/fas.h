@@ -155,13 +155,15 @@ public:
         // T_level.update(x)
         // TODO: clearly encode that T_level and O_level point to the same GrossPitaevskiiSystem (~Functional)
 
-        bool check_coarse_cond = true;
+        bool check_coarse_cond = true;  // allow disabling coarse steps entirely at some point in the iteration
+        bool prev_fine_step = false;
 
         // Begin (W-)cycle
         for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
             //level_log.push_back(level_indices.at(level_idx));
 
-            if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
+            //if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
+            if (check_coarse_cond && (i == 0 || prev_fine_step)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
                 // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
@@ -211,6 +213,7 @@ public:
 
                         goto fine_step;
                     }
+                    prev_fine_step = false;
 
                     // Pass fine_manifold into cycle_smooth
                     // -> runs O_level.update(x)
@@ -231,6 +234,7 @@ public:
                 convergence_table.add_value("grad_restr_norm", 0);
                 convergence_table.add_value("grad_norm", 0);
 fine_step:
+                prev_fine_step = true;
                 // Record that a fine step was taken on this level
                 level_log.push_back(level_indices.at(level_idx));
                 // Update gradient
