@@ -159,7 +159,7 @@ public:
 
         // Begin (W-)cycle
         for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
-            level_log.push_back(level_indices.at(level_idx));
+            //level_log.push_back(level_indices.at(level_idx));
 
             if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
@@ -231,6 +231,8 @@ public:
                 convergence_table.add_value("grad_restr_norm", 0);
                 convergence_table.add_value("grad_norm", 0);
 fine_step:
+                // Record that a fine step was taken on this level
+                level_log.push_back(level_indices.at(level_idx));
                 // Update gradient
                 auto info_grad = O_level.gradient(x, x_grad);
                 dk  = x_grad;
