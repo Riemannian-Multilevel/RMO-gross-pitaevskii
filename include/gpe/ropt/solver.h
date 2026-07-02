@@ -42,6 +42,7 @@ public:
 template <typename Oracle>
 CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
                        Vector<double>& x, const Vector<double>& eta,
+                       double dir_deriv,
                        const dealii::Timer& timer,
                        DescentOptions options_gd)
 {
@@ -53,8 +54,8 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
 #endif
         double Ex = O_fine.value(x);
-        double dir_deriv = O_fine.directional_derivative(x, eta);
-
+        //double dir_deriv = O_fine.directional_derivative(x, eta);
+        // Runs O_fine.update(x)
         step_size = armijo_line_search(O_fine, manifold, x, eta, Ex, dir_deriv, options_gd);
 
         if (step_size <= options_gd.ls.min) {
@@ -145,9 +146,11 @@ public:
             dk  = x_grad;
             dk *= -1.0;
 
+            double dir_deriv = O_fine.directional_derivative(x, dk);
+
             // Evaluate directional derivative in A-norm
             // -> runs OracleBase::update()
-            CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, timer, options_gd);
+            CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, dir_deriv, timer, options_gd);
             info.iter      = i;
             info.coarse    = false;
             info.lac_iter  = info_grad.num_iter;
