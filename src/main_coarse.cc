@@ -216,15 +216,18 @@ public:
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
         // Execute the cycle on the finest level
-        EnergyOracle<dim> O_fine (*objective_mg[max_level], options_solver_mg[max_level]);
-        MassOracle<dim>   T_fine (*objective_mg[max_level], options_solver_mg[max_level]);
+        EnergyOracle<dim> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
         if (metric_t == MetricKind::FROBENIUS) {
+            FrobeniusOracle<dim> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+
             fas_solver->template cycle<FrobeniusOracle<dim>, FrobeniusCoarseOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive<dim>>(
                 O_fine, T_fine, x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::MASS) {
+            MassOracle<dim> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+
             fas_solver->template cycle<MassOracle<dim>, MassCoarseOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
                 O_fine, T_fine, x0, m_levels.size() - 1, os
             );
