@@ -318,6 +318,9 @@ public:
     /** @brief Access the geometry/grid object. */
     const HyperCube<dim>& get_grid() const { return grid; }
 
+    /** @brief Access the geometric mapping (reference cell to real cell). */
+    const dealii::Mapping<dim>& get_mapping() const { return *mapping; }
+
 private:
     HyperCube<dim>    grid;    ///< The geometry and triangulation.
     FeSpace<dim>      space;   ///< Wrapper for DoFHandler and AffineConstraints.

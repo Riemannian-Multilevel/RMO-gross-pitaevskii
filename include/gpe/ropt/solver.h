@@ -177,7 +177,7 @@ public:
             info.level     = 0;
 
             auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
-            x_hist.emplace_back();
+            x_hist.emplace_back(x);
 
             if (residual < options_gd.tol_residual) {
                 // trick so that convergence_table is updated for last step
