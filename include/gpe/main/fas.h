@@ -248,6 +248,11 @@ public:
                     info.level     = level;
 
                     cycle_eval(O_level, x, convergence_table, info);
+
+                    // Plot history of iterates
+                    if (level_idx == level_indices.size() - 1) {
+                        x_hist.emplace_back(x);
+                    }
                 }
                 else {
                     goto fine_step;
@@ -278,12 +283,16 @@ fine_step:
                 info.level     = level;
 
                 cycle_eval(O_level, x, convergence_table, info);
+
+                // Plot history of iterates
+                if (level_idx == level_indices.size() - 1) {
+                    x_hist.emplace_back(x);
+                }
             }
         }
+
         if (level_idx == level_indices.size() - 1) {
             timer.stop();
-            // Plot history of iterates
-            x_hist.emplace_back(x);
         }
     }
 
