@@ -176,11 +176,16 @@ public:
         convergence_table.add_value("grad_norm", 0);
         convergence_table.add_value("grad_restr_norm", 0);
 
-        cycle_eval(O_level, x, convergence_table, info);
+        auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
             x_hist.emplace_back(x);
+
+            // Residual check on finest level
+            if (residual < options_descent_mg[level].tol_residual) {
+                return;
+            }
         }
 
         // Begin (W-)cycle
@@ -247,12 +252,22 @@ public:
                     info.lac_iter  = 0;
                     info.level     = level;
 
-                    cycle_eval(O_level, x, convergence_table, info);
+                    auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
                         x_hist.emplace_back(x);
+
+                        // Residual check on finest level
+                        if (residual < options_descent_mg[level].tol_residual) {
+                            return;
+                        }
                     }
+
+                    // TODO: residual check on coarser levels?
+                    // if (residual < options_descent_mg[level].tol_residual) {
+                    //     break;
+                    // }
                 }
                 else {
                     goto fine_step;
@@ -282,12 +297,22 @@ fine_step:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                cycle_eval(O_level, x, convergence_table, info);
+                auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {
                     x_hist.emplace_back(x);
+
+                    // Residual check on finest level
+                    if (residual < options_descent_mg[level].tol_residual) {
+                        return;
+                    }
                 }
+
+                // TODO: residual check on coarser levels?
+                // if (residual < options_descent_mg[level].tol_residual) {
+                //     break;
+                // }
             }
         }
 
