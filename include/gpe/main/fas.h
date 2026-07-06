@@ -106,11 +106,20 @@ public:
         O_level.update(x);
         // TODO: O_level and T_level should point to same underlying state (GrossPitaevskiiSystem)
 
+        // Solve on coarsest level
         if (level_idx == 0) {
-        //if (level == min_level) {
+            // Evaluate starting value
+            CycleInfo info;
+            info.iter     = 0;
+            info.coarse   = false;
+            info.lac_iter = 0;
+            info.level    = level;
+
+            cycle_eval(O_level, x, convergence_table, info);
+
             // Coarse condition is always false on coarsest level
             // -> gradient descent
-            for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
+            for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
                 level_log.push_back(level);
 
                 auto info_grad = O_level.gradient(x, x_grad);
@@ -157,11 +166,23 @@ public:
 
         bool check_coarse_cond = true;
 
+        // Evaluate starting value (finer levels)
+        CycleInfo info;
+        info.iter     = 0;
+        info.coarse   = false;
+        info.lac_iter = 0;
+        info.level    = level;
+
+        convergence_table.add_value("grad_norm", 0);
+        convergence_table.add_value("grad_restr_norm", 0);
+
+        cycle_eval(O_level, x, convergence_table, info);
+
         // Begin (W-)cycle
-        for (unsigned i = 0; i < options_descent_mg[level].max_iter; i++) {
+        for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
             //level_log.push_back(level_indices.at(level_idx));
 
-            if (check_coarse_cond && (i == 0 || i % options_fas.coarse_every == 0)) {
+            if (check_coarse_cond && (i == 1 || (i-1) % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
                 // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
