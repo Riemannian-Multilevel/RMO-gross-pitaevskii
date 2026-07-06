@@ -5,6 +5,8 @@
 #include <gpe/option.h>
 #include <gpe/ropt/manifold.h>
 
+#include <fmt/format.h>
+
 using namespace dealii;
 using namespace gpe;
 
@@ -106,6 +108,10 @@ public:
         solver = std::make_unique<GradientDescent<dim>>(*oracle, *manifold, options_gd);
         solver->cycle(x0, os);
     }
+
+    const auto& history() const { return solver->history(); }
+    const auto& get_M() const { return builder->get_system().get_M(); }
+    const auto& get_package() { return builder->get_package(); }
 
 private:
     std::unique_ptr<ModelBuilder<dim>>              builder;
@@ -262,8 +268,8 @@ public:
     const auto& history() const { return fas_solver->history(); }
     const auto& get_M(int level) { return builders_mg[level]->get_system().get_M(); }
     const auto& get_M() { return builders_mg[max_level]->get_system().get_M(); }
-    const auto& get_context(int level) { return builders_mg[level]->get_context(); }
-    const auto& get_context() { return builders_mg[max_level]->get_context(); }
+    const auto& get_package(int level) { return builders_mg[level]->get_package(); }
+    const auto& get_package() { return builders_mg[max_level]->get_package(); }
 
 private:
     std::vector<unsigned> m_levels;
@@ -331,9 +337,21 @@ int main(int argc, char* argv[])
 
                 Vector<double> x0(exp.n_dofs());
                 x0 = 1.0;
-                exp.distribute(x0);
+                // auto M_norm = SpdNorm(exp.get_M());
+                // x0 /= M_norm(x0);
 
+                exp.distribute(x0);
                 exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
+
+                // Plot incumbent solutions
+                const auto& hist = exp.history();
+
+                unsigned iter = 0;
+                for (const auto& x : hist) {
+                    std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}.svg", dim, options.beta, options_mg.v_levels.size(), iter++);
+
+                    output_results(x, exp.get_package().get_dofs(), DataOutBase::OutputFormat::svg, filename);
+                }
             }
             else {
                 auto exp = std::visit([&](auto&& arg) {
@@ -342,10 +360,23 @@ int main(int argc, char* argv[])
 
                 Vector<double> x0(exp.n_dofs());
                 x0 = 1.0;
-                exp.distribute(x0);
+                // auto M_norm = SpdNorm(exp.get_M());
+                // x0 /= M_norm(x0);
 
+                exp.distribute(x0);
                 exp.run(x0, options_fas.metric_t, std::cout);
                 exp.log(std::cerr);
+
+                // Plot incumbent solutions
+                const auto& hist = exp.history();
+
+                // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
+                unsigned iter = 0;
+                for (const auto& x : hist) {
+                    std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.svg", dim, options.beta, options_mg.v_levels.size(), iter++);
+
+                    output_results(x, exp.get_package().get_dofs(), DataOutBase::OutputFormat::svg, filename);
+                }
             }
         });
     }
