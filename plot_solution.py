@@ -25,6 +25,22 @@ a separate coordinates file):
         --reference solution_2d_sl_b100_lvl6_iter25.bin \\
         --reference-coords solution_2d_sl_b100_lvl6_coords.bin \\
         --out iter5.png
+
+Fix the colorbar range (e.g. to [0, 0.3]) so several solutions plotted this
+way, or a run's own diff plots, share the same color scale and are directly
+comparable -- otherwise each plot auto-scales to its own min/max:
+    python3 plot_solution.py solution_2d_ml_b100_lvl4_coords.bin \\
+        solution_2d_ml_b100_lvl4_iter5.bin --vmin 0 --vmax 0.3 \\
+        --diff-vmin -6 --diff-vmax 0 --out iter5.png
+
+Replace the default plot title, and floor the diff plot above discretization
+noise instead of showing its full dynamic range down to ~1e-300 (--title
+applies to both the main plot and, if --reference is given, the diff plot,
+unless --diff-title is also given to override it just for the latter):
+    python3 plot_solution.py solution_2d_ml_b100_lvl4_coords.bin \\
+        solution_2d_ml_b100_lvl4_iter5.bin --reference solution_2d_ml_b100_lvl4_iter0.bin \\
+        --title "GP ground state (beta=100, lvl=4, iter=5)" \\
+        --diff-title "Error vs. iter=0" --eps 1e-8 --out iter5.png
 """
 import argparse
 import struct
@@ -185,20 +201,26 @@ def rasterize(coords, values, resolution):
         raise ValueError(f"unsupported coordinate dimension {dim}")
 
 
-def plot_line(x, z, title, out_path):
+def plot_line(x, z, title, out_path, vmin=None, vmax=None):
     """Save a 1D line plot of z(x) to out_path. Counterpart of plot_heatmap()
-    for 1D data, as dispatched by plot_field()."""
+    for 1D data, as dispatched by plot_field().
+
+    vmin/vmax, when given, fix the y-axis range instead of auto-scaling to
+    z's own min/max -- the 1D analogue of a fixed colorbar range, so that
+    line plots from different solutions remain visually comparable.
+    """
     plt.figure(figsize=(7, 4))
     ax = sns.lineplot(x=x, y=z)
     ax.set_title(title)
     ax.set_xlabel("x")
     ax.set_ylabel(title)
+    ax.set_ylim(vmin, vmax)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
 
 
-def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, ax=None):
+def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None, ax=None):
     """Draw a single 2D field as a seaborn heatmap.
 
     If ax is None (the default), creates its own figure and saves it to
@@ -210,6 +232,10 @@ def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, ax=None):
     center, when set, is forwarded to seaborn to fix the colormap's midpoint
     (e.g. 0 for a signed diverging field) instead of auto-scaling to the
     data's own min/max.
+
+    vmin/vmax, when given, fix the colorbar range instead of auto-scaling to
+    grid_z's own min/max -- this is what makes heatmaps from different
+    solutions (or different diff plots) directly comparable by color.
     """
     standalone = ax is None
     if standalone:
@@ -217,7 +243,7 @@ def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, ax=None):
         ax = plt.gca()
 
     sns.heatmap(
-        grid_z, cmap=cmap, center=center, square=True,
+        grid_z, cmap=cmap, center=center, vmin=vmin, vmax=vmax, square=True,
         xticklabels=False, yticklabels=False, cbar=True, ax=ax,
     )
     ax.invert_yaxis()  # row 0 of grid_z is the minimum coordinate value
@@ -229,7 +255,7 @@ def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, ax=None):
         plt.close()
 
 
-def plot_slices(grid_z, title, out_path, cmap="viridis", center=None):
+def plot_slices(grid_z, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None):
     """Three orthogonal mid-plane slices through a 3D field, laid out side by
     side in one figure and saved to out_path. There is no native 3D array
     support in seaborn, so this is the volumetric analogue of plot_heatmap().
@@ -238,29 +264,34 @@ def plot_slices(grid_z, title, out_path, cmap="viridis", center=None):
     Slice titles report the grid *index* at which each cut was taken (not the
     physical coordinate) since this function has no access to the "axes"
     array rasterize_3d() also returns.
+
+    vmin/vmax fix a shared colorbar range across all three slices (and, by
+    passing the same values elsewhere, across different plots entirely);
+    see plot_heatmap().
     """
     n = grid_z.shape[0]
     mid = n // 2
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    plot_heatmap(grid_z[mid, :, :], f"{title} (x={mid}, yz-slice)", None, cmap, center, ax=axes[0])
-    plot_heatmap(grid_z[:, mid, :], f"{title} (y={mid}, xz-slice)", None, cmap, center, ax=axes[1])
-    plot_heatmap(grid_z[:, :, mid], f"{title} (z={mid}, xy-slice)", None, cmap, center, ax=axes[2])
+    plot_heatmap(grid_z[mid, :, :], f"{title} (x={mid}, yz-slice)", None, cmap, center, vmin, vmax, ax=axes[0])
+    plot_heatmap(grid_z[:, mid, :], f"{title} (y={mid}, xz-slice)", None, cmap, center, vmin, vmax, ax=axes[1])
+    plot_heatmap(grid_z[:, :, mid], f"{title} (z={mid}, xy-slice)", None, cmap, center, vmin, vmax, ax=axes[2])
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
 
 
-def plot_field(result, title, out_path, cmap="viridis", center=None):
+def plot_field(result, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None):
     """Dispatch a rasterize()/rasterize_1d/2d/3d() result to the matching
     plot_line()/plot_heatmap()/plot_slices() function, based on its "dim"
-    key. cmap/center are only used for the 2D/3D cases."""
+    key. cmap/center/vmin/vmax are only used for the 2D/3D cases, except
+    vmin/vmax which also fix plot_line()'s y-axis range in the 1D case."""
     if result["dim"] == 1:
-        plot_line(result["x"], result["z"], title, out_path)
+        plot_line(result["x"], result["z"], title, out_path, vmin=vmin, vmax=vmax)
     elif result["dim"] == 2:
-        plot_heatmap(result["grid"], title, out_path, cmap=cmap, center=center)
+        plot_heatmap(result["grid"], title, out_path, cmap=cmap, center=center, vmin=vmin, vmax=vmax)
     elif result["dim"] == 3:
-        plot_slices(result["grid"], title, out_path, cmap=cmap, center=center)
+        plot_slices(result["grid"], title, out_path, cmap=cmap, center=center, vmin=vmin, vmax=vmax)
 
 
 def main():
@@ -279,6 +310,35 @@ def main():
                         help="grid resolution in each dimension (default: 1024 for 1D, "
                              "512 for 2D, 64 for 3D -- 3D interpolation cost grows as "
                              "resolution^3, so raise it with care)")
+    parser.add_argument("--vmin", type=float, default=None,
+                        help="fix the lower end of the colorbar/y-axis range for the solution "
+                             "plot (default: auto-scale to this solution's own min), so that "
+                             "plots of different solutions use the same color scale and are "
+                             "directly comparable")
+    parser.add_argument("--vmax", type=float, default=None,
+                        help="fix the upper end of the colorbar/y-axis range for the solution "
+                             "plot (default: auto-scale to this solution's own max)")
+    parser.add_argument("--diff-vmin", type=float, default=None,
+                        help="fix the lower end of the colorbar range for the log10|diff| plot "
+                             "(default: auto-scale). Independent of --vmin, since the diff plot "
+                             "is on a log10 scale, not the solution's own scale")
+    parser.add_argument("--diff-vmax", type=float, default=None,
+                        help="fix the upper end of the colorbar range for the log10|diff| plot "
+                             "(default: auto-scale)")
+    parser.add_argument("--eps", type=float, default=1e-300,
+                        help="tolerance added before taking the log in the diff plot, i.e. "
+                             "log10(|psi - psi_ref| + eps) instead of plain log10|psi - psi_ref| "
+                             "(default: 1e-300, i.e. just enough to avoid log10(0) -- raise it "
+                             "(e.g. to 1e-8) to floor the plot above discretization/roundoff "
+                             "noise instead of showing the full dynamic range down to that noise)")
+    parser.add_argument("--title", default=None,
+                        help="replaces the default plot title ('psi', or 'log10 |psi - psi_ref|' "
+                             "for the diff plot if --diff-title is not also given), e.g. to "
+                             "label a run's parameters")
+    parser.add_argument("--diff-title", default=None,
+                        help="replaces the default diff plot title, overriding --title for that "
+                             "plot specifically (default: falls back to --title, then to "
+                             "'log10 |psi - psi_ref|')")
     parser.add_argument("--out", default="solution.png", help="output image path")
     args = parser.parse_args()
 
@@ -296,8 +356,10 @@ def main():
         print(f"warning: 3D resolution {resolution} means a {resolution}^3 grid; "
               "this can be slow/memory-heavy to interpolate", file=sys.stderr)
 
+    title = args.title or "psi"
+
     result = rasterize(coords, values, resolution)
-    plot_field(result, "psi", args.out)
+    plot_field(result, title, args.out, vmin=args.vmin, vmax=args.vmax)
     print(f"wrote {args.out}")
 
     if args.reference:
@@ -311,16 +373,18 @@ def main():
             )
 
         ref_result = rasterize(ref_coords, ref_values, resolution)
+        diff_title = args.diff_title or args.title or "log10 |psi - psi_ref|"
 
         if dim == 1:
-            log_diff = np.log10(np.maximum(np.abs(result["z"] - ref_result["z"]), 1e-300))
+            log_diff = np.log10(np.abs(result["z"] - ref_result["z"]) + args.eps)
             diff_result = {"dim": 1, "x": result["x"], "z": log_diff}
         else:
-            log_diff = np.log10(np.maximum(np.abs(result["grid"] - ref_result["grid"]), 1e-300))
+            log_diff = np.log10(np.abs(result["grid"] - ref_result["grid"]) + args.eps)
             diff_result = {"dim": dim, "grid": log_diff, **{k: v for k, v in result.items() if k == "axes"}}
 
         diff_out = args.out.rsplit(".", 1)[0] + "_logdiff.png"
-        plot_field(diff_result, "log10 |psi - psi_ref|", diff_out, cmap="magma")
+        plot_field(diff_result, diff_title, diff_out, cmap="magma",
+                   vmin=args.diff_vmin, vmax=args.diff_vmax)
         print(f"wrote {diff_out}")
 
 
