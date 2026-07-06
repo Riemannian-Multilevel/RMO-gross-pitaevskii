@@ -355,10 +355,11 @@ int main(int argc, char* argv[])
                         dim, options.beta, options_mg.v_levels.size());
                     write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
 
+                    unsigned iter_width = std::to_string(hist.size() - 1).size();
                     unsigned iter = 0;
                     for (const auto& x : hist) {
-                        std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
-                            dim, options.beta, options_mg.v_levels.size(), iter++);
+                        std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{:0{}}.bin",
+                            dim, options.beta, options_mg.v_levels.size(), iter++, iter_width);
 
                         write_solution(x, filename);
                     }
@@ -385,11 +386,12 @@ int main(int argc, char* argv[])
                         dim, options.beta, options_mg.v_levels.size());
                     write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
 
-                    // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
+                    unsigned iter_width = std::to_string(hist.size() - 1).size();
                     unsigned iter = 0;
+                    // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
                     for (const auto& x : hist) {
-                        std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
-                            dim, options.beta, options_mg.v_levels.size(), iter++);
+                        std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{:0{}}.bin",
+                            dim, options.beta, options_mg.v_levels.size(), iter++, iter_width);
 
                         write_solution(x, filename);
                     }
