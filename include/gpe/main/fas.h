@@ -178,6 +178,11 @@ public:
 
         cycle_eval(O_level, x, convergence_table, info);
 
+        // Plot history of iterates
+        if (level_idx == level_indices.size() - 1) {
+            x_hist.emplace_back(x);
+        }
+
         // Begin (W-)cycle
         for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
             //level_log.push_back(level_indices.at(level_idx));
@@ -277,6 +282,8 @@ fine_step:
         }
         if (level_idx == level_indices.size() - 1) {
             timer.stop();
+            // Plot history of iterates
+            x_hist.emplace_back(x);
         }
     }
 
@@ -304,6 +311,8 @@ fine_step:
         return level_log;
     }
 
+    const auto& history() const { return x_hist; }
+
 private:
     MGLevelObject<ConvergenceTable> conv_table_mg;
     mutable dealii::Timer timer;
@@ -319,6 +328,7 @@ private:
     MGLevelObject<SolverOptions>                          options_solver_mg;
     FAS_Options                                           options_fas;
 
+    std::vector<Vector<double>> x_hist;
 };
 
 } // namespace gpe

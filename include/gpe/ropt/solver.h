@@ -12,6 +12,8 @@
 #include <gpe/problem/oracle.h>
 #include <gpe/ropt/descent.h>
 
+#include "gpe/util/util.h"
+
 namespace gpe
 {
 
@@ -147,6 +149,8 @@ public:
         info.iter   = 0;
 
         auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
+        x_hist.clear();
+        x_hist.emplace_back(x);
 
         if (residual < options_gd.tol_residual) {
             return;
@@ -173,6 +177,7 @@ public:
             info.level     = 0;
 
             auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
+            x_hist.emplace_back();
 
             if (residual < options_gd.tol_residual) {
                 // trick so that convergence_table is updated for last step
@@ -189,6 +194,8 @@ public:
         cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
+    const auto& history() const { return x_hist; }
+
 private:
     dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
@@ -196,6 +203,8 @@ private:
     OracleBase& O_fine;
     const ManifoldBase& manifold;
     DescentOptions options_gd;
+
+    std::vector<Vector<double>> x_hist;
 };
 
 } // namespace gpe
