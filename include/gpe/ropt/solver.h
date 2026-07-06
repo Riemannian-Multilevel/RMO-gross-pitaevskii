@@ -79,9 +79,10 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
 
 
 template <typename Oracle>
-void cycle_eval(const Oracle& O, const Vector<double>& y,
-                dealii::ConvergenceTable& convergence_table,
-                const CycleInfo info)
+std::pair<double,double>
+cycle_eval(const Oracle& O, const Vector<double>& y,
+           dealii::ConvergenceTable& convergence_table,
+           const CycleInfo info)
 {
     const double residual = O.residual(y);
     const double energy   = O.value(y);
@@ -94,6 +95,8 @@ void cycle_eval(const Oracle& O, const Vector<double>& y,
     convergence_table.add_value("energy",   energy);
     convergence_table.add_value("step",     info.step_size);
     convergence_table.add_value("elapsed",  info.elapsed);
+
+    return std::make_pair(residual, energy);
 }
 
 
@@ -137,7 +140,20 @@ public:
         Vector<double> x_grad(x.size());
         Vector<double> dk(x.size());
 
-        for (unsigned i = 0; i < options_gd.max_iter; i++) {
+        // Evaluate starting value
+        CycleInfo info;
+        info.level  = 0;
+        info.coarse = false;
+        info.iter   = 0;
+
+        auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
+
+        if (residual < options_gd.tol_residual) {
+            return;
+        }
+
+        // Execute gradient descent iterations
+        for (unsigned i = 1; i <= options_gd.max_iter; i++) {
             // Update gradient
 #ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
@@ -156,7 +172,13 @@ public:
             info.lac_iter  = info_grad.num_iter;
             info.level     = 0;
 
-            cycle_eval(O_fine, x, convergence_table, info);
+            auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
+
+            if (residual < options_gd.tol_residual) {
+                // trick so that convergence_table is updated for last step
+                // n iterations + starting solution -> n+1 table entries
+                break;
+            }
         }
         timer.stop();
     }

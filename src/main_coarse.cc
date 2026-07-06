@@ -103,8 +103,8 @@ public:
         }
 
         // 3. Execute the single-level gradient descent cycle
-        GradientDescent<dim> solver(*oracle, *manifold, options_gd);
-        solver.cycle(x0, os);
+        solver = std::make_unique<GradientDescent<dim>>(*oracle, *manifold, options_gd);
+        solver->cycle(x0, os);
     }
 
 private:
@@ -114,6 +114,8 @@ private:
 
     SolverOptions  options_slv;
     DescentOptions options_gd;
+
+    std::unique_ptr<GradientDescent<dim>> solver;
 };
 
 
@@ -211,6 +213,9 @@ public:
     }
 
     unsigned n_dofs() const { return builders_mg[max_level]->n_dofs(); }
+    unsigned n_level_min() const { return min_level; }
+    unsigned n_level_max() const { return max_level; }
+
     void distribute(Vector<double>& x) const { builders_mg[max_level]->distribute(x); }
 
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
@@ -253,6 +258,12 @@ public:
             os << levels.back() << "]";
         }
     }
+
+    const auto& history() const { return fas_solver->history(); }
+    const auto& get_M(int level) { return builders_mg[level]->get_system().get_M(); }
+    const auto& get_M() { return builders_mg[max_level]->get_system().get_M(); }
+    const auto& get_context(int level) { return builders_mg[level]->get_context(); }
+    const auto& get_context() { return builders_mg[max_level]->get_context(); }
 
 private:
     std::vector<unsigned> m_levels;
