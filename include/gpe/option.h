@@ -130,7 +130,9 @@ inline po::options_description gpe_cli_options() {
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
             "type of mesh elements used (quadrilateral|simplex)")
         ("potential", po::value<std::string>()->default_value("square"),
-            "used potential (square|optical_lattice)");
+            "used potential (square|optical_lattice)")
+        ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
+            "export incumbent solutions in binary format");
     return d;
 }
 
@@ -148,6 +150,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
+    options.export_solution = vm["export-solution"].as<bool>();
 }
 
 

@@ -129,6 +129,7 @@ struct GPE_Options
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
     Potential potential;    // used potential V for matrix M_V
+    bool export_solution;   // write incumbent solutions to disk
 };
 
 struct FAS_Options

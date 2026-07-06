@@ -80,6 +80,7 @@ public:
     // TiltCoarseModelType:  The coarse oracle used for building 'w' (e.g. MassCoarseOracle)
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // OracleBase&:          The oracle used to evaluate the level objective
+    // TODO: callback mechanism instead of convergence_table / x_hist
     template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
     {
@@ -137,7 +138,12 @@ public:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                cycle_eval(O_level, x, convergence_table, info);
+                auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+
+                // TODO: residual check on coarser levels?
+                // if (residual < options_descent_mg[level].tol_residual) {
+                //     break;
+                // }
             }
             return;
         }

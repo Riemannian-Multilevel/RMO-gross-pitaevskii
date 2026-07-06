@@ -344,22 +344,24 @@ int main(int argc, char* argv[])
                 exp.distribute(x0);
                 exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
 
-                // Serialize incumbent solutions: support point coordinates are
-                // written once (shared by every iterate on this level), then one
-                // raw solution vector per iterate. Post-process with plot_solution.py
-                // instead of writing one SVG per cell, which does not scale to
-                // large DoF counts.
-                const auto& hist = exp.history();
-                std::string coords_filename = fmt::format("solution_{}d_sl_b{}_lvl{}_coords.bin",
-                    dim, options.beta, options_mg.v_levels.size());
-                write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
+                if (options.export_solution) {
+                    // Serialize incumbent solutions: support point coordinates are
+                    // written once (shared by every iterate on this level), then one
+                    // raw solution vector per iterate. Post-process with plot_solution.py
+                    // instead of writing one SVG per cell, which does not scale to
+                    // large DoF counts.
+                    const auto& hist = exp.history();
+                    std::string coords_filename = fmt::format("solution_{}d_sl_b{}_lvl{}_coords.bin",
+                        dim, options.beta, options_mg.v_levels.size());
+                    write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
 
-                unsigned iter = 0;
-                for (const auto& x : hist) {
-                    std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
-                        dim, options.beta, options_mg.v_levels.size(), iter++);
+                    unsigned iter = 0;
+                    for (const auto& x : hist) {
+                        std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
+                            dim, options.beta, options_mg.v_levels.size(), iter++);
 
-                    write_solution(x, filename);
+                        write_solution(x, filename);
+                    }
                 }
             }
             else {
@@ -376,19 +378,21 @@ int main(int argc, char* argv[])
                 exp.run(x0, options_fas.metric_t, std::cout);
                 exp.log(std::cerr);
 
-                // Serialize incumbent solutions (see comment in the single-level branch above)
-                const auto& hist = exp.history();
-                std::string coords_filename = fmt::format("solution_{}d_ml_b{}_lvl{}_coords.bin",
-                    dim, options.beta, options_mg.v_levels.size());
-                write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
+                if (options.export_solution) {
+                    // Serialize incumbent solutions (see comment in the single-level branch above)
+                    const auto& hist = exp.history();
+                    std::string coords_filename = fmt::format("solution_{}d_ml_b{}_lvl{}_coords.bin",
+                        dim, options.beta, options_mg.v_levels.size());
+                    write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
 
-                // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
-                unsigned iter = 0;
-                for (const auto& x : hist) {
-                    std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
-                        dim, options.beta, options_mg.v_levels.size(), iter++);
+                    // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
+                    unsigned iter = 0;
+                    for (const auto& x : hist) {
+                        std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
+                            dim, options.beta, options_mg.v_levels.size(), iter++);
 
-                    write_solution(x, filename);
+                        write_solution(x, filename);
+                    }
                 }
             }
         });
