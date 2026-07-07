@@ -220,7 +220,8 @@ def plot_line(x, z, title, out_path, vmin=None, vmax=None):
     plt.close()
 
 
-def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None, ax=None):
+def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None,
+                 colorbar=True, ax=None):
     """Draw a single 2D field as a seaborn heatmap.
 
     If ax is None (the default), creates its own figure and saves it to
@@ -236,6 +237,9 @@ def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, vmin=None
     vmin/vmax, when given, fix the colorbar range instead of auto-scaling to
     grid_z's own min/max -- this is what makes heatmaps from different
     solutions (or different diff plots) directly comparable by color.
+
+    colorbar=False hides the colorbar entirely. title="" (as opposed to
+    None) hides the title -- ax.set_title("") reserves no title space.
     """
     standalone = ax is None
     if standalone:
@@ -244,7 +248,7 @@ def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, vmin=None
 
     sns.heatmap(
         grid_z, cmap=cmap, center=center, vmin=vmin, vmax=vmax, square=True,
-        xticklabels=False, yticklabels=False, cbar=True, ax=ax,
+        xticklabels=False, yticklabels=False, cbar=colorbar, ax=ax,
     )
     ax.invert_yaxis()  # row 0 of grid_z is the minimum coordinate value
     ax.set_title(title)
@@ -255,7 +259,7 @@ def plot_heatmap(grid_z, title, out_path, cmap="viridis", center=None, vmin=None
         plt.close()
 
 
-def plot_slices(grid_z, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None):
+def plot_slices(grid_z, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None, colorbar=True):
     """Three orthogonal mid-plane slices through a 3D field, laid out side by
     side in one figure and saved to out_path. There is no native 3D array
     support in seaborn, so this is the volumetric analogue of plot_heatmap().
@@ -263,35 +267,42 @@ def plot_slices(grid_z, title, out_path, cmap="viridis", center=None, vmin=None,
     grid_z: (resolution,)*3 array as returned in rasterize_3d()'s "grid" key.
     Slice titles report the grid *index* at which each cut was taken (not the
     physical coordinate) since this function has no access to the "axes"
-    array rasterize_3d() also returns.
+    array rasterize_3d() also returns. If title is "", the per-slice suffix
+    (e.g. "(x=32, yz-slice)") is dropped too, leaving no title at all.
 
     vmin/vmax fix a shared colorbar range across all three slices (and, by
     passing the same values elsewhere, across different plots entirely);
-    see plot_heatmap().
+    see plot_heatmap(). colorbar=False hides all three colorbars.
     """
     n = grid_z.shape[0]
     mid = n // 2
 
+    def slice_title(suffix):
+        return f"{title} {suffix}" if title else ""
+
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    plot_heatmap(grid_z[mid, :, :], f"{title} (x={mid}, yz-slice)", None, cmap, center, vmin, vmax, ax=axes[0])
-    plot_heatmap(grid_z[:, mid, :], f"{title} (y={mid}, xz-slice)", None, cmap, center, vmin, vmax, ax=axes[1])
-    plot_heatmap(grid_z[:, :, mid], f"{title} (z={mid}, xy-slice)", None, cmap, center, vmin, vmax, ax=axes[2])
+    plot_heatmap(grid_z[mid, :, :], slice_title(f"(x={mid}, yz-slice)"), None, cmap, center, vmin, vmax, colorbar, ax=axes[0])
+    plot_heatmap(grid_z[:, mid, :], slice_title(f"(y={mid}, xz-slice)"), None, cmap, center, vmin, vmax, colorbar, ax=axes[1])
+    plot_heatmap(grid_z[:, :, mid], slice_title(f"(z={mid}, xy-slice)"), None, cmap, center, vmin, vmax, colorbar, ax=axes[2])
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
 
 
-def plot_field(result, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None):
+def plot_field(result, title, out_path, cmap="viridis", center=None, vmin=None, vmax=None, colorbar=True):
     """Dispatch a rasterize()/rasterize_1d/2d/3d() result to the matching
     plot_line()/plot_heatmap()/plot_slices() function, based on its "dim"
-    key. cmap/center/vmin/vmax are only used for the 2D/3D cases, except
-    vmin/vmax which also fix plot_line()'s y-axis range in the 1D case."""
+    key. cmap/center/vmin/vmax/colorbar are only used for the 2D/3D cases
+    (colorbar has no 1D equivalent), except vmin/vmax which also fix
+    plot_line()'s y-axis range in the 1D case."""
     if result["dim"] == 1:
         plot_line(result["x"], result["z"], title, out_path, vmin=vmin, vmax=vmax)
     elif result["dim"] == 2:
-        plot_heatmap(result["grid"], title, out_path, cmap=cmap, center=center, vmin=vmin, vmax=vmax)
+        plot_heatmap(result["grid"], title, out_path, cmap=cmap, center=center, vmin=vmin, vmax=vmax,
+                    colorbar=colorbar)
     elif result["dim"] == 3:
-        plot_slices(result["grid"], title, out_path, cmap=cmap, center=center, vmin=vmin, vmax=vmax)
+        plot_slices(result["grid"], title, out_path, cmap=cmap, center=center, vmin=vmin, vmax=vmax,
+                   colorbar=colorbar)
 
 
 def main():
@@ -334,11 +345,15 @@ def main():
     parser.add_argument("--title", default=None,
                         help="replaces the default plot title ('psi', or 'log10 |psi - psi_ref|' "
                              "for the diff plot if --diff-title is not also given), e.g. to "
-                             "label a run's parameters")
+                             "label a run's parameters. Pass an empty string (--title \"\") to "
+                             "remove the title entirely")
     parser.add_argument("--diff-title", default=None,
                         help="replaces the default diff plot title, overriding --title for that "
                              "plot specifically (default: falls back to --title, then to "
-                             "'log10 |psi - psi_ref|')")
+                             "'log10 |psi - psi_ref|'); --diff-title \"\" removes just this title")
+    parser.add_argument("--no-colorbar", action="store_true",
+                        help="hide the colorbar (2D heatmap and 3D slice plots only; the 1D "
+                             "line plot has no colorbar to begin with)")
     parser.add_argument("--out", default="solution.png", help="output image path")
     args = parser.parse_args()
 
@@ -356,10 +371,13 @@ def main():
         print(f"warning: 3D resolution {resolution} means a {resolution}^3 grid; "
               "this can be slow/memory-heavy to interpolate", file=sys.stderr)
 
-    title = args.title or "psi"
+    # args.title is None if --title was never passed (use the default), but ""
+    # if --title "" was passed explicitly (remove the title) -- an `or` here
+    # would conflate the two, since "" is falsy.
+    title = "psi" if args.title is None else args.title
 
     result = rasterize(coords, values, resolution)
-    plot_field(result, title, args.out, vmin=args.vmin, vmax=args.vmax)
+    plot_field(result, title, args.out, vmin=args.vmin, vmax=args.vmax, colorbar=not args.no_colorbar)
     print(f"wrote {args.out}")
 
     if args.reference:
@@ -373,7 +391,12 @@ def main():
             )
 
         ref_result = rasterize(ref_coords, ref_values, resolution)
-        diff_title = args.diff_title or args.title or "log10 |psi - psi_ref|"
+        if args.diff_title is not None:
+            diff_title = args.diff_title
+        elif args.title is not None:
+            diff_title = args.title
+        else:
+            diff_title = "log10 |psi - psi_ref|"
 
         if dim == 1:
             log_diff = np.log10(np.abs(result["z"] - ref_result["z"]) + args.eps)
@@ -384,7 +407,7 @@ def main():
 
         diff_out = args.out.rsplit(".", 1)[0] + "_logdiff.png"
         plot_field(diff_result, diff_title, diff_out, cmap="magma",
-                   vmin=args.diff_vmin, vmax=args.diff_vmax)
+                   vmin=args.diff_vmin, vmax=args.diff_vmax, colorbar=not args.no_colorbar)
         print(f"wrote {diff_out}")
 
 
