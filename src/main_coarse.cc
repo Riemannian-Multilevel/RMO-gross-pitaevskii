@@ -267,8 +267,8 @@ public:
     }
 
     const auto& history() const { return fas_solver->history(); }
-    const auto& get_M(int level) { return builders_mg[level]->get_system().get_M(); }
-    const auto& get_M() { return builders_mg[max_level]->get_system().get_M(); }
+    const auto& get_M(int level) const { return builders_mg[level]->get_system().get_M(); }
+    const auto& get_M() const { return builders_mg[max_level]->get_system().get_M(); }
     const auto& get_package(int level) { return builders_mg[level]->get_package(); }
     const auto& get_package() { return builders_mg[max_level]->get_package(); }
 
@@ -338,10 +338,11 @@ int main(int argc, char* argv[])
 
                 Vector<double> x0(exp.n_dofs());
                 x0 = 1.0;
-                // auto M_norm = SpdNorm(exp.get_M());
-                // x0 /= M_norm(x0);
-
                 exp.distribute(x0);
+
+                // Starting value on the sphere
+                ellipsoid::retract_by_norm(exp.get_M(), x0);
+
                 exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
 
                 if (options.export_solution) {
@@ -355,11 +356,10 @@ int main(int argc, char* argv[])
                         dim, options.beta, options_mg.v_levels.size());
                     write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
 
-                    unsigned iter_width = std::to_string(hist.size() - 1).size();
                     unsigned iter = 0;
                     for (const auto& x : hist) {
-                        std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{:0{}}.bin",
-                            dim, options.beta, options_mg.v_levels.size(), iter++, iter_width);
+                        std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
+                            dim, options.beta, options_mg.v_levels.size(), iter++);
 
                         write_solution(x, filename);
                     }
@@ -372,10 +372,11 @@ int main(int argc, char* argv[])
 
                 Vector<double> x0(exp.n_dofs());
                 x0 = 1.0;
-                // auto M_norm = SpdNorm(exp.get_M());
-                // x0 /= M_norm(x0);
-
                 exp.distribute(x0);
+
+                // Starting value on the sphere
+                ellipsoid::retract_by_norm(exp.get_M(), x0);
+
                 exp.run(x0, options_fas.metric_t, std::cout);
                 exp.log(std::cerr);
 
@@ -386,12 +387,11 @@ int main(int argc, char* argv[])
                         dim, options.beta, options_mg.v_levels.size());
                     write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
 
-                    unsigned iter_width = std::to_string(hist.size() - 1).size();
                     unsigned iter = 0;
                     // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
                     for (const auto& x : hist) {
-                        std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{:0{}}.bin",
-                            dim, options.beta, options_mg.v_levels.size(), iter++, iter_width);
+                        std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
+                            dim, options.beta, options_mg.v_levels.size(), iter++);
 
                         write_solution(x, filename);
                     }
