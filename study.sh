@@ -7,17 +7,18 @@ argv0=./main_coarse
 beta_range=(1000)
 #iter_range=(20 40 60)
 iter_range=(150)
-top_level=11
-#top_level=10
 kappa=0.5
 eps=1e-4
 #eps=1e-2
 tol_res=1e-8
 line_search=1
+radius=11
+boundary=dirichlet
+potential=optical_lattice
 
 
 # Arguments -------------------------------------------------------------------------------------------------------------------
-args=(--potential optical_lattice --boundary dirichlet --radius 12)
+args=(--potential "$potential" --boundary "$boundary" --radius "$radius")
 
 if (( line_search )); then
     args+=(--line-search)
@@ -32,6 +33,9 @@ suffix=_optical_lattice.org
 
 
 # Multilevel hierarchy --------------------------------------------------------------------------------------------------------
+top_level=11
+#top_level=10
+
 declare -A levels
 levels[2]="$top_level,$((top_level-1))"
 #levels[2_mix]="$top_level,$((top_level-2))"
@@ -39,8 +43,8 @@ levels[3]="$top_level,$((top_level-1)),$((top_level-2))"
 #levels[3_mix]="$top_level,$((top_level-2)),$((top_level-4))"
 levels[4]="$top_level,$((top_level-1)),$((top_level-2)),$((top_level-3))"
 #levels[4_mix]="$top_level,$((top_level-2)),$((top_level-3)),$((top_level-4))"
-levels[5]="$top_level,$((top_level-1)),$((top_level-2)),$((top_level-3)),$((top_level-4))"
-levels[6]="$top_level,$((top_level-1)),$((top_level-2)),$((top_level-3)),$((top_level-4)),$((top_level-5))"
+#levels[5]="$top_level,$((top_level-1)),$((top_level-2)),$((top_level-3)),$((top_level-4))"
+#levels[6]="$top_level,$((top_level-1)),$((top_level-2)),$((top_level-3)),$((top_level-4)),$((top_level-5))"
 #levels[7]="$top_level,$((top_level-1)),$((top_level-2)),$((top_level-3)),$((top_level-4)),$((top_level-5)),$((top_level-6))"
 
 
@@ -55,7 +59,7 @@ for i in "${!beta_range[@]}"; do
     iter=${iter_range[$i]}
 
     # Single level reference
-    $argv0 "${args[@]}" --levels "$top_level" --metric none --max-iter 1000 --tol-residual 1e-14 --beta "$beta"
+    $argv0 "${args[@]}" --levels "$top_level" --metric none --max-iter 1000 --tol-residual 1e-14 --beta "$beta" \
 	    >"sl_b${beta}_l${top_level}${suffix}"
     
     
