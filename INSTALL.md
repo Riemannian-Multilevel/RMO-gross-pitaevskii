@@ -141,3 +141,13 @@ FAS options:
   --interpolate arg (=none)             galerkin condition on linear 
                                         interpolation (none|mass)
 ```
+
+To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
+
+```bash
+cp study.sh build/
+cd build
+./study.sh
+```
+
+The files will be generated in the current directory (`build/` in the example above.)
