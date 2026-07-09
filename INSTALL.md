@@ -56,10 +56,16 @@ Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and follow 
 
 # CMake
 
-After installing `deal.ii`, the project can be built with `CMake`. Navigate to the source directory 
-and run the following commands:
+After installing `deal.ii`, the project can be built with `CMake`. Download the git repository:
 
 ```bash
+git clone https://github.com/Riemannian-Multilevel/gpe-multilevel-dealii
+```
+
+Navigate to the source directory and run the following commands:
+
+```bash
+cd gpe-multilevel-dealii
 rm -rf build
 mkdir build
 cd build
