@@ -111,10 +111,12 @@ public:
         if (level_idx == 0) {
             // Evaluate starting value
             CycleInfo info;
-            info.iter     = 0;
-            info.coarse   = false;
-            info.lac_iter = 0;
-            info.level    = level;
+            info.iter      = 0;
+            info.coarse    = false;
+            info.lac_iter  = 0;
+            info.level     = level;
+            info.step_size = 0.0;   // no step taken yet
+            info.elapsed   = timer.cpu_time();
 
             cycle_eval(O_level, x, convergence_table, info);
 
@@ -139,6 +141,12 @@ public:
                 info.level     = level;
 
                 auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+
+                // Avoid a stalling line search where the solution x does not change
+                if (options_descent_mg[level].line_search && info.step_size == 0.0) {
+                    std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
+                    break;
+                }
 
                 // TODO: residual check on coarser levels?
                 // if (residual < options_descent_mg[level].tol_residual) {
@@ -174,10 +182,12 @@ public:
 
         // Evaluate starting value (finer levels)
         CycleInfo info;
-        info.iter     = 0;
-        info.coarse   = false;
-        info.lac_iter = 0;
-        info.level    = level;
+        info.iter      = 0;
+        info.coarse    = false;
+        info.lac_iter  = 0;
+        info.level     = level;
+        info.step_size = 0.0;   // no step taken yet
+        info.elapsed   = timer.cpu_time();
 
         convergence_table.add_value("grad_norm", 0);
         convergence_table.add_value("grad_restr_norm", 0);
@@ -270,6 +280,12 @@ public:
                         }
                     }
 
+                    // Avoid a stalling line search where the solution x does not change
+                    if (options_descent_mg[level].line_search && info.step_size == 0.0) {
+                        std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
+                        break;
+                    }
+
                     // TODO: residual check on coarser levels?
                     // if (residual < options_descent_mg[level].tol_residual) {
                     //     break;
@@ -313,6 +329,12 @@ fine_step:
                     if (residual < options_descent_mg[level].tol_residual) {
                         return;
                     }
+                }
+
+                // Avoid a stalling line search where the solution x does not change
+                if (options_descent_mg[level].line_search && info.step_size == 0.0) {
+                    std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
+                    break;
                 }
 
                 // TODO: residual check on coarser levels?

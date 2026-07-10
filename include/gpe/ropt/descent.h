@@ -98,7 +98,14 @@ double armijo_line_search(OracleType& oracle,
     }
     std::cerr << "Warning: Armijo line search hit max iterations ("
               << options.ls.max_iter << ")." << std::endl;
-    return options.ls.min;  // TODO: throw exception that can be caught
+    // x was never assigned x_trial above, so it (and the oracle's cached
+    // state, restored after each rejected trial) are unchanged -- signal
+    // that no step was taken, per this function's documented contract,
+    // instead of returning options.ls.min as if a (nonexistent) floor step
+    // had succeeded. Silently doing the latter previously caused callers to
+    // treat a stalled search as progress and retry it forever on an
+    // identical, still-non-descent direction (see cycle_smooth()/GradientDescent::cycle()).
+    return 0.0;
 }
 
 
