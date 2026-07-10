@@ -184,6 +184,12 @@ public:
                 // n iterations + starting solution -> n+1 table entries
                 break;
             }
+
+            // Avoid a stalling line search where the solution x does not change
+            if (options_gd.line_search && info.step_size == 0.0) {
+                std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
+                break;
+            }
         }
         timer.stop();
     }
