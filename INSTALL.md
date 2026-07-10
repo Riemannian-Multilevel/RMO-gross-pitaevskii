@@ -164,7 +164,7 @@ The resulting data can be plotted, matching Figures 7/8/9 in the paper:
 
 ```bash
 cd build
-python3 ../plot_convergence.py --format png
+python3 ../plot_convergence.py --format png --coarse-steps
 ```
 
 This requires the Python packages `seaborne`, `pandas` and `orgparse`.
