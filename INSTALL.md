@@ -56,16 +56,16 @@ Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and follow 
 
 # CMake
 
-After installing `deal.ii`, the project can be built with `CMake`. Download the git repository:
+After installing `deal.ii`, the project can be built with `CMake`. Download the git repository and initialize the submodules:
 
 ```bash
-git clone https://github.com/Riemannian-Multilevel/gpe-multilevel-dealii
+git clone --recurse-submodules https://github.com/Riemannian-Multilevel/gpe-multilevel-dealii
+cd gpe-multilevel-dealii
 ```
 
-Navigate to the source directory and run the following commands:
+Navigate to the source directory and build the applications:
 
 ```bash
-cd gpe-multilevel-dealii
 rm -rf build
 mkdir build
 cd build
@@ -73,6 +73,9 @@ cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j
 ```
+
+> *Note:*
+> The *Release* and *Debug* build types are optimized for performance and debugging, respectively.
 
 After the process is completed, all `gpe` programs are available in the `build` directory. 
 
@@ -82,7 +85,7 @@ After the process is completed, all `gpe` programs are available in the `build` 
 Each program has command-line parameters that can be listed with the `--help` flag. For example:
 
 ```bash
-build/main-coarse --help
+./main_coarse --help
 
 Allowed options:
   --help                                produce help message
@@ -151,9 +154,17 @@ FAS options:
 To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
 
 ```bash
-cp study.sh build/
 cd build
+cp ../study.sh .
 ./study.sh
 ```
 
 The files will be generated in the current directory (`build/` in the example above.)
+The resulting data can be plotted, matching Figures 7/8/9 in the paper:
+
+```bash
+cd build
+python3 ../plot_convergence.py --format png
+```
+
+This requires the Python packages `seaborne`, `pandas` and `orgparse`.
