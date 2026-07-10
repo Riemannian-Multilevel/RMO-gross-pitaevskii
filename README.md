@@ -1,145 +1,170 @@
-# GPE Discretization Architecture
+# Installation
 
-This project implements a high-performance solver for the Gross-Pitaevskii Equation (GPE). The codebase follows a tiered architecture to maintain a strict separation of concerns 
-between geometry, algebra, and optimization.
-
----
-
-## Design Philosophy
-
-### 1. Tiered responsibility
-The system is divided into three primary layers:
-
-| Layer | Component | Responsibility                                                                                                        |
-| :--- | :--- |:----------------------------------------------------------------------------------------------------------------------|
-| **Discretization** | `GrossPitaevskiiPackage` | Handles mesh generation, refinement, FE space distribution, and geometric mapping (Simplex vs. Quad).                 |
-| **Algebraic** | `GrossPitaevskiiProblem` | A container for matrices (A0, M, Mpp). Manages the iterative assembly of physical operators.                          |
-| **Optimization** | `EnergyOracle` | Bridges the physics to the Riemannian Gradient Descent algorithm.                                         |
-
-These layers are combined in the `EnergySimulator` class, which serves as an orchestrator.
-The manifold geometry is exposed in the `gpe::ellipsoid` namespace (`manifold.h`).
-
-### 2. Reuse of computation
-The triangulation and FE space often remain constant while physical parameters (like the potential V or the coupling constant beta) change.
-Keeping this in mind, you can instantiate one `GrossPitaevskiiPackage` and generate multiple `GrossPitaevskiiProblem` instances from it.
-
-This avoids redundant mesh generation, refinement, and sparsity pattern computation.
-
-### 3. Simple user interface
-
-Problem parameters are exposed to the user through a command-line interface (`option.h`, `option_types.h`).
-This allows easy experimentation with different parameters without recompilation. Possible options can be shown
-with the `--help` flag, for example `./main --help`. 
-
-Problem output is represented in tabular (`deal.ii::ConvergenceTable`) and visual (`gnuplot`, `svg`) form.
-R scripts are provided for advanced plotting of the provided results.
+The following section explains how to install the deal.ii finite element library for macOS, Ubuntu and Windows.
+After completing these instructions, the [#CMake](CMake) section explains how to build the `gpe` programs.
 
 
----
+## macOS
 
-## Implementation Details
+Download the latest deal.ii `.dmg` from GitHub:
 
-### Lazy Assembly
+https://github.com/dealii/dealii/releases
 
-Function and gradient evaluation
-require `Mpp` to be kept updated at all times.
+Either download the Sequoia (macOS 15.x) or Tahoe (macOS 26.x) version. Install the file
+like any other macOS application, by dragging it to `Applications`. 
 
-_Mechanism_: the Oracle can trigger `assemble_nonlinear_term(x)` inside its `update()` method. This assumes a non-const
-reference, so that `gradient()` or `value()` methods which are purely evaluative (and thus, `const`) cannot trigger 
-a matrix assembly by accident.
+> *Note:*
+> The latest available version for Intel CPUs is version 9.5.2.
 
----
+Depending on security settings, you may need to approve the `.dmg` manually. See the 
+[Mac User Guide](https://support.apple.com/de-de/guide/mac-help/mh40616/mac)
+for details.
 
-### Gradient checks
+Opening the deal.ii application results in a terminal with a correctly set environment for building deal.ii programs.
+If not done before, ensure `XCode` is installed:
 
----
+```bash
+xcode-select --install
+```
 
-### Grid operators
+For more information, see the [deal.ii Wiki](https://github.com/dealii/dealii/wiki/MacOSX).
 
----
 
-## Operator and Preconditioner Abstractions
+## Ubuntu
 
-We have the following classes for linear algebra operations:
+Install the deal.ii packages:
 
-* `LinearCombination`: Efficiently handles `A = A0 + beta * Mpp` without full matrix-matrix addition.
-* `InverseMatrix`: A wrapper for iterative solvers (CG, GMRES, MINRES) used in gradient computation.
+```bash
+sudo apt install libdeal.ii-dev libdeal.ii-doc
+```
 
-To maximize performance and minimize memory usage, the pipeline strictly separates the concepts 
-of _operator_ and _preconditioner_.
+This installs both the library files, and the deal.ii examples.
 
-**`OperatorType` (Matrix-Free):** The Krylov solvers (CG, GMRES) only require the ability to compute matrix-vector products. 
-We pass a `LinearCombination` object as the `OperatorType`. This avoids the expensive allocation and assembly of a full 
-$A = A_0 + \beta M_{pp}$ matrix, evaluating the sum on-the-fly via `vmult()`. 
-This can be extended to a matrix-free implementation of the terms $A_0$ and $M_{pp}$.
+Depending on the Ubuntu version, these packages may be out-of-date. A 
+[personal package archive](https://launchpad.net/~ginggs/+archive/ubuntu/deal.ii-9.7.1-backports) 
+for 9.7.1 is available.
 
-**`MatrixType` (Explicitly Assembled):** Preconditioners like `SparseILU`, `PreconditionJacobi`, and `PreconditionSSOR`
-require explicit access to matrix entries (e.g., extracting the diagonal or performing triangular sweeps). For these, 
-we explicitly assemble and pass a `SparseMatrix<double>` as argument.
+After installation, all libraries are available in the system path.
 
----
+For more information, see the [deal.ii Wiki](https://github.com/dealii/dealii/wiki/Debian-and-Ubuntu).
 
-## TODOs
 
-Evaluating the GP functional does not require any matrix inversion, or preconditioning.
-For Armijo line search, this needs to be done many times per iteration.
-Therefore, use a matrix-free approach for `EnergyOracle::value()` to save computation time.
+## Windows
 
-Currently, `EnergyOracle::update()`, `EnergyOracle::value()` and `EnergyOracle::gradient()`
-all have a vector argument `Vector<double> x`. For `value()` and `gradient()` to be correct,
-`update()` must be called for the same argument. This can easily lead to inconsistencies.
-An alternative is for `update()` to set two boolean flags - `needs_assembly` and `needs_gradient`.
-`gradient()` can check these flags, assemble $A_x$ as-needed (for a **stored** vector),
-and be called without argument.
+Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the instructions for [#Ubuntu](Ubuntu).
 
-For `EnergyOracle::gradient()`, which uses matrix inversion (`InverseMatrixType`)
-some kind of preconditioning is useful. For an explicitly stored matrix, many
-different choices are possible (Jacobi, SSOR, ILU, AMG, ...). For matrix-free
-evaluation, we have *geometric multigrid* at our disposal. While working approaches
-can be as effective as AMG (*algebraic multigrid*), an implementation requires
-correct handling of boundary conditions. This is significantly more involved than
-the black-box algebraic preconditioners mentioned above.
 
-If we want to compare an "algebraic" coarse model, where the coarse mass $M_H$ and stiffness $S_H$
-matrices arise from restriction $I_h^H$ and interpolation $I_H^h$ of "canonical" matrices $M_h$, $S_h$, we need
-explicit access to restriction and interpolation. `deal.II` only provides said access
-for an explicit geometric multigrid hierarchy, using the same mesh handler (`DoFHandler`.)
-When using multiple meshes, arising through global refinement with independent `DoFHandler` objects,
-only black-box interpolation and restriction is available. While this may still be sufficient
-for matrix-vector products (i.e. $M_H v := I_h^H M_h I_H^h v$), without explicit matrix form
-the behavior of the interpolators should be verified on test examples.
+# CMake
 
-Implement additional methods such as Newton's method (comparable complexity to the energy-adaptive
-gradient descent, robust to mesh size) and mass-lumping (proven uniqueness and positivity of the solution.) 
+After installing `deal.ii`, the project can be built with `CMake`. Download the git repository and initialize the submodules:
 
-Apart from providing command-line options, a Python or Julia interface can also be provided.
-This allows interplay with some useful libraries that are not available in C++, such as `Optane`
-for hyperparameter selection, or `manopt` for Riemannian optimization. While `deal.ii` provides
-Python wrappers for select classes, we want to expose our code to Python users directly, e.g. with
-`pybind11`. A question is how to transfer data structures between C++ and other languages, such as
-`scipy.sparse` and `deal.ii::SparseMatrix`, or avoiding this topic entirely by only exposing `vmult()`
-methods.
+```bash
+git clone --recurse-submodules https://github.com/Riemannian-Multilevel/gpe-multilevel-dealii
+cd gpe-multilevel-dealii
+```
 
----
+Navigate to the source directory and build the applications:
 
-## Quick Start
+```bash
+rm -rf build
+mkdir build
+cd build
 
-To run a simulation, initialize the `EnergySimulator` with your discretization options and call `run` with your desired physical parameters.
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j
+```
 
-```cpp
-// Configure discretization (Mesh, FE Degree, etc.)
-GPE_Options options;
-options.beta = 100.0;
-options.degree = 1;
+> *Note:*
+> The *Release* and *Debug* build types are optimized for performance and debugging, respectively.
 
-// Configure Solver (Tolerances, Max Iterations)
-GdOptions gd_options;
-gd_options.tol_residual = 1e-4;
-gd_options.step_size = 1.0;
+After the process is completed, all `gpe` programs are available in the `build` directory. 
 
-// Initialize Simulator
-unsigned int n_refinements = 8;
-EnergySimulator<2> simulator(options, n_refinements);
 
-// Execute solve with a Square potential
-auto solution = simulator.run(Square<2>(), gd_options, options.beta);
+# Usage
+
+Each program has command-line parameters that can be listed with the `--help` flag. For example:
+
+```bash
+./main_coarse --help
+
+Allowed options:
+  --help                                produce help message
+
+General problem options:
+  --degree arg (=1)                     polynomial degree for finite element
+  --dimension arg (=2)                  problem dimension
+  --order arg (=default)                ordering for degrees of freedom 
+                                        (default|random|cuthill_mckee|king|min_
+                                        deg)
+  --boundary arg (=neumann)             boundary constraints 
+                                        (neumann|dirichlet)
+  --radius arg (=10)                    default radius of the cube domain
+  --beta arg (=100)                     non-linearity factor
+  --mesh arg (=quadrilateral)           type of mesh elements used 
+                                        (quadrilateral|simplex)
+  --potential arg (=square)             used potential (square|optical_lattice)
+  --export-solution [=arg(=1)] (=0)     export incumbent solutions in binary 
+                                        format
+
+RGD options:
+  --max-iter arg (=25)                  maximum number of iterations
+  --tol-residual arg (=0.0001)          tolerance for M-residual
+  --step-size arg (=1)                  step size for RGD
+  --line-search [=arg(=1)] (=0)         use armijo line search
+  --ls-max-iter arg (=3)                maximum number of iterations for line 
+                                        search
+  --ls-alpha arg (=1)                   alpha for armijo line search
+  --ls-beta arg (=0.59999999999999998)  beta for armijo line search
+  --ls-sigma arg (=0.20000000000000001) sigma for armijo line search
+  --ls-min arg (=0.10000000000000001)   minimal step size for armijo line 
+                                        search
+
+multilevel options:
+  --levels arg                          number of times to globally refine the 
+                                        mesh
+  --multilevel arg                      levels for the multilevel hierarchy
+
+Inner solver options:
+  --solver arg (=cg)                    sparse solver (gmres|minres|cg)
+  --precond arg (=none)                 preconditioner (none|diagonal|sparse_il
+                                        u|amg)
+  --max-inner arg (=500)                maximum number of iterations for sparse
+                                        solver
+  --tol-inner arg (=9.9999999999999995e-07)
+                                        tolerance for sparse solver, relative 
+                                        to right-hand side
+  --tol-inner-res arg (=0.01)           tolerance for sparse solver, relative 
+                                        to residual
+
+FAS options:
+  --kappa arg (=0.80000000000000004)    weight for ratio of restricted and 
+                                        coarse gradient
+  --eps arg (=0.0001)                   minimum norm of restricted gradient
+  --coarse-every arg (=2)               minimum number of fine steps before 
+                                        coarse step is taken
+  --metric arg (=mass)                  metric for coarse model 
+                                        (none|frobenius|mass)
+  --transport arg (=mass)               vector transport operator 
+                                        (frobenius|mass|differential|adjoint_re
+                                        striction|adjoint_differential)
+  --interpolate arg (=none)             galerkin condition on linear 
+                                        interpolation (none|mass)
+```
+
+To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
+
+```bash
+cd build
+cp ../study.sh .
+./study.sh
+```
+
+The files will be generated in the current directory (`build/` in the example above.)
+The resulting data can be plotted, matching Figures 7/8/9 in the paper:
+
+```bash
+cd build
+python3 ../plot_convergence.py --format png --coarse-steps
+```
+
+This requires the Python packages `seaborne`, `pandas` and `orgparse`.
