@@ -3,6 +3,9 @@ doc/
 .idea/
 .DS_Store
 *.cmake
+*.html
+*~
 compile_commands.json
 Makefile
 interpolate_test/
+__pycache__/
