@@ -150,6 +150,12 @@ FAS options:
   --interpolate arg (=none)             galerkin condition on linear 
                                         interpolation (none|mass)
 ```
+First, copy the interpolation operators to the `build` directory:
+
+```bash
+cd build
+cp ../data/bin/* .
+```
 
 To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
 
