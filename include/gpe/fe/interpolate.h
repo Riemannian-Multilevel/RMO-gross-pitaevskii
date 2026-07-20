@@ -10,6 +10,9 @@
 #include <deal.II/grid/grid_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include <deal.II/lac/la_parallel_vector.h>
+#include <deal.II/multigrid/mg_transfer_global_coarsening.h>
+
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 
@@ -84,213 +87,95 @@ private:
 };
 
 
+/**
+ * @brief Linear transfer built on deal.II's geometric global-coarsening
+ * multigrid infrastructure (MGTwoLevelTransfer).
+ *
+ * Operator mapping (cf. the class documentation of MGTwoLevelTransferBase,
+ * which distinguishes restriction of "right hand side vectors" from
+ * interpolation of "solution vectors"):
+ *  - to_fine_mesh()   = prolongate_and_add()  (FE embedding I_H^h)
+ *  - to_coarse_mesh() = interpolate()         (solution/primal restriction,
+ *                                              the FAS injection r)
+ *  - Tfine()          = restrict_and_add()    (exact transpose (I_H^h)^T)
+ */
 template <int dim>
-class LinearTransferMatrix : public LinearTransferBase
+class LinearTransferMG : public LinearTransferBase
 {
+    using DVector = dealii::LinearAlgebra::distributed::Vector<double>;
+
 public:
-    /**
-     * @brief Constructs the transfer operators between two given DoF handlers.
-     * @param dof_coarse The DoFHandler for the coarse grid.
-     * @param dof_fine The DoFHandler for the fine grid.
-     * @param constraints_coarse
-     * @param constraints_fine
-     */
-    LinearTransferMatrix(const dealii::DoFHandler<dim>& dof_coarse,
-                         const dealii::DoFHandler<dim>& dof_fine,
-                         const dealii::AffineConstraints<double>& constraints_coarse,
-                         const dealii::AffineConstraints<double>& constraints_fine)
+    LinearTransferMG(const dealii::DoFHandler<dim>& dof_coarse,
+                     const dealii::DoFHandler<dim>& dof_fine,
+                     const dealii::AffineConstraints<double>& constraints_coarse,
+                     const dealii::AffineConstraints<double>& constraints_fine)
         : n_c(dof_coarse.n_dofs())
         , n_f(dof_fine.n_dofs())
-        , constraints_c(constraints_coarse) // Store references
+        , constraints_c(constraints_coarse)
         , constraints_f(constraints_fine)
     {
-        // Prolongation P: Maps Coarse -> Fine
-        //build_interpolation_matrix(dof_coarse, dof_fine, sparsity_pattern_P, P);
-
-        // Restriction R: Maps Fine -> Coarse
-        //build_interpolation_matrix(dof_fine, dof_coarse, sparsity_pattern_R, R);
-
-        // Create unique filenames based on the grid sizes to prevent mismatched loads
-        const std::string p_filename = "P_matrix_" + std::to_string(n_c) + "_to_" + std::to_string(n_f) + ".bin";
-        const std::string r_filename = "R_matrix_" + std::to_string(n_f) + "_to_" + std::to_string(n_c) + ".bin";
-
-        // Prolongation P: Maps Coarse -> Fine
-        load_or_build_matrix(p_filename, dof_coarse, dof_fine, sparsity_pattern_P, P);
-
-        // Restriction R: Maps Fine -> Coarse
-        load_or_build_matrix(r_filename, dof_fine, dof_coarse, sparsity_pattern_R, R);
+        transfer.reinit(dof_fine, dof_coarse, constraints_fine, constraints_coarse);
     }
 
     /**
      * @brief Prolongates a vector from the coarse mesh to the fine mesh.
-     * Evaluates $v_{fine} = P \cdot v_{coarse}$.
-     * * @param src_coarse The input vector on the coarse grid.
-     * @param dst_fine [out] The interpolated vector on the fine grid.
+     * Evaluates $v_{fine} = I_H^h \cdot v_{coarse}$.
      */
     void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
-        P.vmult(dst_fine, src_coarse);
+        DVector src(n_c), dst(n_f);
+        std::copy(src_coarse.begin(), src_coarse.end(), src.begin());
 
+        transfer.prolongate_and_add(dst, src);
+
+        dst_fine.reinit(n_f);
+        std::copy(dst.begin(), dst.end(), dst_fine.begin());
         constraints_f.distribute(dst_fine);
     }
 
     /**
-     * @brief Restricts a vector from the fine mesh to the coarse mesh via point interpolation.
-     * Evaluates $v_{coarse} = R \cdot v_{fine}$.
-     * * @param src_fine The input vector on the fine grid.
-     * @param dst_coarse [out] The restricted vector on the coarse grid.
+     * @brief Restricts a vector from the fine mesh to the coarse mesh via
+     * solution interpolation (pointwise injection at coarse nodes for nested
+     * Lagrange elements), matching the point-restriction map r.
      */
     void to_coarse_mesh(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
-        R.vmult(dst_coarse, src_fine);
+        DVector src(n_f), dst(n_c);
+        std::copy(src_fine.begin(), src_fine.end(), src.begin());
 
+        transfer.interpolate(dst, src);
+
+        dst_coarse.reinit(n_c);
+        std::copy(dst.begin(), dst.end(), dst_coarse.begin());
         constraints_c.distribute(dst_coarse);
     }
 
+    /**
+     * @brief Transpose of the prolongation, $(I_H^h)^T$ (multigrid residual
+     * restriction). Exact adjoint of to_fine_mesh() w.r.t. the Euclidean
+     * pairing by construction.
+     */
     void Tfine(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
-        P.Tvmult(dst_coarse, src_fine);
+        DVector src(n_f), dst(n_c);
+        std::copy(src_fine.begin(), src_fine.end(), src.begin());
 
-        constraints_c.distribute(dst_coarse);  // needed?
+        transfer.restrict_and_add(dst, src);
+
+        dst_coarse.reinit(n_c);
+        std::copy(dst.begin(), dst.end(), dst_coarse.begin());
     }
 
-    void Tcoarse(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
-    {
-        R.Tvmult(dst_fine, src_coarse);
-
-        constraints_f.distribute(dst_fine);
-    }
-
-    /** @brief Returns the number of degrees of freedom on the coarse grid. */
     unsigned int n_coarse() const override { return n_c; }
-
-    /** @brief Returns the number of degrees of freedom on the fine grid. */
     unsigned int n_fine() const override { return n_f; }
-
-    const SparseMatrix<double>& get_P() { return P; }
-    const SparseMatrix<double>& get_R() { return R; }
 
 private:
     unsigned int n_c;
     unsigned int n_f;
-    dealii::AffineConstraints<double> constraints_c, constraints_f;
+    const dealii::AffineConstraints<double>& constraints_c;
+    const dealii::AffineConstraints<double>& constraints_f;
 
-    SparsityPattern sparsity_pattern_P;
-    SparseMatrix<double> P;
-
-    SparsityPattern sparsity_pattern_R;
-    SparseMatrix<double> R;
-
-    void build_interpolation_matrix(const dealii::DoFHandler<dim>& dof_src,
-                                const dealii::DoFHandler<dim>& dof_dst,
-                                SparsityPattern& sparsity_pattern,
-                                SparseMatrix<double>& interpolation_matrix)
-    {
-        const unsigned int n_src = dof_src.n_dofs();
-        const unsigned int n_dst = dof_dst.n_dofs();
-
-        DynamicSparsityPattern dsp(n_dst, n_src);
-
-        struct MatrixEntry {
-            global_dof_index row;
-            global_dof_index col;
-            double value;
-        };
-
-        // 1. Lock-free storage: A dedicated vector for every column.
-        // Threads write to column_entries[j] concurrently without needing mutexes.
-        std::vector<std::vector<MatrixEntry>> column_entries(n_src);
-
-        // --- THE PARALLEL PROBING LOOP ---
-        tbb::parallel_for(tbb::blocked_range<unsigned int>(0, n_src),
-            [&](const tbb::blocked_range<unsigned int>& range) {
-
-                // 2. Thread-local memory: Every thread needs its own vectors
-                // so they don't overwrite each other's data during interpolation.
-                Vector<double> local_unit_src(n_src);
-                Vector<double> local_column_dst(n_dst);
-
-                for (unsigned int j = range.begin(); j != range.end(); ++j) {
-
-                    local_unit_src = 0.0;
-                    local_unit_src[j] = 1.0;
-
-                    // 3. Thread-safe read operations
-                    dealii::VectorTools::interpolate_to_different_mesh(
-                        dof_src, local_unit_src, dof_dst, local_column_dst);
-
-                    // Reserve memory to prevent reallocations
-                    column_entries[j].reserve(dof_dst.get_fe().dofs_per_cell);
-
-                    for (unsigned int i = 0; i < n_dst; ++i) {
-                        if (std::abs(local_column_dst[i]) > 1e-14) {
-                            column_entries[j].push_back({i, j, local_column_dst[i]});
-                        }
-                    }
-                }
-            });
-
-        std::cerr << "Probing complete. Assembling matrix..." << std::endl;
-
-        // --- SERIAL ASSEMBLY ---
-        // 4. Writing to the sparsity pattern and sparse matrix must be done serially.
-        // Because the geometry probing is the bottleneck, this serial phase is virtually instant.
-        for (unsigned int j = 0; j < n_src; ++j) {
-            for (const auto& entry : column_entries[j]) {
-                dsp.add(entry.row, entry.col);
-            }
-        }
-
-        sparsity_pattern.copy_from(dsp);
-        interpolation_matrix.reinit(sparsity_pattern);
-
-        for (unsigned int j = 0; j < n_src; ++j) {
-            for (const auto& entry : column_entries[j]) {
-                interpolation_matrix.set(entry.row, entry.col, entry.value);
-            }
-        }
-    }
-
-    void load_or_build_matrix(const std::string& filename,
-                              const dealii::DoFHandler<dim>& dof_src,
-                              const dealii::DoFHandler<dim>& dof_dst,
-                              dealii::SparsityPattern& sparsity_pattern,
-                              dealii::SparseMatrix<double>& matrix)
-    {
-        // Try to open the file in binary mode
-        std::ifstream in_file(filename, std::ios::binary);
-
-        if (in_file.is_open()) {
-            std::cerr << "  -> Loading transfer matrix from disk: " << filename << std::endl;
-
-            // 1. Read and finalize the SparsityPattern first
-            sparsity_pattern.block_read(in_file);
-
-            // 2. Initialize the empty matrix with the loaded pattern
-            matrix.reinit(sparsity_pattern);
-
-            // 3. Read the actual matrix values (the float data)
-            matrix.block_read(in_file);
-
-        } else {
-            std::cerr << "  -> Building transfer matrix from scratch..." << std::endl;
-
-            // 1. Call expensive probing/geometric setup function
-            build_interpolation_matrix(dof_src, dof_dst, sparsity_pattern, matrix);
-
-            // 2. Open file for writing in binary mode
-            std::ofstream out_file(filename, std::ios::binary);
-
-            if (out_file.is_open()) {
-                // Write the pattern first, then the matrix
-                sparsity_pattern.block_write(out_file);
-                matrix.block_write(out_file);
-                std::cerr << "  -> Saved transfer matrix to: " << filename << std::endl;
-            } else {
-                std::cerr << "  -> Warning: Could not open file to save matrix: " << filename << std::endl;
-            }
-        }
-    }
+    dealii::MGTwoLevelTransfer<dim, DVector> transfer;
 };
 
 
