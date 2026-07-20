@@ -1,3 +1,8 @@
+# Overview
+
+See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+
 # Installation
 
 The following section explains how to install the deal.ii finite element library for macOS, Ubuntu and Windows.
