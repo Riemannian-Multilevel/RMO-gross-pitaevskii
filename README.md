@@ -91,24 +91,23 @@ Each program has command-line parameters that can be listed with the `--help` fl
 
 ```bash
 ./main_coarse --help
-
 Allowed options:
   --help                                produce help message
 
 General problem options:
   --degree arg (=1)                     polynomial degree for finite element
   --dimension arg (=2)                  problem dimension
-  --order arg (=default)                ordering for degrees of freedom 
+  --order arg (=default)                ordering for degrees of freedom
                                         (default|random|cuthill_mckee|king|min_
                                         deg)
-  --boundary arg (=neumann)             boundary constraints 
+  --boundary arg (=neumann)             boundary constraints
                                         (neumann|dirichlet)
   --radius arg (=10)                    default radius of the cube domain
   --beta arg (=100)                     non-linearity factor
-  --mesh arg (=quadrilateral)           type of mesh elements used 
+  --mesh arg (=quadrilateral)           type of mesh elements used
                                         (quadrilateral|simplex)
   --potential arg (=square)             used potential (square|optical_lattice)
-  --export-solution [=arg(=1)] (=0)     export incumbent solutions in binary 
+  --export-solution [=arg(=1)] (=0)     export incumbent solutions in binary
                                         format
 
 RGD options:
@@ -116,18 +115,19 @@ RGD options:
   --tol-residual arg (=0.0001)          tolerance for M-residual
   --step-size arg (=1)                  step size for RGD
   --line-search [=arg(=1)] (=0)         use armijo line search
-  --ls-max-iter arg (=3)                maximum number of iterations for line 
+  --ls-max-iter arg (=3)                maximum number of iterations for line
                                         search
   --ls-alpha arg (=1)                   alpha for armijo line search
   --ls-beta arg (=0.59999999999999998)  beta for armijo line search
   --ls-sigma arg (=0.20000000000000001) sigma for armijo line search
-  --ls-min arg (=0.10000000000000001)   minimal step size for armijo line 
+  --ls-min arg (=0.10000000000000001)   minimal step size for armijo line
                                         search
 
 multilevel options:
-  --levels arg                          number of times to globally refine the 
+  --levels arg                          number of times to globally refine the
                                         mesh
   --multilevel arg                      levels for the multilevel hierarchy
+                                        (consecutive)
 
 Inner solver options:
   --solver arg (=cg)                    sparse solver (gmres|minres|cg)
@@ -136,23 +136,25 @@ Inner solver options:
   --max-inner arg (=500)                maximum number of iterations for sparse
                                         solver
   --tol-inner arg (=9.9999999999999995e-07)
-                                        tolerance for sparse solver, relative 
+                                        tolerance for sparse solver, relative
                                         to right-hand side
-  --tol-inner-res arg (=0.01)           tolerance for sparse solver, relative 
+  --tol-inner-res arg (=0.01)           tolerance for sparse solver, relative
                                         to residual
 
 FAS options:
-  --kappa arg (=0.80000000000000004)    weight for ratio of restricted and 
+  --kappa arg (=0.80000000000000004)    weight for ratio of restricted and
                                         coarse gradient
   --eps arg (=0.0001)                   minimum norm of restricted gradient
-  --coarse-every arg (=2)               minimum number of fine steps before 
+  --coarse-every arg (=2)               minimum number of fine steps before
                                         coarse step is taken
-  --metric arg (=mass)                  metric for coarse model 
+  --metric arg (=mass)                  metric for coarse model
                                         (none|frobenius|mass)
-  --transport arg (=mass)               vector transport operator 
+  --transport arg (=mass)               vector transport operator
                                         (frobenius|mass|differential|adjoint_re
-                                        striction|adjoint_differential)
-  --interpolate arg (=none)             galerkin condition on linear 
+                                        striction|adjoint_differential|adjoint_
+                                        restriction_frobenius|adjoint_different
+                                        ial_frobenius|differential_frobenius)
+  --interpolate arg (=none)             galerkin condition on linear
                                         interpolation (none|mass)
 ```
 
