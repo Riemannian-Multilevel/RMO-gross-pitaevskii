@@ -25,11 +25,11 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
     std::shared_ptr<VectorTransportBase> vector_transport;
 
     if (options_fas.interpol_t == Interpolate::MASS) {
-        transfer = std::make_shared<MassTransfer<dim,LinearTransferMatrix<dim>,OperatorType,InverseOpType>>(
+        transfer = std::make_shared<MassTransfer<dim,LinearTransferMG<dim>,OperatorType,InverseOpType>>(
             dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
     }
     else if (options_fas.interpol_t == Interpolate::NONE) {
-        transfer = std::make_shared<LinearTransferMatrix<dim>>(dofs_c, dofs_f, constr_c, constr_f);
+        transfer = std::make_shared<LinearTransferMG<dim>>(dofs_c, dofs_f, constr_c, constr_f);
     }
     else {
         std::abort();
