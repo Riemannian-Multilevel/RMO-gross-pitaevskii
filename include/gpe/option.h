@@ -33,7 +33,8 @@ BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE)
-BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL);
+BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
+                    ADJOINT_RESTRICTION_FROBENIUS, ADJOINT_DIFFERENTIAL_FROBENIUS, DIFFERENTIAL_FROBENIUS);
 BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 
 
@@ -257,7 +258,8 @@ inline po::options_description fas_cli_options()
         // ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
         //     "metric for smoother (energy_adaptive|mass|frobenius)")
         ("transport", po::value<std::string>()->default_value("mass"),
-            "vector transport operator (frobenius|mass|differential|adjoint_restriction|adjoint_differential)")
+            "vector transport operator (frobenius|mass|differential|adjoint_restriction|adjoint_differential|"
+            "adjoint_restriction_frobenius|adjoint_differential_frobenius|differential_frobenius)")
         ("interpolate", po::value<std::string>()->default_value("none"),
             "galerkin condition on linear interpolation (none|mass)");
     return d;

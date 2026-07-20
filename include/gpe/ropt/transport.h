@@ -422,6 +422,77 @@ private:
 
 
 /**
+ * @brief Frobenius-metric counterpart of DifferentialTransport.
+ *
+ * @note As with DifferentialTransport, R^y_x is *not* the adjoint of P^x_y
+ * (both are differentials of independent point maps), so the geometric
+ * Galerkin condition (5) is not satisfied in either metric.
+ */
+template <typename MatrixType>
+class FrobeniusDifferentialTransport : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "FD";
+
+    explicit FrobeniusDifferentialTransport(const ManifoldTransferBase& pt,
+                                            const MatrixType& M_coarse,
+                                            const MatrixType& M_fine)
+        : M_coarse(M_coarse), M_fine(M_fine), point_transfer(pt)
+    {}
+
+    void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
+                             Vector<double>& dst) const
+    {
+        point_transfer.diff_prolongation(y_coarse, v_coarse, dst);
+    }
+
+    /**
+     * @brief Prolongs a tangent vector by computing the differential of the prolongation map,
+     * then transporting it to the fine target tangent space via F-orthogonal projection:
+     * $$\hat{v} = D p(x_H)[v_H] \in T_{p(x_H)} \mathcal{S}_h, \qquad \mathcal{T}_{H \to h}(v_H) = \Pi_x^F(\hat{v}).$$
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Differential D_p(x): T_x S_H -> T_p(x) S_h
+        Vector<double> D_px(point_transfer.n_fine());
+        vector_prolongation(y_coarse, v_coarse, D_px);
+
+        // Vector transport T_p(x) S_h -> T_y S_h using F-orthogonal projection
+        ellipsoid::frobenius::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
+    }
+
+    void vector_restriction(const Vector<double>& x_fine, const Vector<double>& v_fine,
+                            Vector<double>& dst) const
+    {
+        point_transfer.diff_restriction(x_fine, v_fine, dst);
+    }
+
+    /**
+     * @brief Restricts a tangent vector by computing the differential of the restriction map,
+     * then transporting it to the coarse tangent space via F-orthogonal projection:
+     * $$\hat{v} = D r(y_h)[v_h] \in T_{r(y_h)} \mathcal{S}_H, \qquad \mathcal{T}_{h \to H}(v_h) = \Pi_y^F(\hat{v}).$$
+     */
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Differential D_r(y): T_y S_h -> T_r(y) S_H
+        Vector<double> D_ry(point_transfer.n_coarse());
+        vector_restriction(x_fine, v_fine, D_ry);
+
+        // Vector transport T_r(y) S_H -> T_x S_H using F-orthogonal projection
+        ellipsoid::frobenius::project_onto_tangent_space(y_coarse, M_coarse, D_ry, dst);
+    }
+
+private:
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+
+    const ManifoldTransferBase& point_transfer;
+};
+
+
+/**
  * @brief Adjoint-based Vector Transport implementing Version II.
  *
  * This class computes the mathematical adjoint of the corresponding
@@ -499,6 +570,64 @@ protected:
 
 
 /**
+ * @brief Frobenius-metric counterpart of AdjointRestrictionTransport
+ *
+ * Both P^x_y and R^y_x are defined exactly as in AdjointRestrictionTransport,
+ * but with the orthogonal projection Pi taken in the Frobenius (unweighted
+ * Euclidean) metric instead of the mass metric.
+ */
+template <typename MatrixType>
+class FrobeniusAdjointRestrictionTransport : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "FV2Restr";
+
+    FrobeniusAdjointRestrictionTransport(const LinearTransferBase& I,
+                                         const MatrixType& M_coarse,
+                                         const MatrixType& M_fine)
+        : transfer(I), M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    /**
+     * @brief Prolongation: P(v) = Pi_x^F( I_H^h v )
+     */
+    void vector_prolongation(const Vector<double>& x_fine,
+                             [[maybe_unused]] const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse,
+                             Vector<double>& dst) const override
+    {
+        // 1. Linear prolongation to ambient space
+        Vector<double> Iv(transfer.n_fine());
+        transfer.to_fine_mesh(v_coarse, Iv);
+
+        // 2. F-orthogonal projection onto the target tangent space
+        ellipsoid::frobenius::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
+    }
+
+    /**
+     * @brief Restriction: R(v) = Pi_y^F( (I_H^h)^T v )
+     */
+    void vector_restriction(const Vector<double>& y_coarse,
+                            [[maybe_unused]] const Vector<double>& x_fine,
+                            const Vector<double>& v_fine,
+                            Vector<double>& dst) const override
+    {
+        // 1. Apply transpose of prolongation (no M_h/M_H weighting under the F-metric)
+        Vector<double> IT_v(transfer.n_coarse());
+        transfer.Tfine(v_fine, IT_v);
+
+        // 2. Project onto target tangent space T_y S_H
+        ellipsoid::frobenius::project_onto_tangent_space(y_coarse, M_coarse, IT_v, dst);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+};
+
+
+/**
  * @brief Adjoint-based Vector Transport implementing Version V Restriction.
  */
 template <typename MatrixType, typename InverseMatrixType>
@@ -507,8 +636,8 @@ class AdjointDifferentialTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "V5restr";
 
-    // ADDED: LinearTransferBase and InverseMatrixType are mathematically required
-    // to compute the adjoint restriction (transpose of I_H^h and M_H^{-1}).
+    // ADDED: LinearTransferBase and InverseMatrixType are required to compute
+    // the adjoint restriction (transpose of I_H^h and M_H^{-1}.)
     explicit AdjointDifferentialTransport(const LinearTransferBase& transfer,
                                           const ManifoldTransferBase& pt,
                                           const MatrixType& M_coarse,
@@ -539,7 +668,8 @@ public:
     }
 
     /**
-     * @brief Version V Restriction: R(v) = (1 / ||I_H^h \psi||_{M_h}) * (I - \psi\psi^T M_H) M_H^{-1} (I_H^h)^T M_h (I - \Pi_{I_H^h \psi, M_h}) v
+     * @brief Version V Restriction:
+     * R(v) = (1 / ||I_H^h \psi||_{M_h}) * (I - \psi\psi^T M_H) M_H^{-1} (I_H^h)^T M_h (I - \Pi_{I_H^h \psi, M_h}) v
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
@@ -588,6 +718,91 @@ private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
     const InverseMatrixType& M_inv_coarse;
+};
+
+
+/**
+ * @brief Frobenius-metric counterpart of AdjointDifferentialTransport.
+ */
+template <typename MatrixType>
+class FrobeniusAdjointDifferentialTransport : public VectorTransportBase
+{
+public:
+    static constexpr const char* id = "FV5restr";
+
+    explicit FrobeniusAdjointDifferentialTransport(const LinearTransferBase& transfer,
+                                                   const ManifoldTransferBase& pt,
+                                                   const MatrixType& M_coarse,
+                                                   const MatrixType& M_fine)
+        : transfer(transfer), point_transfer(pt),
+          M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
+                             Vector<double>& dst) const
+    {
+        point_transfer.diff_prolongation(y_coarse, v_coarse, dst);
+    }
+
+    /**
+     * @brief Prolongs a tangent vector by computing the differential of the prolongation map,
+     * then transporting it to the fine tangent space via F-orthogonal projection:
+     * $$\hat{v} = D p(x_H)[v_H] \in T_{p(x_H)} \mathcal{S}_h, \qquad \mathcal{T}_{H \to h}(v_H) = \Pi_x^F(\hat{v}).$$
+     */
+    void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
+                             const Vector<double>& v_coarse, Vector<double>& dst) const override
+    {
+        // Differential D_p(x): T_x S_H -> T_p(x) S_h
+        Vector<double> D_px(point_transfer.n_fine());
+        vector_prolongation(y_coarse, v_coarse, D_px);
+
+        // Vector transport T_p(x) S_h -> T_y S_h using F-orthogonal projection
+        ellipsoid::frobenius::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
+    }
+
+    /**
+     * @brief Restriction: $$R(v) = \frac{1}{\|I_H^h \psi\|_{M_h}} \Pi_\psi^F\big((I_H^h)^\top Q(v)\big),
+     * \quad Q(v) = v - \frac{\tilde\psi \cdot v}{\|\tilde\psi\|_{M_h}^2}\, M_h \tilde\psi, \quad
+     * \tilde\psi = I_H^h \psi.$$
+     */
+    void vector_restriction(const Vector<double>& y_coarse, [[maybe_unused]] const Vector<double>& x_fine,
+                            const Vector<double>& v_fine, Vector<double>& dst) const override
+    {
+        // Let \psi = y_coarse
+        // 1. Compute \tilde{\psi} = I_H^h \psi (Prolonged base point)
+        Vector<double> psi_tilde(transfer.n_fine());
+        transfer.to_fine_mesh(y_coarse, psi_tilde);
+
+        // 2. Compute M_h * \tilde{\psi}, and norm_sq = ||I_H^h \psi||_{M_h}^2
+        Vector<double> M_psi_tilde(transfer.n_fine());
+        M_fine.vmult(M_psi_tilde, psi_tilde);
+        const double norm_sq = psi_tilde * M_psi_tilde;
+        const double norm    = std::sqrt(norm_sq);
+
+        // 3. Q(v_fine) = v_fine - (\tilde{\psi} . v_fine / norm_sq) * M_h \tilde{\psi}
+        //    Note: the inner product \tilde{\psi} . v_fine is unweighted (F-metric),
+        //    unlike the mass-metric version which uses \tilde{\psi}^T M_h v_fine.
+        const double inner_prod = psi_tilde * v_fine;
+        Vector<double> Qv = v_fine;
+        Qv.add(-inner_prod / norm_sq, M_psi_tilde);
+
+        // 4. Apply transpose of prolongation: (I_H^h)^T Q(v_fine)
+        Vector<double> IT_Qv(transfer.n_coarse());
+        transfer.Tfine(Qv, IT_Qv);
+
+        // 5. Scale by (1 / ||I_H^h \psi||_{M_h})
+        IT_Qv /= norm;
+
+        // 6. Project onto the target tangent space T_\psi S_H
+        ellipsoid::frobenius::project_onto_tangent_space(y_coarse, M_coarse, IT_Qv, dst);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const ManifoldTransferBase& point_transfer;
+
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
 };
 
 } // namespace gpe
