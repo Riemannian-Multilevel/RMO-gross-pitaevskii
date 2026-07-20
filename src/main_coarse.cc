@@ -53,6 +53,15 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
     else if (options_fas.transport_t == Transport::ADJOINT_DIFFERENTIAL) {
         vector_transport = std::make_shared<AdjointDifferentialTransport<OperatorType, InverseOpType>>(*transfer, *point_transfer, M_c, M_f, M_inv_c);
     }
+    else if (options_fas.transport_t == Transport::ADJOINT_RESTRICTION_FROBENIUS) {
+        vector_transport = std::make_shared<FrobeniusAdjointRestrictionTransport<OperatorType>>(*transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::ADJOINT_DIFFERENTIAL_FROBENIUS) {
+        vector_transport = std::make_shared<FrobeniusAdjointDifferentialTransport<OperatorType>>(*transfer, *point_transfer, M_c, M_f);
+    }
+    else if (options_fas.transport_t == Transport::DIFFERENTIAL_FROBENIUS) {
+        vector_transport = std::make_shared<FrobeniusDifferentialTransport<OperatorType>>(*point_transfer, M_c, M_f);
+    }
     else {
         std::abort();
     }

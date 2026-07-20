@@ -69,10 +69,11 @@ enum class Transport
     DIFFERENTIAL,         // Version VI  (Mixed)
     ADJOINT_RESTRICTION,  // Version II
     ADJOINT_DIFFERENTIAL, // Version V
+    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION
+    ADJOINT_DIFFERENTIAL_FROBENIUS, // Frobenius-metric counterpart of ADJOINT_DIFFERENTIAL
+    DIFFERENTIAL_FROBENIUS,         // Frobenius-metric counterpart of DIFFERENTIAL
     // DIFFERENTIAL_MASS,
     // ADJOINT_DIFFERENTIAL_MASS,
-    // DIFFERENTIAL_FROBENIUS,
-    // ADJOINT_DIFFERENTIAL_FROBENIUS
 };
 
 enum class Interpolate
