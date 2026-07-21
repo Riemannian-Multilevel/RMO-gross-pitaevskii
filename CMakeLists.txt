@@ -4,7 +4,7 @@ project(gpe)
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(fmt)
 
-find_package(deal.II 9.7.0 REQUIRED
+find_package(deal.II 9.6.0 REQUIRED
         HINTS ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
 )
 #find_package(fmt CONFIG REQUIRED)
