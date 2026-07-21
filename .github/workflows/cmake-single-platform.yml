@@ -27,7 +27,7 @@ jobs:
     - name: Install deal-ii
       run: |
         sudo apt update -y
-        sudo add-apt-repository -y ppa:ginggs/deal.ii-9.6.0-backports
+        sudo add-apt-repository -y ppa:ginggs/deal.ii-9.7.1-backports
         sudo apt install -y libdeal.ii-dev
       
     - name: Configure CMake
