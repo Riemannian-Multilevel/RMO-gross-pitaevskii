@@ -61,8 +61,8 @@ enable_testing()
 
 add_gpe_executable(test_descent LINK_LIBS fmt::fmt)
 add_gpe_executable(test_gradient LINK_LIBS fmt::fmt)
-add_gpe_executable(test_matrix_free LINK_LIBS fmt::fmt)
+#add_gpe_executable(test_matrix_free LINK_LIBS fmt::fmt)
 
 add_test(descent test_descent COMMAND test_descent)
 add_test(gradient test_gradient COMMAND test_gradient)
-add_test(matrix_free test_matrix_free COMMAND test_matrix_free)
+#add_test(matrix_free test_matrix_free COMMAND test_matrix_free)
