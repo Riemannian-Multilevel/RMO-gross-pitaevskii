@@ -232,7 +232,7 @@ int main()
             Vector<double> w_proj(n_dofs);
             ellipsoid::mass::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
 
-            test_coarse_mass.update_parameters(phi, w_proj);
+            test_coarse_mass.update_parameters(w_proj, phi);
         };
 
         check_gradient(test_coarse_mass, NUM_TRIALS,
@@ -256,7 +256,7 @@ int main()
             Vector<double> w_proj(n_dofs);
             ellipsoid::frobenius::project_onto_tangent_space(phi, test_frob.get_M(), w, w_proj);
 
-            test_coarse_frob.update_parameters(phi, w_proj);
+            test_coarse_frob.update_parameters(w_proj, phi);
         };
 
         check_gradient(test_coarse_frob, NUM_TRIALS,
