@@ -69,6 +69,7 @@ public:
     void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const override
     {
         transfer.to_coarse_mesh(x_fine, y_coarse);
+
         ellipsoid::retract_by_norm(M_coarse, y_coarse);
     }
 
@@ -321,7 +322,8 @@ public:
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
-        transfer.to_coarse_mesh(v_fine, Iv);
+        //transfer.to_coarse_mesh(v_fine, Iv);
+        transfer.Tfine(v_fine, Iv);
 
         // F-Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
         ellipsoid::frobenius::project_onto_tangent_space(y_coarse, M_coarse, Iv, dst);

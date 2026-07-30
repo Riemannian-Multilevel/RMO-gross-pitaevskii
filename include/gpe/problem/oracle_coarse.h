@@ -202,7 +202,7 @@ protected:
 
         // This varies for different coarse models
         Vector<double> grad_tilt(x.size());
-        m_model.apply_metric(grad_tilt, u);
+        m_model.apply_metric(u, grad_tilt);
 
         // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
         Vector<double> Ax(x.size());
