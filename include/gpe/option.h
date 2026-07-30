@@ -5,6 +5,7 @@
 #include <gpe/util/util.h>
 
 #include <boost/program_options.hpp>
+#include <charconv>
 #include <ranges>
 #include <string_view>
 
