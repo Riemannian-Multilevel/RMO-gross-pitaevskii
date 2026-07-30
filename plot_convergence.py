@@ -5,7 +5,9 @@ include/gpe/ropt/{descent,solver}.h and include/gpe/main/fas.h).
 
 Expected input files (default --data-dir is the current directory):
     sl_b<beta>_l<level>_optical_lattice.org
-    ml_mass_<operator>_b<beta>_l<level>_depth<N>_optical_lattice.org
+    ml_<metric>_<operator>_b<beta>_l<level>_depth<N>_optical_lattice.org
+
+where <metric> is the --metric token (mass or frob; default: mass).
 
 Figure 7 (a: vs. iteration, b: vs. elapsed time) compares transport operator
 variants at a fixed depth (4). Figure 8 (a/c: energy error, b/d: residual;
@@ -18,9 +20,9 @@ Examples
 Run from the directory containing the .org files:
     python3 ../plot_convergence.py
 
-Or point at them explicitly, and pick a different operator for figure 8:
+Or point at them explicitly, and plot the Frobenius family instead of mass:
     python3 plot_convergence.py --data-dir cmake-build-release-deal.ii \\
-        --operator adj1 --out-dir figures
+        --metric frob --operator adj1 --out-dir figures
 """
 import argparse
 from pathlib import Path
@@ -185,6 +187,10 @@ def main():
     parser.add_argument("--out-dir", default=".", help="directory to write figures into")
     parser.add_argument("--beta", default="1000", help="beta token in filenames (default: 1000)")
     parser.add_argument("--level", default="11", help="finest-level token in filenames (default: 11)")
+    parser.add_argument("--metric", default="mass",
+                        help="metric token in the multilevel filenames, i.e. the family "
+                             "ml_<metric>_*.org (typically mass or frob; default: mass). Does "
+                             "not affect the single-level reference sl_*.org.")
     parser.add_argument("--operator", default="adj2",
                         help="transport operator used for the depth2/3/4 series in figure 8 "
                              "(one of: adj1, adj2, diff, diff_gal, proj, proj_gal; default: adj2)")
@@ -214,7 +220,7 @@ def main():
         return data_dir / f"sl_b{args.beta}_l{args.level}_optical_lattice.org"
 
     def ml_path(operator, depth):
-        return data_dir / f"ml_mass_{operator}_b{args.beta}_l{args.level}_depth{depth}_optical_lattice.org"
+        return data_dir / f"ml_{args.metric}_{operator}_b{args.beta}_l{args.level}_depth{depth}_optical_lattice.org"
 
     ylabel_residual = r"$\|\mathrm{res}(\phi_k)\|_M$"
     ylabel_energy   = r"$|E^{GP}(\phi_k) - E_{ref}|$"
@@ -234,10 +240,10 @@ def main():
     fig7_xmax_elapsed = multi_series_xmax(fig7_series, "elapsed", "residual", args.fig7_residual_ymin)
 
     build_figure(fig7_series, "iter", "residual", ylabel_residual, xlabel_iter,
-                out_dir / f"fig7a.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_iter,
+                out_dir / f"fig7a_{args.metric}.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_iter,
                 coarse_steps=args.coarse_steps, dpi=args.dpi)
     build_figure(fig7_series, "elapsed", "residual", ylabel_residual, xlabel_elapsed,
-                out_dir / f"fig7b.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_elapsed,
+                out_dir / f"fig7b_{args.metric}.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_elapsed,
                 coarse_steps=args.coarse_steps, dpi=args.dpi)
 
     # -------------------------------------------------------------------
@@ -256,19 +262,20 @@ def main():
         (ml_path(args.operator, 2),  "depth2", "2-level EARGD"),
         (ml_path(args.operator, 3),  "depth3", "3-level EARGD"),
         (ml_path(args.operator, 4),  "depth4", "4-level EARGD"),
+        (ml_path(args.operator, 5),  "depth5", "5-level EARGD"),
     ]
 
     build_figure(fig8_series, "iter", "residual", ylabel_energy, xlabel_iter,
-                out_dir / f"fig8a.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["iter"],
+                out_dir / f"fig8a_{args.metric}.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["iter"],
                 coarse_steps=args.coarse_steps, dpi=args.dpi)
     build_figure(fig8_series, "iter", "residual", ylabel_residual, xlabel_iter,
-                out_dir / f"fig8b.{ext}", ymin=args.residual_ymin, xmax=cutoff["iter"],
+                out_dir / f"fig8b_{args.metric}.{ext}", ymin=args.residual_ymin, xmax=cutoff["iter"],
                 coarse_steps=args.coarse_steps, dpi=args.dpi)
     build_figure(fig8_series, "elapsed", "residual", ylabel_energy, xlabel_elapsed,
-                out_dir / f"fig8c.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["elapsed"],
+                out_dir / f"fig8c_{args.metric}.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["elapsed"],
                 coarse_steps=args.coarse_steps, dpi=args.dpi)
     build_figure(fig8_series, "elapsed", "residual", ylabel_residual, xlabel_elapsed,
-                out_dir / f"fig8d.{ext}", ymin=args.residual_ymin, xmax=cutoff["elapsed"],
+                out_dir / f"fig8d_{args.metric}.{ext}", ymin=args.residual_ymin, xmax=cutoff["elapsed"],
                 coarse_steps=args.coarse_steps, dpi=args.dpi)
 
 
