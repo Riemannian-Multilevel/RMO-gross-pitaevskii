@@ -1,6 +1,9 @@
 #ifndef GPE_LAC_H
 #define GPE_LAC_H
-#define SOLVER_MIN_TOL 1e-2
+// Upper bound on the inner-solver tolerance (loosest allowed), applied with
+// std::min: the actual tolerance is never larger than this, i.e. the inner
+// solve is always at least this accurate.
+#define SOLVER_MAX_TOL 1e-2
 
 #include "option_types.h"
 #include <vector>
@@ -311,7 +314,7 @@ public:
         , m_method(options.solver)
         , m_max_iter(options.max_inner)
         , m_reltol(options.tol_inner)
-        , m_control(m_max_iter, SOLVER_MIN_TOL)
+        , m_control(m_max_iter, SOLVER_MAX_TOL)
     {}
 
     // Set absolute tolerance for vmult() step
@@ -331,7 +334,7 @@ public:
     {
         dst = 0.0;
         const double rhs_norm = rhs.l2_norm();
-        const double tol = std::min(m_tol > 0 ? m_tol : m_reltol * rhs_norm, SOLVER_MIN_TOL);
+        const double tol = std::min(m_tol > 0 ? m_tol : m_reltol * rhs_norm, SOLVER_MAX_TOL);
         m_control = SolverControl(m_max_iter, tol);
 
         // TODO: continue on a partial solve with diagnostic, instead of throwing an exception
