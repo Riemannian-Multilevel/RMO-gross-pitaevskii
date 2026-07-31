@@ -69,6 +69,7 @@ public:
     void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const override
     {
         transfer.to_coarse_mesh(x_fine, y_coarse);
+
         ellipsoid::retract_by_norm(M_coarse, y_coarse);
     }
 
@@ -321,7 +322,8 @@ public:
     {
         // Tangent vector restricted to coarse ambient space
         Vector<double> Iv(transfer.n_coarse());
-        transfer.to_coarse_mesh(v_fine, Iv);
+        //transfer.to_coarse_mesh(v_fine, Iv);
+        transfer.Tfine(v_fine, Iv);
 
         // F-Orthogonal projection I(v \in T_y S_h) -> T_r(y) S_H
         ellipsoid::frobenius::project_onto_tangent_space(y_coarse, M_coarse, Iv, dst);
@@ -552,6 +554,10 @@ public:
         transfer.Tfine(M_v, IT_M_v);
 
         // 3. Apply inverse coarse mass matrix: M_H^{-1} * IT_M_v
+        //    XXX: Reset to a relative tolerance, so that restriction solve does not
+        //    inherit the absolute tolerance left by the coarse oracle's gradient()
+        //    on the shared M_inv_coarse
+        M_inv_coarse.set_tol(0.0);
         Vector<double> w(transfer.n_coarse());
         M_inv_coarse.vmult(w, IT_M_v);
 
@@ -701,6 +707,10 @@ public:
         transfer.Tfine(M_v_proj, IT_M_v_proj);
 
         // 6. Apply inverse coarse mass matrix: M_H^{-1} * (I_H^h)^T ...
+        //    XXX: Reset to a relative tolerance, so that restriction solve does not
+        //    inherit the absolute tolerance left by the coarse oracle's gradient()
+        //    on the shared M_inv_coarse
+        M_inv_coarse.set_tol(0.0);
         Vector<double> w(transfer.n_coarse());
         M_inv_coarse.vmult(w, IT_M_v_proj);
 

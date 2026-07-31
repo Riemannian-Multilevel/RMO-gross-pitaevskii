@@ -5,6 +5,7 @@
 #include <gpe/util/util.h>
 
 #include <boost/program_options.hpp>
+#include <charconv>
 #include <ranges>
 #include <string_view>
 
@@ -26,7 +27,7 @@ BOOST_DESCRIBE_STRUCT(FAS_Options, (),
     (kappa, eps, coarse_every, metric_t, transport_t, interpol_t));
 
 
-BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE);
+BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE, KING, MIN_DEG);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);

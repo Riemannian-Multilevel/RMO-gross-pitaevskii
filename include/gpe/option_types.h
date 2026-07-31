@@ -15,7 +15,9 @@ enum class Ordering
 {
     DEFAULT,
     RANDOM,
-    CUTHILL_MCKEE
+    CUTHILL_MCKEE,
+    KING,
+    MIN_DEG
 };
 
 enum class BoundaryCondition
@@ -64,11 +66,11 @@ enum class MetricKind
 
 enum class Transport
 {
-    FROBENIUS,            // Version I   (orth. proj. Frobenius)
-    MASS,                 // Version I   (orth. proj. Mass)
+    FROBENIUS,            // Version IV  (orth. proj. Frobenius)
+    MASS,                 // Version IV  (orth. proj. Mass)
     DIFFERENTIAL,         // Version VI  (Mixed)
-    ADJOINT_RESTRICTION,  // Version II
-    ADJOINT_DIFFERENTIAL, // Version V
+    ADJOINT_RESTRICTION,  // Version V
+    ADJOINT_DIFFERENTIAL, // Version III
     ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION
     ADJOINT_DIFFERENTIAL_FROBENIUS, // Frobenius-metric counterpart of ADJOINT_DIFFERENTIAL
     DIFFERENTIAL_FROBENIUS,         // Frobenius-metric counterpart of DIFFERENTIAL

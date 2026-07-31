@@ -56,6 +56,12 @@ void renumber_dofs(dealii::DoFHandler<dim>& dof_handler,
         case Ordering::CUTHILL_MCKEE:
             dealii::DoFRenumbering::Cuthill_McKee(dof_handler, reversed_numbering, use_constraints);
             break;
+        case Ordering::KING:
+            dealii::DoFRenumbering::boost::king_ordering(dof_handler, reversed_numbering, use_constraints);
+            break;
+        case Ordering::MIN_DEG:
+            dealii::DoFRenumbering::boost::minimum_degree(dof_handler, reversed_numbering, use_constraints);
+            break;
         default:
             throw std::invalid_argument("unknown ordering");
     }
@@ -90,6 +96,10 @@ void renumber_dofs_mg(dealii::DoFHandler<dim>& dof_handler, unsigned int level,
         case Ordering::CUTHILL_MCKEE:
             dealii::DoFRenumbering::Cuthill_McKee(dof_handler, level, reversed_numbering);
             break;
+        case Ordering::KING:
+        case Ordering::MIN_DEG:
+            // The boost-graph renumberings have no level-wise variants in deal.II.
+            throw std::invalid_argument("king/min_deg orderings unavailable for multigrid level renumbering");
         default:
             throw std::invalid_argument("unknown ordering");
     }
