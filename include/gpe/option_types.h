@@ -15,7 +15,9 @@ enum class Ordering
 {
     DEFAULT,
     RANDOM,
-    CUTHILL_MCKEE
+    CUTHILL_MCKEE,
+    KING,
+    MIN_DEG
 };
 
 enum class BoundaryCondition
