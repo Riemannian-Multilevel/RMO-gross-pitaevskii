@@ -367,6 +367,8 @@ public:
         , A_inv(A, options)
     {
         A_inv.update_static(system.get_A0());
+        M_inv.update_static(system.get_M());
+        M_inv.update_dynamic(M.diagonal());
     }
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
