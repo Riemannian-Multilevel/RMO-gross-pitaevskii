@@ -11,6 +11,30 @@ find_package(deal.II 9.6.0 REQUIRED
 find_package(Boost CONFIG COMPONENTS program_options REQUIRED)
 deal_ii_initialize_cached_variables()
 
+# https://github.com/dealii/dealii/issues/18960
+# macOS only: deal.II's Trilinos/Kokkos interface targets carry SDK include
+# paths (.../<sdk>.sdk/usr/include) that shadow the real toolchain headers and
+# break the build. Strip them. On other platforms these paths do not exist, so
+# the workaround is unnecessary.
+function(gpe_strip_sdk_includes _target)
+    if(NOT TARGET ${_target})
+        return()
+    endif()
+    foreach(_prop INTERFACE_INCLUDE_DIRECTORIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
+        get_target_property(_dirs ${_target} ${_prop})
+        if(_dirs)
+            list(FILTER _dirs EXCLUDE REGEX "\\.sdk/usr/include/?$")
+            set_target_properties(${_target} PROPERTIES ${_prop} "${_dirs}")
+        endif()
+    endforeach()
+endfunction()
+
+if(APPLE)
+    foreach(_dealii_tgt dealii::interface_trilinos dealii::interface_kokkos)
+        gpe_strip_sdk_includes(${_dealii_tgt})
+    endforeach()
+endif()
+
 # Find all .h (header) files in the include/ directory
 file(GLOB_RECURSE HEADER_ALL "include/*.h")
 
@@ -54,7 +78,7 @@ add_gpe_executable(main LINK_LIBS Boost::program_options fmt::fmt)
 add_gpe_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
 add_gpe_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
 add_gpe_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
-
+add_gpe_executable(main_operator)
 
 # --- Create targets for tests
 enable_testing()
