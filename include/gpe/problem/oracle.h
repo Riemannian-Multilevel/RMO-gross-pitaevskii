@@ -3,6 +3,7 @@
 
 #include <gpe/lac.h>
 #include <gpe/problem/gpe.h>
+#include <gpe/ropt/oracle.h>
 #include <gpe/ropt/manifold.h>
 #include <gpe/ropt/transport.h>
 
@@ -53,42 +54,6 @@ private:
     const GrossPitaevskiiFunctional<dim>& m_func;
 
     SpdNorm<OperatorType> m_norm;
-};
-
-
-// Basic oracle interface
-class OracleBase
-{
-public:
-    virtual const char* id() const { return ""; }
-    virtual ~OracleBase() = default;
-
-    virtual void update(const Vector<double>& x) = 0;
-
-    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
-    //       check marker `needs_assembly`
-    virtual double value(const Vector<double>&) const = 0;
-
-    // TODO: Compute directional derivative and Riemannian gradient successively
-    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const = 0;
-
-    // TODO: leave `x` argument in update() exclusively, to avoid mismatches
-    //       check marker `needs_gradient
-    virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
-    virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;  // method for setting tolerance
-
-    // TODO: move this to a separate interface?
-    //       (-> class Metric - arguments may differ from evaluation point)
-    virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
-    virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
-    // TODO: improve name
-    virtual void apply_metric(const Vector<double>&, Vector<double>&) const = 0;
-    virtual MetricKind get_metric() const { return MetricKind::NONE; }
-    virtual unsigned n_dofs() const = 0;
-
-    // TODO: move this to a separate interface?
-    //       (-> class Residual or GrossPitaevskiiFunctional - matches evaluation point)
-    virtual double residual(const Vector<double>&) const = 0;
 };
 
 

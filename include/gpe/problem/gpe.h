@@ -11,7 +11,6 @@
 #include <gpe/fe/grid.h>
 #include <gpe/fe/space.h>
 
-#include <gpe/problem/functional.h>
 #include <gpe/util/sparsity.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
@@ -337,7 +336,7 @@ private:
 
 // Class that represents the smooth objective function E(x) in ambient Euclidean space
 template <int dim>
-class GrossPitaevskiiFunctional : public FunctionalBase
+class GrossPitaevskiiFunctional
 {
 public:
     GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
@@ -356,7 +355,7 @@ public:
     }
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
-    void update(const Vector<double>& x) override
+    void update(const Vector<double>& x)
     {
         // Updates A, M as references to system
         system.assemble_nonlinear_term(x);
@@ -372,7 +371,7 @@ public:
      * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
      * \f]
      */
-    double value(const Vector<double>& x) const override
+    double value(const Vector<double>& x) const
     {
         auto A_eval = system.get_operator_A(beta*0.25, 0.5);
 
@@ -382,7 +381,7 @@ public:
         return x * Ax;
     }
 
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const
     {
         Vector<double> Ax(x.size());
         A.vmult(Ax, x);
@@ -390,13 +389,13 @@ public:
         return Ax * z;
     }
 
-    void gradient(const Vector<double>& x, Vector<double>& output) const override
+    void gradient(const Vector<double>& x, Vector<double>& output) const
     {
         A.vmult(output, x);
     }
 
     // Accessors
-    unsigned n_dofs() const override { return system.n_dofs(); }
+    unsigned n_dofs() const { return system.n_dofs(); }
     double get_beta() const { return beta; }
 
     const auto& get_M() const { return M; }

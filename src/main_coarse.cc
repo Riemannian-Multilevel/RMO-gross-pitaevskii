@@ -222,8 +222,8 @@ public:
             vector_transport_mg[l] = vt;
         }
 
-        fas_solver = std::make_unique<FullApproximationScheme<dim>>(
-            manifold_mg, point_transfer_mg, vector_transport_mg, upcast_mg<FunctionalBase>(objective_mg), m_levels,
+        fas_solver = std::make_unique<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>>(
+            manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
             options_descent_mg, options_solver_mg, options_fas
         );
     }
@@ -294,7 +294,7 @@ private:
     MGLevelObject<DescentOptions>                                  options_descent_mg;
     MGLevelObject<SolverOptions>                                   options_solver_mg;
 
-    std::unique_ptr<FullApproximationScheme<dim>> fas_solver;
+    std::unique_ptr<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>> fas_solver;
 };
 
 

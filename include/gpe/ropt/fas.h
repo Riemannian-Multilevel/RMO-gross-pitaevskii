@@ -8,8 +8,8 @@
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/mg_level_object.h>
 
-#include <gpe/problem/oracle.h>
-#include <gpe/problem/oracle_coarse.h>
+#include <gpe/ropt/oracle.h>
+#include <gpe/ropt/oracle_coarse.h>
 
 #include <gpe/ropt/transport.h>
 #include <gpe/ropt/solver.h>
@@ -27,20 +27,12 @@ struct ConvergenceTable : dealii::ConvergenceTable {
 };
 
 
-template <typename Base, typename Derived>
-MGLevelObject<std::shared_ptr<Base>>
-upcast_mg(const MGLevelObject<std::shared_ptr<Derived>>& src)
-{
-    MGLevelObject<std::shared_ptr<Base>> dst(src.min_level(), src.max_level());
-    for (unsigned l = src.min_level(); l <= src.max_level(); ++l)
-        dst[l] = src[l];
-    return dst;
-}
-
 // Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
-template <int dim>
+// Functional: the level objective type. FAS itself never evaluates it; it is only handed to the
+// tilt oracles (TiltOracleType in cycle()), which fix the requirements on it via the TiltOracle concept.
+template <typename Functional>
 class FullApproximationScheme
 {
 public:
@@ -49,7 +41,7 @@ public:
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
                             MGLevelObject<std::shared_ptr<VectorTransportBase>>   vector_transport_mg,
-                            MGLevelObject<std::shared_ptr<FunctionalBase>>        objective_mg,
+                            MGLevelObject<std::shared_ptr<Functional>>            objective_mg,
                             const std::vector<unsigned> &level_indices,
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
@@ -90,7 +82,8 @@ public:
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // OracleBase&:          The oracle used to evaluate the level objective
     // TODO: callback mechanism instead of convergence_table / x_hist
-    template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
+        requires TiltOracle<TiltOracleType, Functional>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
     {
         AssertIndexRange(level_idx, level_indices.size());
@@ -111,10 +104,10 @@ public:
         // Coarse descent direction (level-1 -> level)
         Vector<double> dk(x.size());
 
-        // Update the level oracle on the initial guess
-        // This matches m_objective_mg[level]->update(x)
+        // Update the level oracle on the initial guess.
+        // Invariant: O_level and T_level evaluate the same functional (m_objective_mg[level]),
+        // so this update is visible to T_level as well.
         O_level.update(x);
-        // TODO: O_level and T_level should point to same underlying state (GrossPitaevskiiSystem)
 
         // Solve on coarsest level
         if (level_idx == 0) {
@@ -179,15 +172,14 @@ public:
         // - T_level:  MassCoarseOracle
         // - T_coarse: MassOracle
         // - O_level:  MassCoarseOracleEnergyAdaptive
-        CoarseOracleBase<dim> qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level],
+        CoarseOracleBase qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level],
             *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
         // Evaluation of coarse model gradient  (-> descent direction, A-gradient)
         CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
         // Evaluation of coarse model objective (-> correction term w, M-gradient)
         TiltCoarseOracleType qk_m(qk_base, options_solver_mg[coarse_level]);
 
-        // T_level.update(x)
-        // TODO: clearly encode that T_level and O_level point to the same GrossPitaevskiiSystem (~Functional)
+        // T_level.update(x) is implied by O_level.update(x) above (shared functional)
 
         bool check_coarse_cond = true;
 
@@ -361,7 +353,8 @@ fine_step:
     }
 
     // TODO: only output on certain levels OR include the current level in the table
-    template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
+        requires TiltOracle<TiltOracleType, Functional>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
     {
         cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(O_level, T_level, x, level_idx);
@@ -396,7 +389,7 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
-    MGLevelObject<std::shared_ptr<FunctionalBase>>        m_objective_mg;
+    MGLevelObject<std::shared_ptr<Functional>>            m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
     FAS_Options                                           options_fas;
