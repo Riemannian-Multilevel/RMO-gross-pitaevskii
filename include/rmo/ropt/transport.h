@@ -1,17 +1,17 @@
-#ifndef GPE_GRID_OPERATORS_H
-#define GPE_GRID_OPERATORS_H
+#ifndef RMO_ROPT_TRANSPORT_H
+#define RMO_ROPT_TRANSPORT_H
 
-#include <gpe/fe/interpolate.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/option_types.h>
+#include <rmo/fe/interpolate.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/option_types.h>
 
-namespace gpe
+namespace rmo
 {
 
 class ManifoldTransferBase
 {
 public:
-    ManifoldTransferBase(const LinearTransferBase& transfer_)
+    ManifoldTransferBase(const fe::LinearTransferBase& transfer_)
         : transfer(transfer_) {}
     virtual ~ManifoldTransferBase() = default;
 
@@ -37,7 +37,7 @@ public:
 
 protected:
     // For now, every manifold transfer assumes an underlying (linear) interpolation for the embedding space
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
 };
 
 
@@ -46,7 +46,7 @@ template <typename MatrixType>
 class ManifoldTransfer : public ManifoldTransferBase
 {
 public:
-    ManifoldTransfer(const LinearTransferBase& transfer,
+    ManifoldTransfer(const fe::LinearTransferBase& transfer,
                      const MatrixType& M_coarse,
                      const MatrixType& M_fine)
         : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine)
@@ -238,7 +238,7 @@ class MassProjectionTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "M";
 
-    MassProjectionTransport(const LinearTransferBase& I,
+    MassProjectionTransport(const fe::LinearTransferBase& I,
                             const MatrixType& M_coarse,
                             const MatrixType& M_fine)
         : M_coarse(M_coarse), M_fine(M_fine), transfer(I)
@@ -286,7 +286,7 @@ private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
 
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
 };
 
 
@@ -296,7 +296,7 @@ class FrobeniusProjectionTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "F";
 
-    explicit FrobeniusProjectionTransport(const LinearTransferBase& I,
+    explicit FrobeniusProjectionTransport(const fe::LinearTransferBase& I,
                                           const MatrixType& M_coarse,
                                           const MatrixType& M_fine)
         : M_coarse(M_coarse), M_fine(M_fine), transfer(I)
@@ -333,7 +333,7 @@ private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
 
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
 };
 
 
@@ -507,7 +507,7 @@ public:
     static constexpr const char* id = "V2Restr";
 
     // TODO: set tolerance inside vector_restriction() instead of global tolerance
-    AdjointRestrictionTransport(const LinearTransferBase& I,
+    AdjointRestrictionTransport(const fe::LinearTransferBase& I,
                                 const MatrixType& M_coarse,
                                 const MatrixType& M_fine,
                                 const InverseMatrixType& M_inv_coarse)
@@ -568,7 +568,7 @@ public:
     }
 
 protected:
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
     const InverseMatrixType& M_inv_coarse;
@@ -588,7 +588,7 @@ class FrobeniusAdjointRestrictionTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "FV2Restr";
 
-    FrobeniusAdjointRestrictionTransport(const LinearTransferBase& I,
+    FrobeniusAdjointRestrictionTransport(const fe::LinearTransferBase& I,
                                          const MatrixType& M_coarse,
                                          const MatrixType& M_fine)
         : transfer(I), M_coarse(M_coarse), M_fine(M_fine)
@@ -627,7 +627,7 @@ public:
     }
 
 private:
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
 };
@@ -644,7 +644,7 @@ public:
 
     // ADDED: LinearTransferBase and InverseMatrixType are required to compute
     // the adjoint restriction (transpose of I_H^h and M_H^{-1}.)
-    explicit AdjointDifferentialTransport(const LinearTransferBase& transfer,
+    explicit AdjointDifferentialTransport(const fe::LinearTransferBase& transfer,
                                           const ManifoldTransferBase& pt,
                                           const MatrixType& M_coarse,
                                           const MatrixType& M_fine,
@@ -722,7 +722,7 @@ public:
     }
 
 private:
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
     const ManifoldTransferBase& point_transfer;
 
     const MatrixType& M_coarse;
@@ -740,7 +740,7 @@ class FrobeniusAdjointDifferentialTransport : public VectorTransportBase
 public:
     static constexpr const char* id = "FV5restr";
 
-    explicit FrobeniusAdjointDifferentialTransport(const LinearTransferBase& transfer,
+    explicit FrobeniusAdjointDifferentialTransport(const fe::LinearTransferBase& transfer,
                                                    const ManifoldTransferBase& pt,
                                                    const MatrixType& M_coarse,
                                                    const MatrixType& M_fine)
@@ -808,13 +808,13 @@ public:
     }
 
 private:
-    const LinearTransferBase& transfer;
+    const fe::LinearTransferBase& transfer;
     const ManifoldTransferBase& point_transfer;
 
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
 };
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_GRID_OPERATORS_H
+#endif //RMO_ROPT_TRANSPORT_H

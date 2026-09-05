@@ -1,15 +1,15 @@
-#ifndef GPE_OPTION_CLI_H
-#define GPE_OPTION_CLI_H
+#ifndef RMO_OPTION_H
+#define RMO_OPTION_H
 
-#include <gpe/option_types.h>
-#include <gpe/util/util.h>
+#include <rmo/option_types.h>
+#include <rmo/util/util.h>
 
 #include <boost/program_options.hpp>
 #include <charconv>
 #include <ranges>
 #include <string_view>
 
-namespace gpe
+namespace rmo
 {
 namespace po = boost::program_options;
 
@@ -21,15 +21,12 @@ BOOST_DESCRIBE_STRUCT(SolverOptions, (),
     (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (n_levels, v_levels));
-BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta, order, bc, mesh_kind));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
     (kappa, eps, coarse_every, metric_t, transport_t, interpol_t));
 
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE, KING, MIN_DEG);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
-BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
@@ -113,50 +110,6 @@ inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 }
 
 
-// ---------- GPE_Options ----------
-inline po::options_description gpe_cli_options() {
-    po::options_description d("General problem options");
-    d.add_options()
-        ("degree", po::value<int>()->default_value(1),
-            "polynomial degree for finite element")
-        ("dimension", po::value<int>()->default_value(2),
-            "problem dimension")
-        ("order", po::value<std::string>()->default_value("default"),
-            "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
-        ("boundary", po::value<std::string>()->default_value("neumann"),
-            "boundary constraints (neumann|dirichlet)")
-        ("radius", po::value<double>()->default_value(10.0),
-            "default radius of the cube domain")
-        ("beta", po::value<double>()->default_value(100.0),
-            "non-linearity factor")
-        ("mesh", po::value<std::string>()->default_value("quadrilateral"),
-            "type of mesh elements used (quadrilateral|simplex)")
-        ("potential", po::value<std::string>()->default_value("square"),
-            "used potential (square|optical_lattice)")
-        ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
-            "export incumbent solutions in binary format");
-    return d;
-}
-
-inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options) {
-    const auto order_str    = upper(vm["order"].as<std::string>());
-    const auto boundary_str = upper(vm["boundary"].as<std::string>());
-    const auto mesh_str     = upper(vm["mesh"].as<std::string>());
-    const auto potential_str= upper(vm["potential"].as<std::string>());
-
-    options.order     = string_to_enum<Ordering>(order_str);
-    options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
-    options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
-    options.potential = string_to_enum<Potential>(potential_str);
-    options.degree    = vm["degree"].as<int>();
-    options.dimension = vm["dimension"].as<int>();
-    options.beta      = vm["beta"].as<double>();
-    options.radius    = vm["radius"].as<double>();
-    options.export_solution = vm["export-solution"].as<bool>();
-}
-
-
-// TODO: encode default values in option_type.h and remove default_value()?
 // ---------- DescentOptions ----------
 inline po::options_description descent_cli_options() {
     po::options_description d("RGD options");
@@ -266,6 +219,63 @@ inline po::options_description fas_cli_options()
     return d;
 }
 
+
+// ---------- Gross-Pitaevskii problem ----------
+namespace gpe
+{
+
+BOOST_DESCRIBE_STRUCT(GPE_Options, (),
+    (dimension, degree, radius, beta, order, bc, mesh_kind));
+BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
+
+
+// ---------- GPE_Options ----------
+inline po::options_description gpe_cli_options() {
+    po::options_description d("General problem options");
+    d.add_options()
+        ("degree", po::value<int>()->default_value(1),
+            "polynomial degree for finite element")
+        ("dimension", po::value<int>()->default_value(2),
+            "problem dimension")
+        ("order", po::value<std::string>()->default_value("default"),
+            "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
+        ("boundary", po::value<std::string>()->default_value("neumann"),
+            "boundary constraints (neumann|dirichlet)")
+        ("radius", po::value<double>()->default_value(10.0),
+            "default radius of the cube domain")
+        ("beta", po::value<double>()->default_value(100.0),
+            "non-linearity factor")
+        ("mesh", po::value<std::string>()->default_value("quadrilateral"),
+            "type of mesh elements used (quadrilateral|simplex)")
+        ("potential", po::value<std::string>()->default_value("square"),
+            "used potential (square|optical_lattice)")
+        ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
+            "export incumbent solutions in binary format");
+    return d;
+}
+
+inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options) {
+    const auto order_str    = upper(vm["order"].as<std::string>());
+    const auto boundary_str = upper(vm["boundary"].as<std::string>());
+    const auto mesh_str     = upper(vm["mesh"].as<std::string>());
+    const auto potential_str= upper(vm["potential"].as<std::string>());
+
+    options.order     = string_to_enum<Ordering>(order_str);
+    options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
+    options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
+    options.potential = string_to_enum<Potential>(potential_str);
+    options.degree    = vm["degree"].as<int>();
+    options.dimension = vm["dimension"].as<int>();
+    options.beta      = vm["beta"].as<double>();
+    options.radius    = vm["radius"].as<double>();
+    options.export_solution = vm["export-solution"].as<bool>();
+}
+
+
+// TODO: encode default values in option_type.h and remove default_value()?
+
 } // namespace gpe
 
-#endif //GPE_OPTION_CLI_H
+} // namespace rmo
+
+#endif //RMO_OPTION_H

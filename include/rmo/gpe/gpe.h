@@ -1,17 +1,17 @@
 //
 // Created by Ferdinand Vanmaele on 12.01.26.
 //
-#ifndef GPE_GPE_H
-#define GPE_GPE_H
+#ifndef RMO_GPE_GPE_H
+#define RMO_GPE_GPE_H
 
-#include <gpe/lac.h>
-#include <gpe/option_types.h>
+#include <rmo/lac.h>
+#include <rmo/option_types.h>
 
-#include <gpe/fe/assemble.h>
-#include <gpe/fe/grid.h>
-#include <gpe/fe/space.h>
+#include <rmo/fe/assemble.h>
+#include <rmo/fe/grid.h>
+#include <rmo/fe/space.h>
 
-#include <gpe/util/sparsity.h>
+#include <rmo/util/sparsity.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_q.h>
@@ -19,7 +19,7 @@
 
 #include <numbers>
 
-namespace gpe
+namespace rmo::gpe
 {
 
 namespace potential
@@ -135,11 +135,11 @@ public:
 
         // Assemble S (stiffness) + M_V (weighed mass)
         A0.reinit(sparsity_pattern);
-        assemble_A0(A0, V, dof_handler, quadrature, mapping, constraints);
+        fe::assemble_A0(A0, V, dof_handler, quadrature, mapping, constraints);
 
         // Assemble M (mass)
         M.reinit(sparsity_pattern);
-        assemble_mass(M, dof_handler, quadrature, mapping, constraints);
+        fe::assemble_mass(M, dof_handler, quadrature, mapping, constraints);
 
         // Initialize non-linear term (varies between iterations)
         Mpp.reinit(sparsity_pattern);
@@ -156,7 +156,7 @@ public:
     //       call a matrix assembly. Future versions should implement a state pattern
     void assemble_nonlinear_term(const Vector<double>& x)
     {
-        assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
+        fe::assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
     }
 
     // Since LinearCombination stores pointers to matrices, these functions are lazy;
@@ -305,7 +305,7 @@ public:
     }
 
     /** @brief Access the underlying Finite Element space. */
-    const FeSpace<dim>& get_space() const { return space; }
+    const fe::FeSpace<dim>& get_space() const { return space; }
 
     /** @brief Access the DoF handler. */
     const dealii::DoFHandler<dim>& get_dofs() const { return space.get_dofs(); }
@@ -317,14 +317,14 @@ public:
     [[nodiscard]] const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
 
     /** @brief Access the geometry/grid object. */
-    const HyperCube<dim>& get_grid() const { return grid; }
+    const fe::HyperCube<dim>& get_grid() const { return grid; }
 
     /** @brief Access the geometric mapping (reference cell to real cell). */
     const dealii::Mapping<dim>& get_mapping() const { return *mapping; }
 
 private:
-    HyperCube<dim>    grid;    ///< The geometry and triangulation.
-    FeSpace<dim>      space;   ///< Wrapper for DoFHandler and AffineConstraints.
+    fe::HyperCube<dim>    grid;    ///< The geometry and triangulation.
+    fe::FeSpace<dim>      space;   ///< Wrapper for DoFHandler and AffineConstraints.
 
     // Using unique_ptr to handle polymorphic types (Simplex vs Q) and lifetime requirements
     std::unique_ptr<dealii::FiniteElement<dim>> mapping_fe; ///< Helper FE for Simplex mapping.
@@ -416,6 +416,5 @@ private:
     InverseOpType M_inv, A_inv;
 };
 
-}
-
-#endif //GPE_GPE_H
+} // namespace rmo::gpe
+#endif //RMO_GPE_GPE_H

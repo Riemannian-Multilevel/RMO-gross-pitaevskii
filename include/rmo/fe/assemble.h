@@ -1,5 +1,5 @@
-#ifndef GPE_ASSEMBLE_H
-#define GPE_ASSEMBLE_H
+#ifndef RMO_FE_ASSEMBLE_H
+#define RMO_FE_ASSEMBLE_H
 
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/dofs/dof_handler.h>
@@ -8,7 +8,7 @@
 #include <deal.II/fe/mapping_q1.h>
 #include <deal.II/fe/mapping_fe.h>
 
-namespace gpe
+namespace rmo::fe
 {
 using dealii::types::global_dof_index;
 using dealii::numbers::invalid_unsigned_int;
@@ -349,6 +349,5 @@ namespace matrix_free
 
 } // namespace matrix_free
 
-} // namespace gpe
-
-#endif //GPE_ASSEMBLE_H
+} // namespace rmo::fe
+#endif //RMO_FE_ASSEMBLE_H

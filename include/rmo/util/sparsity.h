@@ -2,8 +2,8 @@
 // Created by Ferdinand Vanmaele on 12.01.26.
 //
 
-#ifndef GPE_SPARSITY_H
-#define GPE_SPARSITY_H
+#ifndef RMO_UTIL_SPARSITY_H
+#define RMO_UTIL_SPARSITY_H
 
 #include <deal.II/lac/sparsity_pattern.h>
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
@@ -13,7 +13,7 @@
 #include <deal.II/multigrid/mg_constrained_dofs.h>
 #include <deal.II/multigrid/mg_tools.h>
 
-namespace gpe
+namespace rmo
 {
 /**
  * @brief Writes the physical locations of all degrees of freedom to a file.
@@ -166,6 +166,6 @@ make_interface_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
     return dsp;
 }
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_SPARSITY_H
+#endif //RMO_UTIL_SPARSITY_H

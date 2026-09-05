@@ -2,18 +2,18 @@
 // Created by Ferdinand Vanmaele on 10.06.26.
 //
 
-#ifndef GPE_ITERATION_H
-#define GPE_ITERATION_H
+#ifndef RMO_GPE_ITERATION_H
+#define RMO_GPE_ITERATION_H
 
-#include <gpe/lac.h>
-#include <gpe/problem/gpe.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/transport.h>
+#include <rmo/lac.h>
+#include <rmo/gpe/gpe.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/transport.h>
 
 #include <deal.II/base/timer.h>
 
 
-namespace gpe
+namespace rmo::gpe
 {
 
 // Alternative interface setting the evaluation point in the constructor
@@ -189,6 +189,6 @@ public:
 
 };
 
-} // namespace gpe
+} // namespace rmo::gpe
 
-#endif //GPE_ITERATION_H
+#endif //RMO_GPE_ITERATION_H

@@ -1,9 +1,9 @@
-#include <gpe/problem/oracle.h>
-#include <gpe/main/model.h>
-#include <gpe/util/util.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/gpe/model.h>
+#include <rmo/util/util.h>
 
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/descent.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/descent.h>
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -15,7 +15,8 @@
 #include <sstream>
 
 using namespace dealii;
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 
 
 template <int dim>

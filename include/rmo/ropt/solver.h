@@ -2,19 +2,19 @@
 // Created by Ferdinand Vanmaele on 08.04.26.
 //
 // TODO: move to fas.h
-#ifndef GPE_MAIN_COARSE_H
-#define GPE_MAIN_COARSE_H
+#ifndef RMO_ROPT_SOLVER_H
+#define RMO_ROPT_SOLVER_H
 
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/convergence_table.h>
 
-#include <gpe/lac.h>
-#include <gpe/ropt/oracle.h>
-#include <gpe/ropt/descent.h>
+#include <rmo/lac.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/descent.h>
 
-#include "gpe/util/util.h"
+#include <rmo/util/util.h>
 
-namespace gpe
+namespace rmo
 {
 
 struct CycleInfo
@@ -213,6 +213,6 @@ private:
     std::vector<Vector<double>> x_hist;
 };
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_MAIN_COARSE_H
+#endif //RMO_ROPT_SOLVER_H

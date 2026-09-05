@@ -1,12 +1,12 @@
-#ifndef GPE_ROPT_ORACLE_H
-#define GPE_ROPT_ORACLE_H
+#ifndef RMO_ROPT_ORACLE_H
+#define RMO_ROPT_ORACLE_H
 
-#include <gpe/lac.h>
-#include <gpe/option_types.h>
+#include <rmo/lac.h>
+#include <rmo/option_types.h>
 
 #include <concepts>
 
-namespace gpe
+namespace rmo
 {
 
 // Basic oracle interface
@@ -51,6 +51,6 @@ template <typename T, typename Functional>
 concept TiltOracle = std::derived_from<T, OracleBase>
                   && std::constructible_from<T, Functional&, SolverOptions>;
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_ROPT_ORACLE_H
+#endif //RMO_ROPT_ORACLE_H

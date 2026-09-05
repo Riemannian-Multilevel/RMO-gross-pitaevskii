@@ -1,15 +1,15 @@
-#ifndef GPE_ROPT_ORACLE_COARSE_H
-#define GPE_ROPT_ORACLE_COARSE_H
+#ifndef RMO_ROPT_ORACLE_COARSE_H
+#define RMO_ROPT_ORACLE_COARSE_H
 
-#include <gpe/ropt/oracle.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/transport.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/transport.h>
 
 #include <deal.II/base/timer.h>
 
 #include <concepts>
 
-namespace gpe
+namespace rmo
 {
 
 // TODO: keep track of fine vector for consistency
@@ -169,6 +169,6 @@ template <typename T>
 concept CoarseOracle = std::derived_from<T, OracleBase>
                     && std::constructible_from<T, CoarseOracleBase&, SolverOptions>;
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_ROPT_ORACLE_COARSE_H
+#endif //RMO_ROPT_ORACLE_COARSE_H

@@ -2,21 +2,21 @@
 // Created by Ferdinand Vanmaele on 27.05.26.
 //
 
-#ifndef GPE_FAS_H
-#define GPE_FAS_H
+#ifndef RMO_ROPT_FAS_H
+#define RMO_ROPT_FAS_H
 
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/mg_level_object.h>
 
-#include <gpe/ropt/oracle.h>
-#include <gpe/ropt/oracle_coarse.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_coarse.h>
 
-#include <gpe/ropt/transport.h>
-#include <gpe/ropt/solver.h>
+#include <rmo/ropt/transport.h>
+#include <rmo/ropt/solver.h>
 
 #include <utility>
 
-namespace gpe
+namespace rmo
 {
 using dealii::MGLevelObject;
 
@@ -397,6 +397,6 @@ private:
     std::vector<Vector<double>> x_hist;
 };
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_FAS_H
+#endif //RMO_ROPT_FAS_H

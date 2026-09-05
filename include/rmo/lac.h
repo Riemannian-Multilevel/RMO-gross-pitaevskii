@@ -1,5 +1,5 @@
-#ifndef GPE_LAC_H
-#define GPE_LAC_H
+#ifndef RMO_LAC_H
+#define RMO_LAC_H
 // Upper bound on the inner-solver tolerance (loosest allowed), applied with
 // std::min: the actual tolerance is never larger than this, i.e. the inner
 // solve is always at least this accurate.
@@ -18,7 +18,7 @@
 #include <deal.II/lac/solver_cg.h>     // for symmetric positive definite matrices
 #include <deal.II/lac/solver_minres.h>
 
-namespace gpe
+namespace rmo
 {
 // TODO: use aliases for Trilinos, PETSc, ... matrices
 using dealii::Vector;
@@ -535,6 +535,6 @@ private:
 using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
 using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_LAC_H
+#endif //RMO_LAC_H

@@ -1,15 +1,16 @@
-#include <gpe/lac.h>
-#include <gpe/main/model.h>
-#include <gpe/ropt/fas.h>
-#include <gpe/problem/oracle_coarse.h>
-#include <gpe/option.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/util/serialize.h>
+#include <rmo/lac.h>
+#include <rmo/gpe/model.h>
+#include <rmo/ropt/fas.h>
+#include <rmo/gpe/oracle_coarse.h>
+#include <rmo/option.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/util/serialize.h>
 
 #include <fmt/format.h>
 
 using namespace dealii;
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 
 // -------------------------------------------------------------------------
 // Transfer Setup Helper
@@ -20,16 +21,16 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
                      const OperatorType& M_c, const OperatorType& M_f, const InverseOpType& M_inv_c,
                      FAS_Options options_fas)
 {
-    std::shared_ptr<LinearTransferBase> transfer;
+    std::shared_ptr<fe::LinearTransferBase> transfer;
     std::shared_ptr<ManifoldTransferBase> point_transfer;
     std::shared_ptr<VectorTransportBase> vector_transport;
 
     if (options_fas.interpol_t == Interpolate::MASS) {
-        transfer = std::make_shared<MassTransfer<dim,LinearTransferMG<dim>,OperatorType,InverseOpType>>(
+        transfer = std::make_shared<fe::MassTransfer<dim,fe::LinearTransferMG<dim>,OperatorType,InverseOpType>>(
             dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
     }
     else if (options_fas.interpol_t == Interpolate::NONE) {
-        transfer = std::make_shared<LinearTransferMG<dim>>(dofs_c, dofs_f, constr_c, constr_f);
+        transfer = std::make_shared<fe::LinearTransferMG<dim>>(dofs_c, dofs_f, constr_c, constr_f);
     }
     else {
         std::abort();
@@ -288,7 +289,7 @@ private:
 
     MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>> objective_mg;
     MGLevelObject<std::shared_ptr<ManifoldBase>>                   manifold_mg;
-    MGLevelObject<std::shared_ptr<LinearTransferBase>>             transfer_mg;
+    MGLevelObject<std::shared_ptr<fe::LinearTransferBase>>             transfer_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>           point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>            vector_transport_mg;
     MGLevelObject<DescentOptions>                                  options_descent_mg;

@@ -3,14 +3,15 @@
 //
 #include "test_gradient.h"
 
-#include <gpe/problem/oracle.h>
+#include <rmo/gpe/oracle.h>
 #include <fstream>
 #include <fmt/format.h>
 #include <deal.II/base/convergence_table.h>
 
 #define NUM_TRIALS 50
 
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 
 // TODO: long double doesn't do much here, since F() is evaluated in double
 template <typename FuncType>

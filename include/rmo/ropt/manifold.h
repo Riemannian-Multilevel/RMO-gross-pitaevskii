@@ -1,13 +1,13 @@
-#ifndef GPE_FUNCTIONS_H
-#define GPE_FUNCTIONS_H
+#ifndef RMO_ROPT_MANIFOLD_H
+#define RMO_ROPT_MANIFOLD_H
 #ifndef ZERO_ROUNDOFF
 #define ZERO_ROUNDOFF 1e-15
 #endif
 
-#include <gpe/lac.h>
+#include <rmo/lac.h>
 #include <deal.II/base/function.h>
 
-namespace gpe
+namespace rmo
 {
 
 // TODO
@@ -950,6 +950,6 @@ private:
 };
 
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_FUNCTIONS_H
+#endif //RMO_ROPT_MANIFOLD_H

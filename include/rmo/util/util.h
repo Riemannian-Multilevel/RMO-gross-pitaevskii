@@ -1,5 +1,5 @@
-#ifndef GPE_UTIL_H
-#define GPE_UTIL_H
+#ifndef RMO_UTIL_UTIL_H
+#define RMO_UTIL_UTIL_H
 
 #include <deal.II/base/point.h>
 #include <deal.II/numerics/data_out.h>
@@ -11,7 +11,7 @@
 #include <string>
 #include <type_traits>
 
-namespace gpe
+namespace rmo
 {
 
 //! Take boundary points as strings "x,y,z" from the command-line
@@ -160,6 +160,6 @@ void dump_options(const T& obj, std::ostream& out)
     });
 }
 
-} //namespace gpe
+} // namespace rmo
 
-#endif //GPE_UTIL_H
+#endif //RMO_UTIL_UTIL_H

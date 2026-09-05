@@ -1,17 +1,17 @@
 //
 // Created by Ferdinand Vanmaele on 04.04.26.
 //
-#ifndef GPE_TEST_GRADIENT_H
-#define GPE_TEST_GRADIENT_H
+#ifndef RMO_TEST_GRADIENT_H
+#define RMO_TEST_GRADIENT_H
 
-#include <gpe/problem/gpe.h>
-#include <gpe/util/random.h>
-#include <gpe/ropt/manifold.h>
+#include <rmo/gpe/gpe.h>
+#include <rmo/util/random.h>
+#include <rmo/ropt/manifold.h>
 
 #include <boost/math/special_functions/math_fwd.hpp>
 
 
-namespace gpe::ellipsoid
+namespace rmo::ellipsoid
 {
 template <typename MatrixType>
 void random_point(Vector<double>& x, const MatrixType& M,
@@ -78,10 +78,10 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
 
 } // namespace frobenius
 
-} // namespace gpe::ellipdoid
+} // namespace rmo::ellipsoid
 
 
-namespace gpe
+namespace rmo::gpe
 {
 // TODO: check first order-coherence
 
@@ -453,4 +453,4 @@ public:
 }
 
 
-#endif //GPE_TEST_GRADIENT_H
+#endif //RMO_TEST_GRADIENT_H
