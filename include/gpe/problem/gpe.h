@@ -4,13 +4,15 @@
 #ifndef GPE_GPE_H
 #define GPE_GPE_H
 
+#include <gpe/lac.h>
+#include <gpe/option_types.h>
+
 #include <gpe/fe/assemble.h>
 #include <gpe/fe/grid.h>
 #include <gpe/fe/space.h>
 
-#include <gpe/lac.h>
+#include <gpe/problem/functional.h>
 #include <gpe/util/sparsity.h>
-#include <gpe/option_types.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_q.h>
@@ -333,27 +335,9 @@ private:
 };
 
 
-class FunctionalBase
-{
-public:
-    virtual ~FunctionalBase() = default;
-
-    virtual void update(const Vector<double>&)
-    {
-        throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-    }
-
-    virtual double value(const Vector<double>& x) const = 0;
-    virtual double directional_derivative(const Vector<double>&, const Vector<double>&) const = 0;
-
-    virtual void gradient(const Vector<double>&, Vector<double>&) const = 0;
-    virtual unsigned n_dofs() const = 0;
-};
-
-
 // Class that represents the smooth objective function E(x) in ambient Euclidean space
 template <int dim>
-class GrossPitaevskiiFunctional
+class GrossPitaevskiiFunctional : public FunctionalBase
 {
 public:
     GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
@@ -372,7 +356,7 @@ public:
     }
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
-    void update(const Vector<double>& x)
+    void update(const Vector<double>& x) override
     {
         // Updates A, M as references to system
         system.assemble_nonlinear_term(x);
@@ -388,7 +372,7 @@ public:
      * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
      * \f]
      */
-    double value(const Vector<double>& x) const
+    double value(const Vector<double>& x) const override
     {
         auto A_eval = system.get_operator_A(beta*0.25, 0.5);
 
@@ -398,7 +382,7 @@ public:
         return x * Ax;
     }
 
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const
+    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
         Vector<double> Ax(x.size());
         A.vmult(Ax, x);
@@ -406,13 +390,13 @@ public:
         return Ax * z;
     }
 
-    void gradient(const Vector<double>& x, Vector<double>& output) const
+    void gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         A.vmult(output, x);
     }
 
     // Accessors
-    unsigned n_dofs() const { return system.n_dofs(); }
+    unsigned n_dofs() const override { return system.n_dofs(); }
     double get_beta() const { return beta; }
 
     const auto& get_M() const { return M; }

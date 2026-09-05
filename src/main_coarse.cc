@@ -1,6 +1,6 @@
 #include <gpe/lac.h>
 #include <gpe/main/model.h>
-#include <gpe/main/fas.h>
+#include <gpe/ropt/fas.h>
 #include <gpe/problem/oracle_coarse.h>
 #include <gpe/option.h>
 #include <gpe/ropt/manifold.h>
@@ -223,7 +223,7 @@ public:
         }
 
         fas_solver = std::make_unique<FullApproximationScheme<dim>>(
-            manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
+            manifold_mg, point_transfer_mg, vector_transport_mg, upcast_mg<FunctionalBase>(objective_mg), m_levels,
             options_descent_mg, options_solver_mg, options_fas
         );
     }
