@@ -27,6 +27,16 @@ struct ConvergenceTable : dealii::ConvergenceTable {
 };
 
 
+template <typename Base, typename Derived>
+MGLevelObject<std::shared_ptr<Base>>
+upcast_mg(const MGLevelObject<std::shared_ptr<Derived>>& src)
+{
+    MGLevelObject<std::shared_ptr<Base>> dst(src.min_level(), src.max_level());
+    for (unsigned l = src.min_level(); l <= src.max_level(); ++l)
+        dst[l] = src[l];
+    return dst;
+}
+
 // Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
@@ -39,8 +49,7 @@ public:
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
                             MGLevelObject<std::shared_ptr<VectorTransportBase>>   vector_transport_mg,
-                            // TODO: generalization: shared_ptr<FunctionalBase> (base for constructing oracles)
-                            MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>>  objective_mg,
+                            MGLevelObject<std::shared_ptr<FunctionalBase>>        objective_mg,
                             const std::vector<unsigned> &level_indices,
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
@@ -170,7 +179,8 @@ public:
         // - T_level:  MassCoarseOracle
         // - T_coarse: MassOracle
         // - O_level:  MassCoarseOracleEnergyAdaptive
-        CoarseOracleBase<dim> qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
+        CoarseOracleBase<dim> qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level],
+            *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
         // Evaluation of coarse model gradient  (-> descent direction, A-gradient)
         CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
         // Evaluation of coarse model objective (-> correction term w, M-gradient)
@@ -386,7 +396,7 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
-    MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>>  m_objective_mg;
+    MGLevelObject<std::shared_ptr<FunctionalBase>>        m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
     FAS_Options                                           options_fas;
