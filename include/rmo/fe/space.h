@@ -1,7 +1,7 @@
-#ifndef GPE_DOFS_HH
-#define GPE_DOFS_HH
+#ifndef RMO_FE_SPACE_H
+#define RMO_FE_SPACE_H
 
-#include <gpe/option_types.h>
+#include <rmo/option_types.h>
 
 // step 2 -- dof libraries
 #include <deal.II/dofs/dof_handler.h>
@@ -10,7 +10,7 @@
 #include <deal.II/numerics/vector_tools.h>
 
 
-namespace gpe
+namespace rmo::fe
 {
 using dealii::numbers::invalid_unsigned_int;
 
@@ -339,5 +339,5 @@ private:
     dealii::AffineConstraints<double> constraints;
 };
 
-} // namespace gpe
-#endif //GPE_DOFS_HH
+} // namespace rmo::fe
+#endif //RMO_FE_SPACE_H

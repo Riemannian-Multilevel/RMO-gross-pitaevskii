@@ -1,15 +1,15 @@
-#ifndef GPE_ORACLE_H
-#define GPE_ORACLE_H
+#ifndef RMO_GPE_ORACLE_H
+#define RMO_GPE_ORACLE_H
 
-#include <gpe/lac.h>
-#include <gpe/problem/gpe.h>
-#include <gpe/ropt/oracle.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/transport.h>
+#include <rmo/lac.h>
+#include <rmo/gpe/gpe.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/transport.h>
 
 #include <deal.II/base/timer.h>
 
-namespace gpe
+namespace rmo::gpe
 {
 
 template <int dim>
@@ -317,6 +317,6 @@ public:
     }
 };
 
-} // namespace gpe
+} // namespace rmo::gpe
 
-#endif //GPE_ORACLE_H
+#endif //RMO_GPE_ORACLE_H

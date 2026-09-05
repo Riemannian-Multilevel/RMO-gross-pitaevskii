@@ -1,17 +1,18 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include <gpe/main/model.h>
-#include <gpe/problem/oracle.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/descent.h>
-#include <gpe/option.h>
-#include <gpe/util/util.h>
+#include <rmo/gpe/model.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/descent.h>
+#include <rmo/option.h>
+#include <rmo/util/util.h>
 
 #include <iostream>
 #include <fmt/format.h>
 
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 using namespace dealii;
 
 

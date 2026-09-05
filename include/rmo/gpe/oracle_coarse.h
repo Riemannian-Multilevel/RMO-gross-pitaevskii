@@ -2,13 +2,13 @@
 // Created by Ferdinand Vanmaele on 12.05.26.
 //
 
-#ifndef GPE_ORACLE_COARSE_H
-#define GPE_ORACLE_COARSE_H
+#ifndef RMO_GPE_ORACLE_COARSE_H
+#define RMO_GPE_ORACLE_COARSE_H
 
-#include <gpe/problem/oracle.h>
-#include <gpe/ropt/oracle_coarse.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/ropt/oracle_coarse.h>
 
-namespace gpe
+namespace rmo::gpe
 {
 
 template <int dim>
@@ -575,6 +575,6 @@ private:
     SpdNorm<OperatorType> m_norm;
 };
 
-} // namespace gpe
+} // namespace rmo::gpe
 
-#endif //GPE_ORACLE_COARSE_H
+#endif //RMO_GPE_ORACLE_COARSE_H

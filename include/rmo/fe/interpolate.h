@@ -2,10 +2,10 @@
 // Created by Ferdinand Vanmaele on 05.04.26.
 //
 
-#ifndef GPE_FE_INTERPOLATE_H
-#define GPE_FE_INTERPOLATE_H
+#ifndef RMO_FE_INTERPOLATE_H
+#define RMO_FE_INTERPOLATE_H
 
-#include <gpe/lac.h>
+#include <rmo/lac.h>
 
 #include <deal.II/grid/grid_tools.h>
 #include <deal.II/numerics/vector_tools.h>
@@ -16,7 +16,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 
-namespace gpe
+namespace rmo::fe
 {
 
 class LinearTransferBase
@@ -253,6 +253,5 @@ private:
     const InverseMatrixType& _M_inv_coarse;
 };
 
-} // namespace gpe
-
-#endif //GPE_FE_INTERPOLATE_H
+} // namespace rmo::fe
+#endif //RMO_FE_INTERPOLATE_H

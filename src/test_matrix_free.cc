@@ -1,10 +1,10 @@
 //
 // Created by Ferdinand Vanmaele on 09.04.26.
 //
-#include <gpe/problem/gpe.h>
-#include <gpe/problem/oracle.h>
-#include <gpe/option_types.h>
-#include <gpe/main/model.h>
+#include <rmo/gpe/gpe.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/option_types.h>
+#include <rmo/gpe/model.h>
 
 #include "test_gradient.h"
 #include <fmt/format.h>
@@ -20,7 +20,8 @@
 #define STDDEV     1.0
 #define MARGIN     1e-10
 
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 using namespace dealii;
 
 template <typename Range>
@@ -36,7 +37,7 @@ double mean(Range&& x)
 
 // Matrix-free evaluation of the Gross Pitaevskii energy. This function does not require calling
 // assemble_nonlinear_term() beforehand.
-// Conceptually this is similar to gpe::assemble, but iterates over the finite element grid
+// Conceptually this is similar to rmo::fe::assemble, but iterates over the finite element grid
 // instead of assembling a potentially large sparse matrix.
 template <int dim>
 double get_energy_nonlinear(const DoFHandler<dim>& dof_handler, const Vector<double>& x)

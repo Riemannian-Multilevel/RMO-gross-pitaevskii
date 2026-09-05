@@ -1,15 +1,15 @@
-#ifndef GPE_DESCENT_H
-#define GPE_DESCENT_H
+#ifndef RMO_ROPT_DESCENT_H
+#define RMO_ROPT_DESCENT_H
 
-#include <gpe/ropt/oracle.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/lac.h>
-#include <gpe/option_types.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/lac.h>
+#include <rmo/option_types.h>
 
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/timer.h>
 
-namespace gpe
+namespace rmo
 {
 using dealii::ConvergenceTable::RateMode::reduction_rate;
 using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
@@ -218,6 +218,6 @@ gradient_descent(OracleType& oracle,
     return x;
 }
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_DESCENT_H
+#endif //RMO_ROPT_DESCENT_H

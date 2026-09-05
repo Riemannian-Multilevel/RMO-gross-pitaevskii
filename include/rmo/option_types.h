@@ -2,11 +2,11 @@
 // Created by Ferdinand Vanmaele on 12.01.26.
 //
 
-#ifndef GPE_OPTION_TYPES_H
-#define GPE_OPTION_TYPES_H
+#ifndef RMO_OPTION_TYPES_H
+#define RMO_OPTION_TYPES_H
 #include <vector>
 
-namespace gpe
+namespace rmo
 {
 
 // TODO: consistent naming of classes
@@ -45,13 +45,6 @@ enum class MeshKind
 {
     QUADRILATERAL,
     SIMPLEX
-};
-
-// TODO: support more complicated potentials
-enum class Potential
-{
-    SQUARE,
-    OPTICAL_LATTICE
 };
 
 // TODO: Merge CoarseMetric + SmoothKind -> MetricKind
@@ -122,19 +115,6 @@ struct MG_Options
     std::vector<unsigned> v_levels;
 };
 
-struct GPE_Options
-{
-    int dimension;          // dimension of domain
-    int degree;             // degree of shape functions
-    double radius;          // radius of the cube (square, line) domain
-    double beta;            // factor for the non-linear term in GPE
-    Ordering order;         // ordering for degrees of freedom
-    BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
-    MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
-    Potential potential;    // used potential V for matrix M_V
-    bool export_solution;   // write incumbent solutions to disk
-};
-
 struct FAS_Options
 {
     double kappa;           // weight for ratio of restricted and coarse gradient
@@ -160,6 +140,34 @@ struct GradInfo
 };
 
 
+
+// ---------- Gross-Pitaevskii problem ----------
+namespace gpe
+{
+
+// TODO: support more complicated potentials
+enum class Potential
+{
+    SQUARE,
+    OPTICAL_LATTICE
+};
+
+
+struct GPE_Options
+{
+    int dimension;          // dimension of domain
+    int degree;             // degree of shape functions
+    double radius;          // radius of the cube (square, line) domain
+    double beta;            // factor for the non-linear term in GPE
+    Ordering order;         // ordering for degrees of freedom
+    BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
+    MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
+    Potential potential;    // used potential V for matrix M_V
+    bool export_solution;   // write incumbent solutions to disk
+};
+
 } // namespace gpe
 
-#endif //GPE_OPTION_TYPES_H
+} // namespace rmo
+
+#endif //RMO_OPTION_TYPES_H
