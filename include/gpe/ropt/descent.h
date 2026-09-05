@@ -1,7 +1,7 @@
 #ifndef GPE_DESCENT_H
 #define GPE_DESCENT_H
 
-#include <gpe/problem/oracle.h>
+#include <gpe/ropt/oracle.h>
 #include <gpe/ropt/manifold.h>
 #include <gpe/lac.h>
 #include <gpe/option_types.h>
