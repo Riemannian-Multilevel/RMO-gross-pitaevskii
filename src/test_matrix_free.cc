@@ -3,23 +3,20 @@
 //
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/oracle.h>
+#include <rmo/option.h>
 #include <rmo/option_types.h>
+#include <rmo/util/util.h>
 #include <rmo/gpe/model.h>
 
 #include <rmo/ropt/manifold.h>
 #include <rmo/util/random.h>
 #include <fmt/format.h>
 
-#define NUM_TRIALS 200
-#define MIN_LEVEL  8
-#define MAX_LEVEL  11
-#define DIM        2
-#define FE_DEGREE  1
-#define RADIUS     10
-#define BETA       100
-#define MEAN       0.0
-#define STDDEV     1.0
-#define MARGIN     1e-10
+#include <iostream>
+
+constexpr double MEAN   = 0.0;
+constexpr double STDDEV = 1.0;
+constexpr double MARGIN = 1e-10;
 
 using namespace rmo;
 using namespace rmo::gpe;
@@ -91,60 +88,104 @@ double get_energy(const DoFHandler<dim>& dof_handler, const Vector<double>& x,
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
-    GPE_Options options = {.dimension=DIM, .degree=FE_DEGREE, .radius=RADIUS, .beta=BETA};
-    MGLevelObject<std::vector<double>> time_value(MIN_LEVEL, MAX_LEVEL);
-    MGLevelObject<std::vector<double>> time_value_cell_loop(MIN_LEVEL, MAX_LEVEL);
-    MGLevelObject<std::vector<double>> value_error(MIN_LEVEL, MAX_LEVEL);
+    GPE_Options options{};
+    unsigned min_level = 0, max_level = 0, n_trials = 0;
 
-    for (unsigned level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
-        dealii::Timer timer;
-        ModelBuilder<DIM> model(potential::Square<DIM>(), options, level);
+    try {
+        po::options_description all("Cell-loop vs. sparse matrix-vector evaluation of the GP energy");
+        all.add(gpe_cli_options());
+        all.add_options()
+            ("help", "print this message")
+            ("min-level", po::value<unsigned>()->default_value(8), "coarsest refinement level")
+            ("max-level", po::value<unsigned>()->default_value(11), "finest refinement level")
+            ("trials", po::value<unsigned>()->default_value(200), "random points evaluated per level");
 
-        auto& system = model.get_system();
-        const auto& eval = model.get_eval(options.beta, SolverOptions{});
-        const unsigned n_dofs = model.n_dofs();
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, all), vm);
+        po::notify(vm);
 
-        // Average time over trials for value() + assembly, and the cell-loop reference
-        time_value[level].reserve(NUM_TRIALS);
-        time_value_cell_loop[level].reserve(NUM_TRIALS);
-        value_error[level].reserve(NUM_TRIALS);
-
-        for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
-            double value, value_cell_loop;
-            Vector<double> x(n_dofs);
-            ellipsoid::random_point(x, model.get_M(), MEAN, STDDEV);
-
-            { // Reference value, assembled on the fly in a cell loop
-                auto begin_t = timer.cpu_time();
-                value_cell_loop = get_energy(model.get_dofs(), x, system.get_A0(), options.beta);
-
-                auto end_t = timer.cpu_time();
-                time_value_cell_loop[level].push_back(end_t - begin_t);
-            }
-
-            { // Value through sparse matrix-vector products (LinearCombination)
-                auto begin_t = timer.cpu_time();
-                system.assemble_nonlinear_term(x);
-                value = eval.value(x);
-
-                auto end_t = timer.cpu_time();
-                time_value[level].push_back(end_t - begin_t);
-            }
-
-            // Verify both match within a given margin (done in extended precision to reduce cancellation)
-            // TODO: mean/standard deviation of errors
-            const long double error = std::abs(static_cast<long double>(value) - value_cell_loop);
-            value_error[level].push_back(static_cast<double>(error));
-
-            AssertThrow(error < MARGIN, dealii::ExcInternalError(fmt::format(
-            "mismatch between value: {} and value_cell_loop: {} (level: {}, trial: {})",
-                value, value_cell_loop, level, trial)));
+        if (vm.count("help")) {
+            std::cout << all << std::endl;
+            return 0;
         }
-        // TODO: write time_value / time_value_cell_loop to file for plotting
-        std::cerr << fmt::format("Average time on level {}, spmv: {}s\n", level, mean(time_value[level]))
-                  << fmt::format("Average time on level {}, cell loop: {}s\n", level, mean(time_value_cell_loop[level]))
-                  << fmt::format("Average error on level {}: {}\n", level, mean(value_error[level]));
+
+        apply_gpe_options(vm, options);
+        min_level = vm["min-level"].as<unsigned>();
+        max_level = vm["max-level"].as<unsigned>();
+        n_trials  = vm["trials"].as<unsigned>();
+        AssertThrow(min_level <= max_level,
+            dealii::ExcMessage("--min-level must not exceed --max-level"));
     }
+    catch (std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
+
+    try {
+        with_dimension(options.dimension, [&]<typename T0>(T0)
+        {
+        constexpr int dim = T0::value;
+
+        MGLevelObject<std::vector<double>> time_value(min_level, max_level);
+        MGLevelObject<std::vector<double>> time_value_cell_loop(min_level, max_level);
+        MGLevelObject<std::vector<double>> value_error(min_level, max_level);
+
+        for (unsigned level = min_level; level <= max_level; level++) {
+            dealii::Timer timer;
+            ModelBuilder<dim> model(potential::Square<dim>(), options, level);
+
+            auto& system = model.get_system();
+            const auto& eval = model.get_eval(options.beta, SolverOptions{});
+            const unsigned n_dofs = model.n_dofs();
+
+            // Average time over trials for value() + assembly, and the cell-loop reference
+            time_value[level].reserve(n_trials);
+            time_value_cell_loop[level].reserve(n_trials);
+            value_error[level].reserve(n_trials);
+
+            for (unsigned int trial = 0; trial < n_trials; trial++) {
+                double value, value_cell_loop;
+                Vector<double> x(n_dofs);
+                ellipsoid::random_point(x, model.get_M(), MEAN, STDDEV);
+
+                { // Reference value, assembled on the fly in a cell loop
+                    auto begin_t = timer.cpu_time();
+                    value_cell_loop = get_energy(model.get_dofs(), x, system.get_A0(), options.beta);
+
+                    auto end_t = timer.cpu_time();
+                    time_value_cell_loop[level].push_back(end_t - begin_t);
+                }
+
+                { // Value through sparse matrix-vector products (LinearCombination)
+                    auto begin_t = timer.cpu_time();
+                    system.assemble_nonlinear_term(x);
+                    value = eval.value(x);
+
+                    auto end_t = timer.cpu_time();
+                    time_value[level].push_back(end_t - begin_t);
+                }
+
+                // Verify both match within a given margin (done in extended precision to reduce cancellation)
+                // TODO: mean/standard deviation of errors
+                const long double error = std::abs(static_cast<long double>(value) - value_cell_loop);
+                value_error[level].push_back(static_cast<double>(error));
+
+                AssertThrow(error < MARGIN, dealii::ExcInternalError(fmt::format(
+                "mismatch between value: {} and value_cell_loop: {} (level: {}, trial: {})",
+                    value, value_cell_loop, level, trial)));
+            }
+            // TODO: write time_value / time_value_cell_loop to file for plotting
+            std::cerr << fmt::format("Average time on level {}, spmv: {}s\n", level, mean(time_value[level]))
+                      << fmt::format("Average time on level {}, cell loop: {}s\n", level, mean(time_value_cell_loop[level]))
+                      << fmt::format("Average error on level {}: {}\n", level, mean(value_error[level]));
+        }
+        });
+    }
+    catch (std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
+    return 0;
 }

@@ -3,12 +3,14 @@
 //
 #include "test_gradient.h"
 
+#include <rmo/gpe/model.h>
 #include <rmo/gpe/oracle.h>
+#include <rmo/option.h>
+#include <rmo/util/util.h>
 #include <fstream>
 #include <fmt/format.h>
 #include <deal.II/base/convergence_table.h>
 
-#define NUM_TRIALS 50
 
 using namespace rmo;
 using namespace rmo::gpe;
@@ -169,98 +171,129 @@ void check_gradient(GradientTestBase<dim>& test_grad, unsigned n_trials, std::st
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
     GPE_Options options{};
-    options.dimension = 2;
-    options.degree    = 1;  // piecewise linear (1) or quadratic (2) elements
-    options.radius    = 10;
-    options.beta      = 100;
-    options.bc        = BoundaryCondition::DIRICHLET;
-    options.mesh_kind = MeshKind::QUADRILATERAL;
-    options.order     = Ordering::CUTHILL_MCKEE;
+    unsigned n_levels = 0;
+    unsigned n_trials = 0;
 
+    try {
+        po::options_description all("Finite-difference check of the Riemannian gradients");
+        all.add(gpe_cli_options());
+        all.add_options()
+            ("help", "print this message")
+            ("level", po::value<unsigned>()->default_value(8),
+                "number of global refinements")
+            ("trials", po::value<unsigned>()->default_value(50),
+                "random base points checked per gradient");
+
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, all), vm);
+        po::notify(vm);
+
+        if (vm.count("help")) {
+            std::cout << all << std::endl;
+            return 0;
+        }
+
+        apply_gpe_options(vm, options);
+        n_levels = vm["level"].as<unsigned>();
+        n_trials = vm["trials"].as<unsigned>();
+    }
+    catch (std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
+
+    // Not exposed on the command line: the finite differences resolve the gradient only if the
+    // inner solves are far more accurate than the difference quotients they are compared against.
     SolverOptions options_slv{};
     options_slv.solver    = SolverMethod::CG;
     options_slv.max_inner = 2000;
     options_slv.precond   = Precondition::NONE;
     options_slv.tol_inner = 1e-12;
 
-    constexpr unsigned int n_levels = 8;
-    GrossPitaevskiiPackage<2> GS(options, n_levels);
-    GrossPitaevskiiSystem<2> system = GS.system(potential::Square<2>());
-    const unsigned n_dofs = GS.n_dofs();
-
+    with_dimension(options.dimension, [&]<typename T0>(T0)
     {
-        std::cerr << "--- GRADIENT CHECK - ENERGY\n";
-        GradientTestEnergy<2> test_energy(system, options.beta, options_slv);
-        check_gradient(test_energy, NUM_TRIALS, "checkgradient_energy_2d");
-        std::cerr << "\n";
-    }
+        constexpr int dim = T0::value;
 
-    {
-        std::cerr << "--- GRADIENT CHECK - MASS\n";
-        GradientTestMass<2> test_mass(system, options.beta, options_slv);
-        check_gradient(test_mass, NUM_TRIALS, "checkgradient_mass_2d");
-        std::cerr << "\n";
-    }
+        ModelBuilder<dim> builder(potential::Square<dim>(), options, n_levels);
+        auto& system = builder.get_system();
+        const unsigned n_dofs = builder.n_dofs();
 
-    {
-        std::cerr << "--- GRADIENT CHECK - FROBENIUS\n";
-        GradientTestFrobenius<2> test_frob(system, options.beta, options_slv);
-        check_gradient(test_frob, NUM_TRIALS, "checkgradient_frob_2d");
-        std::cerr << "\n";
-    }
-
-    {
-        //std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
-        // TODO
-    }
-
-    {
-        std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
-        GradientTestCoarseMass<2> test_coarse_mass(system, options.beta, options_slv);
-        GradientTestMass<2> test_mass(system, options.beta, options_slv);
-
-        Vector<double> w(n_dofs);  // fixed correction term
-        w = 1.0;
-
-        auto setup_base_points_mass = [&w,&test_mass,&test_coarse_mass,n_dofs]()
         {
-            Vector<double> phi(n_dofs); // random base point
-            test_mass.random_point(phi);
+            std::cerr << "--- GRADIENT CHECK - ENERGY\n";
+            GradientTestEnergy<dim> test_energy(system, options.beta, options_slv);
+            check_gradient(test_energy, n_trials, fmt::format("checkgradient_energy_{}d", dim));
+            std::cerr << "\n";
+        }
 
-            Vector<double> w_proj(n_dofs);
-            ellipsoid::mass::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
-
-            test_coarse_mass.update_parameters(w_proj, phi);
-        };
-
-        check_gradient(test_coarse_mass, NUM_TRIALS,
-            "checkgradient_coarse_mass_2d", setup_base_points_mass);
-    }
-
-    {
-        std::cerr << "--- GRADIENT CHECK - COARSE (FROBENIUS)\n";
-        GradientTestCoarseFrobenius<2> test_coarse_frob(system, options.beta, options_slv);
-        GradientTestFrobenius<2> test_frob(system, options.beta, options_slv);
-
-        Vector<double> w(n_dofs);  // fixed correction term
-        w = 1.0;
-
-        auto setup_base_points_frob = [&w, &test_frob, &test_coarse_frob, n_dofs]()
         {
-            Vector<double> phi(n_dofs);
-            test_frob.random_point(phi);
+            std::cerr << "--- GRADIENT CHECK - MASS\n";
+            GradientTestMass<dim> test_mass(system, options.beta, options_slv);
+            check_gradient(test_mass, n_trials, fmt::format("checkgradient_mass_{}d", dim));
+            std::cerr << "\n";
+        }
 
-            // Project the ambient tilt vector w onto the F-metric tangent space
-            Vector<double> w_proj(n_dofs);
-            ellipsoid::frobenius::project_onto_tangent_space(phi, test_frob.get_M(), w, w_proj);
+        {
+            std::cerr << "--- GRADIENT CHECK - FROBENIUS\n";
+            GradientTestFrobenius<dim> test_frob(system, options.beta, options_slv);
+            check_gradient(test_frob, n_trials, fmt::format("checkgradient_frob_{}d", dim));
+            std::cerr << "\n";
+        }
 
-            test_coarse_frob.update_parameters(w_proj, phi);
-        };
+        {
+            //std::cerr << "--- GRADIENT CHECK - COARSE (ENERGY)\n";
+            // TODO
+        }
 
-        check_gradient(test_coarse_frob, NUM_TRIALS,
-            "checkgradient_coarse_frob_2d", setup_base_points_frob);
-    }
+        {
+            std::cerr << "--- GRADIENT CHECK - COARSE (MASS)\n";
+            GradientTestCoarseMass<dim> test_coarse_mass(system, options.beta, options_slv);
+            GradientTestMass<dim> test_mass(system, options.beta, options_slv);
+
+            Vector<double> w(n_dofs);  // fixed correction term
+            w = 1.0;
+
+            auto setup_base_points_mass = [&w,&test_mass,&test_coarse_mass,n_dofs]()
+        {
+                Vector<double> phi(n_dofs); // random base point
+                test_mass.random_point(phi);
+
+                Vector<double> w_proj(n_dofs);
+                ellipsoid::mass::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
+
+                test_coarse_mass.update_parameters(w_proj, phi);
+            };
+
+            check_gradient(test_coarse_mass, n_trials,
+                fmt::format("checkgradient_coarse_mass_{}d", dim), setup_base_points_mass);
+        }
+
+        {
+            std::cerr << "--- GRADIENT CHECK - COARSE (FROBENIUS)\n";
+            GradientTestCoarseFrobenius<dim> test_coarse_frob(system, options.beta, options_slv);
+            GradientTestFrobenius<dim> test_frob(system, options.beta, options_slv);
+
+            Vector<double> w(n_dofs);  // fixed correction term
+            w = 1.0;
+
+            auto setup_base_points_frob = [&w, &test_frob, &test_coarse_frob, n_dofs]()
+        {
+                Vector<double> phi(n_dofs);
+                test_frob.random_point(phi);
+
+                // Project the ambient tilt vector w onto the F-metric tangent space
+                Vector<double> w_proj(n_dofs);
+                ellipsoid::frobenius::project_onto_tangent_space(phi, test_frob.get_M(), w, w_proj);
+
+                test_coarse_frob.update_parameters(w_proj, phi);
+            };
+
+            check_gradient(test_coarse_frob, n_trials,
+                fmt::format("checkgradient_coarse_frob_{}d", dim), setup_base_points_frob);
+        }
+    });
+
+    return 0;
 }
