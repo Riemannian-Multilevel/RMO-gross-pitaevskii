@@ -15,6 +15,7 @@
 #include <rmo/ropt/solver.h>
 
 #include <functional>
+#include <optional>
 #include <utility>
 
 namespace rmo
@@ -28,16 +29,21 @@ struct ConvergenceTable : dealii::ConvergenceTable {
 };
 
 
+// Norm on one level, used by FullApproximationScheme to evaluate the coarse condition
+//   ||R g||_{l-1} >= kappa ||g||_l
+using LevelNorm = std::function<double(const Vector<double>&)>;
+
+
 // Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
-// Functional: the level objective type. FAS itself never evaluates it; it is only handed to the
-// tilt oracles (TiltOracleType in cycle()), which fix the requirements on it via the TiltOracle concept.
 template <typename Functional>
 class FullApproximationScheme
 {
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
+    // cond_norm_mg[l]: norm on level l for the coarse condition; an empty entry falls back to the
+    //                  norm of the tilt oracle on that level (i.e. the metric of the coarse model).
     // TODO: dependency injection
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
@@ -46,11 +52,16 @@ public:
                             const std::vector<unsigned> &level_indices,
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
-                            FAS_Options options_fas)
+                            FAS_Options options_fas,
+                            std::optional<MGLevelObject<LevelNorm>> cond_norm_mg = std::nullopt)
         : level_indices(level_indices)
         , m_manifold_mg         (std::move(manifold_mg))
         , m_point_transfer_mg   (std::move(point_transfer_mg))
         , m_vector_transport_mg (std::move(vector_transport_mg))
+    // m_manifold_mg is initialized before m_cond_norm_mg, so its level bounds size the default
+        , m_cond_norm_mg        (cond_norm_mg ? std::move(*cond_norm_mg)
+                                              : MGLevelObject<LevelNorm>(m_manifold_mg.min_level(),
+                                                                         m_manifold_mg.max_level()))
         , m_objective_mg        (std::move(objective_mg))
         , options_descent_mg    (std::move(options_descent_mg))
         , options_solver_mg     (std::move(options_solver_mg))
@@ -69,6 +80,8 @@ public:
         AssertDimension(m_vector_transport_mg.max_level(), max_level);
         AssertDimension(m_objective_mg.min_level(),        min_level);
         AssertDimension(m_objective_mg.max_level(),        max_level);
+        AssertDimension(m_cond_norm_mg.min_level(),        min_level);
+        AssertDimension(m_cond_norm_mg.max_level(),        max_level);
 
         // Check that level indices are contained within MGLevelObject
         AssertIndexRange(min_level, level_indices.front()+1);  // open range
@@ -218,20 +231,20 @@ public:
                 // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
                 qk_base.update_model(x);
 
-                // Compute coarse condition
+                // Compute coarse condition (in the configured norm, or the oracle's metric by default)
                 const auto& state  = qk_base.get_state();
-                double norm_level  = T_level.norm(state.x_grad);
-                double norm_coarse = T_coarse.norm(state.x_grad_restr);
+                double norm_level  = cond_norm(level,        T_level,  state.x_grad);
+                double norm_coarse = cond_norm(coarse_level, T_coarse, state.x_grad_restr);
 
                 convergence_table.add_value("grad_norm", norm_level);
                 convergence_table.add_value("grad_restr_norm", norm_coarse);
 
-                if (norm_coarse <= options_fas.eps) {
+                if (norm_level <= options_fas.eps) {
                     check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
                 }
 
                 // Different values of kappa for different levels?
-                if (norm_coarse >= options_fas.kappa * norm_level && norm_coarse > options_fas.eps) {
+                if (norm_coarse >= options_fas.kappa * norm_level && norm_level > options_fas.eps) {
                     // Initialize coarse trial point as the restricted fine point
                     Vector<double> zk = state.y;
 
@@ -381,6 +394,14 @@ fine_step:
     const auto& history() const { return x_hist; }
 
 private:
+    double cond_norm(unsigned level, const OracleBase& T, const Vector<double>& v) const
+    {
+        const LevelNorm& norm = m_cond_norm_mg[level];
+        if (norm)              // a norm was configured for this level
+            return norm(v);
+        return T.norm(v);      // default: metric of the (tilt) oracle on this level
+    }
+
     MGLevelObject<ConvergenceTable> conv_table_mg;
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
@@ -390,6 +411,7 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
+    MGLevelObject<LevelNorm>                              m_cond_norm_mg;
     MGLevelObject<std::shared_ptr<Functional>>            m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
