@@ -4,6 +4,7 @@
 
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/solver.h>
+#include <rmo/ropt/observer_table.h>
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -132,6 +133,8 @@ int main()
                         EnergyOracle<dim> oracle(gp_func, options_slv_level[ref]);
 
                         GradientDescent solver(oracle, manifold, options_gd_level[ref]);
+                        ConvergenceTableObserver conv_observer;
+                        solver.set_observer(conv_observer);
 
                         x[ref] = y0[ref];  // cycle() updates the iterate in place
                         solver.cycle(x[ref], file);
@@ -161,6 +164,8 @@ int main()
                 EnergyOracle<dim> oracle(gp_func, options_slv);
 
                 GradientDescent solver(oracle, manifold, options_gd);
+                ConvergenceTableObserver conv_observer;
+                solver.set_observer(conv_observer);
                 solver.cycle(y0_fine, file);  // cycle() updates the iterate in place
             }
         });

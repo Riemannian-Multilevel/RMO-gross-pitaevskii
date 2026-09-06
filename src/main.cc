@@ -5,6 +5,7 @@
 #include <rmo/gpe/oracle.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/solver.h>
+#include <rmo/ropt/observer_table.h>
 #include <rmo/option.h>
 #include <rmo/util/util.h>
 
@@ -74,6 +75,8 @@ int main(int argc, char* argv[])
 
                 // Termination criterion for gradient descent
                 GradientDescent solver(oracle, manifold, options_gd);
+                ConvergenceTableObserver conv_observer;
+                solver.set_observer(conv_observer);
 
                 Vector<double> x(x0);
                 solver.cycle(x, std::cout);

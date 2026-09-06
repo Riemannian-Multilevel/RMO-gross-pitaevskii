@@ -1,6 +1,7 @@
 #include <rmo/lac.h>
 #include <rmo/gpe/model.h>
 #include <rmo/ropt/fas.h>
+#include <rmo/ropt/observer_table.h>
 #include <rmo/gpe/oracle_coarse.h>
 #include <rmo/option.h>
 #include <rmo/ropt/manifold.h>
@@ -137,6 +138,7 @@ public:
 
         // 3. Execute the single-level gradient descent cycle
         solver = std::make_unique<GradientDescent>(*oracle, *manifold, options_gd);
+        solver->set_observer(conv_observer);
         solver->cycle(x0, os);
     }
 
@@ -152,6 +154,7 @@ private:
     SolverOptions  options_slv;
     DescentOptions options_gd;
 
+    ConvergenceTableObserver conv_observer;
     std::unique_ptr<GradientDescent> solver;
 };
 
@@ -181,6 +184,7 @@ public:
         , vector_transport_mg (min_level, max_level)
         , options_descent_mg  (min_level, max_level)
         , options_solver_mg   (min_level, max_level)
+        , table_observer       (min_level, max_level)
     {
         // TODO: duplicate effort with min_element, max_element
         // sort in ascending order, coarse -> fine
@@ -253,6 +257,7 @@ public:
             manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
             options_descent_mg, options_solver_mg, options_fas, cond_norm_mg
         );
+        fas_solver->set_observer(table_observer);
     }
 
     unsigned n_dofs() const { return builders_mg[max_level]->n_dofs(); }
@@ -321,6 +326,8 @@ private:
     MGLevelObject<std::shared_ptr<VectorTransportBase>>            vector_transport_mg;
     MGLevelObject<DescentOptions>                                  options_descent_mg;
     MGLevelObject<SolverOptions>                                   options_solver_mg;
+
+    ConvergenceTableObserver                                       table_observer;
 
     std::unique_ptr<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>> fas_solver;
 };

@@ -8,6 +8,7 @@
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/mg_level_object.h>
 
+#include <rmo/ropt/observer.h>
 #include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/oracle_coarse_base.h>
 
@@ -22,13 +23,6 @@ namespace rmo
 {
 using dealii::MGLevelObject;
 
-struct ConvergenceTable : dealii::ConvergenceTable {
-    bool has_column(const std::string& key) const {
-        return columns.count(key) > 0;
-    }
-};
-
-
 // Norm on one level, used by FullApproximationScheme to evaluate the coarse condition
 //   ||R g||_{l-1} >= kappa ||g||_l
 using LevelNorm = std::function<double(const Vector<double>&)>;
@@ -38,7 +32,7 @@ using LevelNorm = std::function<double(const Vector<double>&)>;
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
 template <typename Functional>
-class FullApproximationScheme
+class FullApproximationScheme : public ObservableSolver
 {
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
@@ -87,15 +81,13 @@ public:
         AssertIndexRange(min_level, level_indices.front()+1);  // open range
         AssertIndexRange(max_level, level_indices.back() +1);
 
-        // Create a convergence table for every level
-        conv_table_mg.resize(min_level, max_level);
     }
 
     // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
     // TiltCoarseModelType:  The coarse oracle used for building 'w' (e.g. MassCoarseOracle)
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // OracleBase&:          The oracle used to evaluate the level objective
-    // TODO: callback mechanism instead of convergence_table / x_hist
+    // TODO: report the iterate history through the observer as well (x_hist)
     template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
         requires TiltOracle<TiltOracleType, Functional>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
@@ -110,8 +102,9 @@ public:
             timer.restart();
         }
         // Clear table for (W-)cycle
-        auto& convergence_table = conv_table_mg[level];
-        convergence_table.clear();
+        if (m_observer != nullptr) {
+            m_observer->begin_level(level);
+        }
 
         // Fine descent direction (level)
         Vector<double> x_grad(x.size());
@@ -134,7 +127,7 @@ public:
             info.step_size = 0.0;   // no step taken yet
             info.elapsed   = timer.cpu_time();
 
-            cycle_eval(O_level, x, convergence_table, info);
+            cycle_eval(O_level, x, m_observer, info);
 
             // Coarse condition is always false on coarsest level
             // -> gradient descent
@@ -156,8 +149,8 @@ public:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                //auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
-                cycle_eval(O_level, x, convergence_table, info);
+                //auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+                cycle_eval(O_level, x, m_observer, info);
 
                 // Avoid a stalling line search where the solution x does not change
                 if (options_descent_mg[level].line_search && info.step_size == 0.0) {
@@ -206,10 +199,9 @@ public:
         info.step_size = 0.0;   // no step taken yet
         info.elapsed   = timer.cpu_time();
 
-        convergence_table.add_value("grad_norm", 0);
-        convergence_table.add_value("grad_restr_norm", 0);
+        info.coarse_cond = true;  // this level has a coarser one: report the condition norms
 
-        auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+        auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
@@ -225,6 +217,10 @@ public:
         for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
             //level_log.push_back(level_indices.at(level_idx));
 
+            // Coarse-condition norms for this step; left at 0 when the condition is not evaluated
+            double cond_grad_norm       = 0.0;
+            double cond_grad_restr_norm = 0.0;
+
             if (check_coarse_cond && (i == 1 || (i-1) % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
@@ -236,8 +232,8 @@ public:
                 double norm_level  = cond_norm(level,        T_level,  state.x_grad);
                 double norm_coarse = cond_norm(coarse_level, T_coarse, state.x_grad_restr);
 
-                convergence_table.add_value("grad_norm", norm_level);
-                convergence_table.add_value("grad_restr_norm", norm_coarse);
+                cond_grad_norm       = norm_level;
+                cond_grad_restr_norm = norm_coarse;
 
                 if (norm_level <= options_fas.eps) {
                     check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
@@ -284,8 +280,11 @@ public:
                     info.coarse    = true;
                     info.lac_iter  = 0;
                     info.level     = level;
+                    info.coarse_cond     = true;
+                    info.grad_norm       = cond_grad_norm;
+                    info.grad_restr_norm = cond_grad_restr_norm;
 
-                    auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+                    auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
@@ -313,8 +312,6 @@ public:
                 }
             }
             else {
-                convergence_table.add_value("grad_restr_norm", 0);
-                convergence_table.add_value("grad_norm", 0);
 fine_step:
                 // Record that a fine step was taken on this level
                 level_log.push_back(level_indices.at(level_idx));
@@ -335,8 +332,11 @@ fine_step:
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
+                info.coarse_cond     = true;
+                info.grad_norm       = cond_grad_norm;
+                info.grad_restr_norm = cond_grad_restr_norm;
 
-                auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+                auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {
@@ -374,16 +374,9 @@ fine_step:
         cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(O_level, T_level, x, level_idx);
 
         unsigned level = level_indices.at(level_idx);
-        auto& convergence_table = conv_table_mg[level];
-
-        // TODO: this is only set if an actual coarse step was taken
-        for (const char* col : {"grad_norm", "grad_restr_norm"}) {
-            if (convergence_table.has_column(col)) {
-                convergence_table.set_precision(col, 4);
-                convergence_table.set_scientific(col, true);
-            }
+        if (m_observer != nullptr) {
+            m_observer->end_level(level, os);
         }
-        cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
     const std::vector<unsigned> cycle_log() const
@@ -402,7 +395,6 @@ private:
         return T.norm(v);      // default: metric of the (tilt) oracle on this level
     }
 
-    MGLevelObject<ConvergenceTable> conv_table_mg;
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
     std::vector<unsigned> level_indices;
