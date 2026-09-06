@@ -1,7 +1,7 @@
-#ifndef RMO_ROPT_ORACLE_COARSE_H
-#define RMO_ROPT_ORACLE_COARSE_H
+#ifndef RMO_ROPT_ORACLE_COARSE_BASE_H
+#define RMO_ROPT_ORACLE_COARSE_BASE_H
 
-#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/transport.h>
 
@@ -171,4 +171,4 @@ concept CoarseOracle = std::derived_from<T, OracleBase>
 
 } // namespace rmo
 
-#endif //RMO_ROPT_ORACLE_COARSE_H
+#endif //RMO_ROPT_ORACLE_COARSE_BASE_H

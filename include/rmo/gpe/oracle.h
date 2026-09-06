@@ -3,7 +3,7 @@
 
 #include <rmo/lac.h>
 #include <rmo/gpe/gpe.h>
-#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/transport.h>
 

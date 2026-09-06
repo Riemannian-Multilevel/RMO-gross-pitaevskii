@@ -1,7 +1,7 @@
 #ifndef RMO_ROPT_DESCENT_H
 #define RMO_ROPT_DESCENT_H
 
-#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/lac.h>
 #include <rmo/option_types.h>
