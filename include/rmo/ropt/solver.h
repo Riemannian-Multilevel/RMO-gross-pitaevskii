@@ -6,9 +6,9 @@
 #define RMO_ROPT_SOLVER_H
 
 #include <deal.II/numerics/data_postprocessor.h>
-#include <deal.II/base/convergence_table.h>
 
 #include <rmo/lac.h>
+#include <rmo/ropt/observer.h>
 #include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/descent.h>
 
@@ -17,18 +17,9 @@
 namespace rmo
 {
 
-struct CycleInfo
-{
-    unsigned iter      = 0;
-    unsigned lac_iter  = 0;
-    double   step_size = 0.0;
-    double   elapsed   = 0.0;
-    bool     coarse    = false;
-    unsigned level     = 0;
-};
 
 
-class SolverBase
+class SolverBase : public ObservableSolver
 {
 public:
     virtual ~SolverBase() = default;
@@ -83,41 +74,18 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
 template <typename Oracle>
 std::pair<double,double>
 cycle_eval(const Oracle& O, const Vector<double>& y,
-           dealii::ConvergenceTable& convergence_table,
-           const CycleInfo info)
+           IterationObserver* observer, CycleInfo info)
 {
     const double residual = O.residual(y);
     const double energy   = O.value(y);
 
-    convergence_table.add_value("iter",     info.iter);
-    convergence_table.add_value("level",    info.level);
-    convergence_table.add_value("coarse",   info.coarse ? "*" : " ");
-    convergence_table.add_value("lac_iter", info.lac_iter);
-    convergence_table.add_value("residual", residual);
-    convergence_table.add_value("energy",   energy);
-    convergence_table.add_value("step",     info.step_size);
-    convergence_table.add_value("elapsed",  info.elapsed);
+    info.residual = residual;
+    info.energy   = energy;
 
+    if (observer != nullptr) {
+        observer->add(info);
+    }
     return std::make_pair(residual, energy);
-}
-
-
-inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ostream& os,
-                           dealii::TableHandler::TextOutputFormat format)
-{
-    convergence_table.set_precision("residual", 4);
-    convergence_table.set_precision("energy", 16);
-    convergence_table.set_precision("step", 4);
-    convergence_table.set_precision("elapsed", 4);
-
-    convergence_table.set_scientific("residual", true);
-    convergence_table.set_scientific("energy", true);
-    convergence_table.set_scientific("step", true);
-    convergence_table.set_scientific("elapsed", true);
-
-    convergence_table.evaluate_convergence_rates("residual", dealii::ConvergenceTable::reduction_rate);
-    convergence_table.evaluate_convergence_rates("residual", dealii::ConvergenceTable::reduction_rate_log2);
-    convergence_table.write_text(os, format);
 }
 
 
@@ -134,7 +102,9 @@ public:
     void cycle(Vector<double>& x) override
     {
         timer.restart();
-        convergence_table.clear();
+        if (m_observer != nullptr) {
+            m_observer->begin_level(0);
+        }
 
         // x is updated in-place
         O_fine.update(x);
@@ -147,7 +117,7 @@ public:
         info.coarse = false;
         info.iter   = 0;
 
-        auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
+        auto [residual, _] = cycle_eval(O_fine, x, m_observer, info);
         x_hist.clear();
         x_hist.emplace_back(x);
 
@@ -175,7 +145,7 @@ public:
             info.lac_iter  = info_grad.num_iter;
             info.level     = 0;
 
-            auto [residual, _] = cycle_eval(O_fine, x, convergence_table, info);
+            auto [residual, _] = cycle_eval(O_fine, x, m_observer, info);
             x_hist.emplace_back(x);
 
             if (residual < options_gd.tol_residual) {
@@ -196,13 +166,14 @@ public:
     void cycle(Vector<double>& x, std::ostream& os) override
     {
         cycle(x);
-        cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
+        if (m_observer != nullptr) {
+            m_observer->end_level(0, os);
+        }
     }
 
     const auto& history() const { return x_hist; }
 
 private:
-    dealii::ConvergenceTable convergence_table;
     dealii::Timer timer;
 
     OracleBase& O_fine;
