@@ -3,7 +3,7 @@
 #include <rmo/util/util.h>
 
 #include <rmo/ropt/manifold.h>
-#include <rmo/ropt/descent.h>
+#include <rmo/ropt/solver.h>
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -131,7 +131,10 @@ int main()
                         UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
                         EnergyOracle<dim> oracle(gp_func, options_slv_level[ref]);
 
-                        x[ref] = gradient_descent(oracle, manifold, y0[ref], options_gd_level[ref], file);
+                        GradientDescent solver(oracle, manifold, options_gd_level[ref]);
+
+                        x[ref] = y0[ref];  // cycle() updates the iterate in place
+                        solver.cycle(x[ref], file);
                     }
 
                     // Prolongate to the next finer grid
@@ -157,7 +160,8 @@ int main()
                 UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
                 EnergyOracle<dim> oracle(gp_func, options_slv);
 
-                gradient_descent(oracle, manifold, y0_fine, options_gd, file);
+                GradientDescent solver(oracle, manifold, options_gd);
+                solver.cycle(y0_fine, file);  // cycle() updates the iterate in place
             }
         });
     }

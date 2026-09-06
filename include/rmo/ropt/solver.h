@@ -121,7 +121,6 @@ inline void cycle_finalize(dealii::ConvergenceTable& convergence_table, std::ost
 }
 
 
-template <int dim>
 class GradientDescent : public SolverBase
 {
 public:

@@ -14,7 +14,7 @@ namespace rmo
 using dealii::ConvergenceTable::RateMode::reduction_rate;
 using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 
-// TODO: use in gradient_descent()
+// TODO: use in GradientDescent::cycle()
 enum class SolverStatus {
     CONVERGED,          // iterative method, diverged for given tolerance
     NOT_CONVERGED,      // iterative method, converged for given tolerance
@@ -108,115 +108,6 @@ double armijo_line_search(OracleType& oracle,
     return 0.0;
 }
 
-
-//! Riemannian gradient descent for the GPE energy minimization
-//! @param oracle Oracle for function value and (Riemannian) gradient.
-//! @param manifold
-//! @param x0 Starting value.
-//! @param options Parameters for gradient descent, such as step-size.
-//! @param os Output stream for diagnostics.
-//! @return
-// TODO: use callback method
-template <typename OracleType>
-Vector<double>
-gradient_descent(OracleType& oracle,
-                 const ManifoldBase& manifold,
-                 const Vector<double>& x0,
-                 DescentOptions options, std::ostream& os)
-{
-    Assert(options.step_size > 0, dealii::ExcInternalError("Step size must be positive"));
-    Assert(options.max_iter  > 0, dealii::ExcInternalError("At least one iteration required"));
-
-    // Define the timer
-    dealii::Timer timer;
-    timer.restart();
-
-    Vector x(x0);
-    dealii::ConvergenceTable convergence_table;
-    oracle.update(x);
-
-    // TODO: "residual" class returned by Oracle (values + criterion)
-    double residual = oracle.residual(x);
-    double energy   = oracle.value(x);
-
-    // TODO: move to function.h
-    convergence_table.add_value("iter", 0);
-    convergence_table.add_value("lac_iter", 0);
-    convergence_table.add_value("residual", residual);
-    convergence_table.add_value("energy", energy);
-    convergence_table.add_value("step",0);
-    convergence_table.add_value("elapsed", 0);  // does not include setup time
-
-    // TODO: turn debug printing into logger/verbosity flag in options
-    std::cerr << "Iteration: ";
-
-    // Begin RGD iteration
-    Vector<double> g(x.size());
-    GradInfo g_info{};
-
-    for (unsigned int iter = 1; iter <= options.max_iter; iter++) {
-        // TODO: check_every, ConvergenceTable == true -> check_every = 1
-        std::cerr << iter << "..";
-
-        if (residual < options.tol_residual) {
-            // trick so that convergence_table is updated for last step
-            // n iterations + starting solution -> n+1 table entries
-            break;
-        }
-
-        // Riemannian gradient: g <- x - A^{-1}x / (x' A^{-1}x)
-        // TODO: generic return type (computation of gradient does not necessarily involve a linear system)
-        g_info = oracle.gradient(x, g, residual);
-        double step_size = options.step_size;
-        // Retraction: x <- (x - h g) / ||x - h g||_M
-
-        if (options.line_search) {
-            // TODO: support other descent directions (i.e. coarse descent)
-            Vector eta(g);  // search direction
-            eta *= -1.0;
-            double dd = oracle.directional_derivative(x, eta);  // <grad f(x), eta>_x = Df(x)[eta]
-            // runs O.retract(), O.update()
-            double h = armijo_line_search(oracle, manifold, x, eta, energy, dd, options);
-            //if (h > 0) x = x_new;
-            if (h == 0) throw std::runtime_error("line search failed");  // TODO: alternative: non-monotone line search
-            step_size = h;
-        }
-        else {
-            manifold.retract(g, x, -options.step_size);
-            oracle.update(x);
-        }
-
-        residual = oracle.residual(x);
-        energy   = oracle.value(x);
-
-        convergence_table.add_value("iter", iter);
-        convergence_table.add_value("lac_iter", g_info.num_iter);
-        convergence_table.add_value("residual", residual);
-        convergence_table.add_value("energy", energy);
-        convergence_table.add_value("step",step_size);
-        convergence_table.add_value("elapsed",timer.cpu_time());
-    }
-    // ---- End timed section
-    timer.stop();
-
-    std::cerr << std::endl << std::endl;
-    convergence_table.set_precision("residual", 4);
-    convergence_table.set_precision("energy", 16);
-    convergence_table.set_precision("step", 2);
-    convergence_table.set_precision("elapsed", 2);
-
-    convergence_table.set_scientific("residual", true);
-    convergence_table.set_scientific("energy", true);
-    convergence_table.set_scientific("step", true);
-    convergence_table.set_scientific("elapsed", true);
-
-    convergence_table.evaluate_convergence_rates("residual", reduction_rate);
-    convergence_table.evaluate_convergence_rates("residual", reduction_rate_log2);
-    convergence_table.write_text(os, dealii::TableHandler::TextOutputFormat::org_mode_table);
-
-    //constraints.distribute(x);
-    return x;
-}
 
 } // namespace rmo
 
