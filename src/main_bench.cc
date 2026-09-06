@@ -2,6 +2,7 @@
 #include <rmo/gpe/model.h>
 #include <rmo/util/util.h>
 
+#include <rmo/fe/interpolate.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/solver.h>
 #include <rmo/ropt/observer_table.h>
@@ -25,13 +26,11 @@ static void
 prolongate_between_meshes(const ModelBuilder<dim>& coarse, const Vector<double>& x_coarse,
                           const ModelBuilder<dim>& fine, Vector<double>& y0_fine)
 {
-    y0_fine.reinit(fine.n_dofs());
-    y0_fine = 0.0;
-
-    VectorTools::interpolate_to_finer_mesh(
-        coarse.get_package().get_dofs(), x_coarse,
-        fine.get_package().get_dofs(),
-        fine.get_package().get_constraints(), y0_fine);
+    const fe::LinearTransfer<dim> transfer(coarse.get_package().get_dofs(),
+                                           fine.get_package().get_dofs(),
+                                           coarse.get_package().get_constraints(),
+                                           fine.get_package().get_constraints());
+    transfer.to_fine_mesh(x_coarse, y0_fine);
 }
 
 int main()
