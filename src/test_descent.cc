@@ -30,10 +30,12 @@ void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
     ellipsoid::frobenius::project_onto_tangent_space(phi, M, w, w_proj);
 
     // 2. Generate random evaluation point safely near phi
-    Vector<double> x(n_dofs), v(n_dofs);
+    Vector<double> v(n_dofs);
     ellipsoid::frobenius::random_tangent_vector(phi, M, v);
     v /= v.l2_norm();
-    ellipsoid::retract_by_norm(M, phi, v, x); // x is now on the manifold
+
+    Vector<double> x(phi);             // retract_by_norm() updates its base point in place,
+    ellipsoid::retract_by_norm(M, v, x);  // so x <- (phi + v) / ||phi + v||_M
 
     // 3. Compute the adaptive gradient
     Vector<double> g_adapt(n_dofs);

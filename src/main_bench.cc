@@ -1,5 +1,6 @@
 #include <rmo/gpe/oracle.h>
 #include <rmo/gpe/model.h>
+#include <rmo/option.h>
 #include <rmo/util/util.h>
 
 #include <rmo/fe/interpolate.h>
@@ -33,42 +34,52 @@ prolongate_between_meshes(const ModelBuilder<dim>& coarse, const Vector<double>&
     transfer.to_fine_mesh(x_coarse, y0_fine);
 }
 
-int main()
+int main(int argc, char* argv[])
 {
     // Global timer
     TimerOutput timer(std::cout, TimerOutput::summary, TimerOutput::wall_times);
 
-    // --- Hardcoded Options ---
-    SolverOptions options_slv{};
-    options_slv.max_inner    = 500;
-    options_slv.solver       = SolverMethod::MINRES;
-    options_slv.tol_inner    = 1e-6;
+    GPE_Options    options    {};
+    DescentOptions options_gd {};
+    SolverOptions  options_slv{};
 
-    DescentOptions options_gd{};
-    options_gd.step_size    = 1.0;
-    options_gd.tol_lambda   = 1e-8;
-    options_gd.tol_residual = 1e-4;
-    options_gd.max_iter     = 20;
-
-    GPE_Options options{};
-    options.dimension = 2;
-    options.degree    = 1;
-    options.radius    = 10;
-    options.beta      = 100;
-    options.bc        = BoundaryCondition::DIRICHLET;
-    options.mesh_kind = MeshKind::QUADRILATERAL;
-    options.order     = Ordering::CUTHILL_MCKEE;
-
-    // Refinement-count hierarchy
-    const unsigned int ref_min = 8;   // coarse
-    const unsigned int ref_max = 11;  // fine
+    unsigned int ref_min = 0;  // coarse
+    unsigned int ref_max = 0;  // fine
 
     try {
-        // Dispatch to the correct dimension using your lambda wrapper
+        po::options_description all("Cascadic nested iteration benchmark");
+        all.add(gpe_cli_options());
+        all.add(descent_cli_options());
+        all.add(inner_cli_options());
+        all.add_options()
+            ("help", "print this message")
+            ("ref-min", po::value<unsigned>()->default_value(8),
+                "coarsest refinement level of the cascade")
+            ("ref-max", po::value<unsigned>()->default_value(11),
+                "finest refinement level of the cascade");
+
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, all), vm);
+        po::notify(vm);
+
+        if (vm.count("help")) {
+            std::cout << all << std::endl;
+            return 0;
+        }
+
+        apply_gpe_options(vm, options);
+        apply_descent_options(vm, options_gd);
+        apply_inner_options(vm, options_slv);
+
+        ref_min = vm["ref-min"].as<unsigned>();
+        ref_max = vm["ref-max"].as<unsigned>();
+        AssertThrow(ref_min <= ref_max,
+            dealii::ExcMessage("--ref-min must not exceed --ref-max"));
+
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
-            potential::Square<dim> V;
+            auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
 
             // Adjust tolerances per level
             MGLevelObject<SolverOptions> options_slv_level(ref_min, ref_max);
@@ -79,9 +90,9 @@ int main()
                 options_gd_level[ref]  = options_gd;
 
                 if (ref < ref_max) {
-                    double factor = std::pow(10, ref_max - ref);
                     // Lower precision for intermediate coarse grids
-                    options_slv_level[ref].tol_inner = 1e-6 * factor;
+                    const double factor = std::pow(10, ref_max - ref);
+                    options_slv_level[ref].tol_inner = options_slv.tol_inner * factor;
                 }
             }
 
@@ -91,7 +102,9 @@ int main()
             {
                 std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
                 TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
-                builder[ref] = std::make_unique<ModelBuilder<dim>>(V, options, ref);
+                builder[ref] = std::visit([&](auto&& V) {
+                    return std::make_unique<ModelBuilder<dim>>(V, options, ref);
+                }, potential_v);
             }
 
             // 2) Hierarchy of starting vectors and solution vectors
