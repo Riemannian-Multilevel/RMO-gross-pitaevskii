@@ -83,9 +83,14 @@ add_rmo_executable(main_operator)
 # --- Create targets for tests
 enable_testing()
 
+add_rmo_executable(test_arpack LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(test_descent LINK_LIBS fmt::fmt)
 add_rmo_executable(test_gradient LINK_LIBS fmt::fmt)
 #add_rmo_executable(test_matrix_free LINK_LIBS fmt::fmt)
+
+# ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
+add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
+set_tests_properties(arpack PROPERTIES SKIP_RETURN_CODE 77)
 
 add_test(descent test_descent COMMAND test_descent)
 add_test(gradient test_gradient COMMAND test_gradient)
