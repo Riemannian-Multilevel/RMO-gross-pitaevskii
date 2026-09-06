@@ -375,7 +375,7 @@ int main(int argc, char* argv[])
         {
             constexpr int dim = T0::value;
             const unsigned n_levels  = options_mg.n_levels;
-            auto potential_v = potential::get_potential<dim>(options.potential);
+            auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
 
             if (options_cm.metric_t == MetricKind::NONE || options_mg.v_levels.size() == 1) {
                 // Run standard single-level Riemannian gradient descent on the finest level
