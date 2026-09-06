@@ -136,7 +136,7 @@ public:
         }
 
         // 3. Execute the single-level gradient descent cycle
-        solver = std::make_unique<GradientDescent<dim>>(*oracle, *manifold, options_gd);
+        solver = std::make_unique<GradientDescent>(*oracle, *manifold, options_gd);
         solver->cycle(x0, os);
     }
 
@@ -152,7 +152,7 @@ private:
     SolverOptions  options_slv;
     DescentOptions options_gd;
 
-    std::unique_ptr<GradientDescent<dim>> solver;
+    std::unique_ptr<GradientDescent> solver;
 };
 
 
