@@ -22,7 +22,7 @@ BOOST_DESCRIBE_STRUCT(SolverOptions, (),
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (n_levels, v_levels));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
-    (kappa, eps, coarse_every, metric_t, transport_t, interpol_t));
+    (kappa, eps, coarse_every));
 
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE, KING, MIN_DEG);
@@ -31,9 +31,6 @@ BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE)
-BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
-                    ADJOINT_RESTRICTION_FROBENIUS, ADJOINT_DIFFERENTIAL_FROBENIUS, DIFFERENTIAL_FROBENIUS);
-BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 
 
 // ---------- MG_Options ----------
@@ -180,19 +177,10 @@ inline po::options_description inner_cli_options() {
 // ---------- FAS_Options ----------
 inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_fas)
 {
-    const auto metric_str = upper(vm["metric"].as<std::string>());
-    const auto transp_str = upper(vm["transport"].as<std::string>());
-    const auto interp_str = upper(vm["interpolate"].as<std::string>());
-    // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
-
     options_fas.kappa        = vm["kappa"].as<double>();
     options_fas.eps          = vm["eps"].as<double>();
     options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
     // options_fas.coarse_energy_adaptive = vm["coarse-energy-adaptive"].as<bool>();
-    // options_fas.smooth_t     = vm["metric-smooth"].as<bool>();
-    options_fas.metric_t     = string_to_enum<MetricKind>(metric_str);
-    options_fas.transport_t  = string_to_enum<Transport>(transp_str);
-    options_fas.interpol_t   = string_to_enum<Interpolate>(interp_str);
 }
 
 inline po::options_description fas_cli_options()
@@ -204,18 +192,9 @@ inline po::options_description fas_cli_options()
         ("eps", po::value<double>()->default_value(1e-4),
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
-            "minimum number of fine steps before coarse step is taken")
+            "minimum number of fine steps before coarse step is taken");
         // ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
         //     "solve coarse model with energy-adaptive gradient")
-        ("metric", po::value<std::string>()->default_value("mass"),
-            "metric for coarse model (none|frobenius|mass)")
-        // ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
-        //     "metric for smoother (energy_adaptive|mass|frobenius)")
-        ("transport", po::value<std::string>()->default_value("mass"),
-            "vector transport operator (frobenius|mass|differential|adjoint_restriction|adjoint_differential|"
-            "adjoint_restriction_frobenius|adjoint_differential_frobenius|differential_frobenius)")
-        ("interpolate", po::value<std::string>()->default_value("none"),
-            "galerkin condition on linear interpolation (none|mass)");
     return d;
 }
 
@@ -227,6 +206,11 @@ namespace gpe
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind));
 BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
+BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
+    (metric_t, transport_t, interpol_t));
+BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
+                    ADJOINT_RESTRICTION_FROBENIUS, ADJOINT_DIFFERENTIAL_FROBENIUS, DIFFERENTIAL_FROBENIUS);
+BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 
 
 // ---------- GPE_Options ----------
@@ -273,6 +257,41 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
 
 
 // TODO: encode default values in option_type.h and remove default_value()?
+
+
+// ---------- CoarseModelOptions ----------
+inline po::options_description coarse_model_cli_options()
+{
+    po::options_description d("Coarse model options");
+    d.add_options()
+        ("metric", po::value<std::string>()->default_value("mass"),
+            "metric for coarse model (none|frobenius|mass)")
+        ("metric-cond", po::value<std::string>()->default_value("none"),
+            "metric for coarse condition evaluation (none|frobenius|mass)")
+        // ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
+        //     "metric for smoother (energy_adaptive|mass|frobenius)")
+        ("transport", po::value<std::string>()->default_value("mass"),
+            "vector transport operator (frobenius|mass|differential|adjoint_restriction|adjoint_differential|"
+            "adjoint_restriction_frobenius|adjoint_differential_frobenius|differential_frobenius)")
+        ("interpolate", po::value<std::string>()->default_value("none"),
+            "galerkin condition on linear interpolation (none|mass)");
+    return d;
+}
+
+inline void apply_coarse_model_options(const po::variables_map& vm, CoarseModelOptions& options_cm)
+{
+    const auto metric_str = upper(vm["metric"].as<std::string>());
+    const auto ccond_str  = upper(vm["metric-cond"].as<std::string>());
+    const auto transp_str = upper(vm["transport"].as<std::string>());
+    const auto interp_str = upper(vm["interpolate"].as<std::string>());
+    // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
+
+    options_cm.metric_t    = string_to_enum<MetricKind>(metric_str);
+    options_cm.ccond_t     = string_to_enum<MetricKind>(ccond_str);
+    // options_cm.smooth_t    = string_to_enum<MetricKind>(smooth_str);
+    options_cm.transport_t = string_to_enum<Transport>(transp_str);
+    options_cm.interpol_t  = string_to_enum<Interpolate>(interp_str);
+}
 
 } // namespace gpe
 

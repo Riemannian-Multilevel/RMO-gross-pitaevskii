@@ -9,7 +9,7 @@
 #include <deal.II/base/convergence_table.h>
 
 #include <rmo/lac.h>
-#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/descent.h>
 
 #include <rmo/util/util.h>

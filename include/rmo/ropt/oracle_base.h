@@ -1,5 +1,5 @@
-#ifndef RMO_ROPT_ORACLE_H
-#define RMO_ROPT_ORACLE_H
+#ifndef RMO_ROPT_ORACLE_BASE_H
+#define RMO_ROPT_ORACLE_BASE_H
 
 #include <rmo/lac.h>
 #include <rmo/option_types.h>
@@ -53,4 +53,4 @@ concept TiltOracle = std::derived_from<T, OracleBase>
 
 } // namespace rmo
 
-#endif //RMO_ROPT_ORACLE_H
+#endif //RMO_ROPT_ORACLE_BASE_H

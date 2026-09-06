@@ -6,7 +6,7 @@
 #define RMO_GPE_ORACLE_COARSE_H
 
 #include <rmo/gpe/oracle.h>
-#include <rmo/ropt/oracle_coarse.h>
+#include <rmo/ropt/oracle_coarse_base.h>
 
 namespace rmo::gpe
 {
