@@ -1,17 +1,19 @@
 //
 // Created by Ferdinand Vanmaele on 01.10.25.
 //
-#include <gpe/main/model.h>
-#include <gpe/problem/oracle.h>
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/descent.h>
-#include <gpe/option.h>
-#include <gpe/util/util.h>
+#include <rmo/gpe/model.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/solver.h>
+#include <rmo/ropt/observer_table.h>
+#include <rmo/option.h>
+#include <rmo/util/util.h>
 
 #include <iostream>
 #include <fmt/format.h>
 
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 using namespace dealii;
 
 
@@ -72,7 +74,12 @@ int main(int argc, char* argv[])
                 EnergyOracle<dim> oracle(gp, options_slv);
 
                 // Termination criterion for gradient descent
-                auto x = gradient_descent(oracle, manifold, x0, options_gd, std::cout);
+                GradientDescent solver(oracle, manifold, options_gd);
+                ConvergenceTableObserver conv_observer;
+                solver.set_observer(conv_observer);
+
+                Vector<double> x(x0);
+                solver.cycle(x, std::cout);
 
                 // Plot solution
                 std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);

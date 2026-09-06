@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gpe)
+project(rmo)
 
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(fmt)
@@ -16,7 +16,7 @@ deal_ii_initialize_cached_variables()
 # paths (.../<sdk>.sdk/usr/include) that shadow the real toolchain headers and
 # break the build. Strip them. On other platforms these paths do not exist, so
 # the workaround is unnecessary.
-function(gpe_strip_sdk_includes _target)
+function(rmo_strip_sdk_includes _target)
     if(NOT TARGET ${_target})
         return()
     endif()
@@ -31,14 +31,14 @@ endfunction()
 
 if(APPLE)
     foreach(_dealii_tgt dealii::interface_trilinos dealii::interface_kokkos)
-        gpe_strip_sdk_includes(${_dealii_tgt})
+        rmo_strip_sdk_includes(${_dealii_tgt})
     endforeach()
 endif()
 
 # Find all .h (header) files in the include/ directory
 file(GLOB_RECURSE HEADER_ALL "include/*.h")
 
-function(add_gpe_executable TARGET_NAME)
+function(add_rmo_executable TARGET_NAME)
     # Parse the arguments
     set(options "")
     set(oneValueArgs "")
@@ -74,18 +74,18 @@ endfunction()
 #add_compile_definitions(CPU_TIME)
 
 # --- Create targets for executables
-add_gpe_executable(main LINK_LIBS Boost::program_options fmt::fmt)
-add_gpe_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
-add_gpe_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
-add_gpe_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
-add_gpe_executable(main_operator)
+add_rmo_executable(main LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_operator)
 
 # --- Create targets for tests
 enable_testing()
 
-add_gpe_executable(test_descent LINK_LIBS fmt::fmt)
-add_gpe_executable(test_gradient LINK_LIBS fmt::fmt)
-#add_gpe_executable(test_matrix_free LINK_LIBS fmt::fmt)
+add_rmo_executable(test_descent LINK_LIBS fmt::fmt)
+add_rmo_executable(test_gradient LINK_LIBS fmt::fmt)
+#add_rmo_executable(test_matrix_free LINK_LIBS fmt::fmt)
 
 add_test(descent test_descent COMMAND test_descent)
 add_test(gradient test_gradient COMMAND test_gradient)

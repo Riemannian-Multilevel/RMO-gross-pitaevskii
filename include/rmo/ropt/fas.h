@@ -2,53 +2,60 @@
 // Created by Ferdinand Vanmaele on 27.05.26.
 //
 
-#ifndef GPE_FAS_H
-#define GPE_FAS_H
+#ifndef RMO_ROPT_FAS_H
+#define RMO_ROPT_FAS_H
 
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/mg_level_object.h>
 
-#include <gpe/problem/oracle.h>
-#include <gpe/problem/oracle_coarse.h>
+#include <rmo/ropt/observer.h>
+#include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/oracle_coarse_base.h>
 
-#include <gpe/ropt/transport.h>
-#include <gpe/ropt/solver.h>
+#include <rmo/ropt/transport.h>
+#include <rmo/ropt/solver.h>
 
+#include <functional>
+#include <optional>
 #include <utility>
 
-namespace gpe
+namespace rmo
 {
 using dealii::MGLevelObject;
 
-struct ConvergenceTable : dealii::ConvergenceTable {
-    bool has_column(const std::string& key) const {
-        return columns.count(key) > 0;
-    }
-};
+// Norm on one level, used by FullApproximationScheme to evaluate the coarse condition
+//   ||R g||_{l-1} >= kappa ||g||_l
+using LevelNorm = std::function<double(const Vector<double>&)>;
 
 
 // Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
-template <int dim>
-class FullApproximationScheme
+template <typename Functional>
+class FullApproximationScheme : public ObservableSolver
 {
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
+    // cond_norm_mg[l]: norm on level l for the coarse condition; an empty entry falls back to the
+    //                  norm of the tilt oracle on that level (i.e. the metric of the coarse model).
     // TODO: dependency injection
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
                             MGLevelObject<std::shared_ptr<VectorTransportBase>>   vector_transport_mg,
-                            // TODO: generalization: shared_ptr<FunctionalBase> (base for constructing oracles)
-                            MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>>  objective_mg,
+                            MGLevelObject<std::shared_ptr<Functional>>            objective_mg,
                             const std::vector<unsigned> &level_indices,
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
-                            FAS_Options options_fas)
+                            FAS_Options options_fas,
+                            std::optional<MGLevelObject<LevelNorm>> cond_norm_mg = std::nullopt)
         : level_indices(level_indices)
         , m_manifold_mg         (std::move(manifold_mg))
         , m_point_transfer_mg   (std::move(point_transfer_mg))
         , m_vector_transport_mg (std::move(vector_transport_mg))
+    // m_manifold_mg is initialized before m_cond_norm_mg, so its level bounds size the default
+        , m_cond_norm_mg        (cond_norm_mg ? std::move(*cond_norm_mg)
+                                              : MGLevelObject<LevelNorm>(m_manifold_mg.min_level(),
+                                                                         m_manifold_mg.max_level()))
         , m_objective_mg        (std::move(objective_mg))
         , options_descent_mg    (std::move(options_descent_mg))
         , options_solver_mg     (std::move(options_solver_mg))
@@ -67,21 +74,22 @@ public:
         AssertDimension(m_vector_transport_mg.max_level(), max_level);
         AssertDimension(m_objective_mg.min_level(),        min_level);
         AssertDimension(m_objective_mg.max_level(),        max_level);
+        AssertDimension(m_cond_norm_mg.min_level(),        min_level);
+        AssertDimension(m_cond_norm_mg.max_level(),        max_level);
 
         // Check that level indices are contained within MGLevelObject
         AssertIndexRange(min_level, level_indices.front()+1);  // open range
         AssertIndexRange(max_level, level_indices.back() +1);
 
-        // Create a convergence table for every level
-        conv_table_mg.resize(min_level, max_level);
     }
 
     // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
     // TiltCoarseModelType:  The coarse oracle used for building 'w' (e.g. MassCoarseOracle)
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // OracleBase&:          The oracle used to evaluate the level objective
-    // TODO: callback mechanism instead of convergence_table / x_hist
-    template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
+    // TODO: report the iterate history through the observer as well (x_hist)
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
+        requires TiltOracle<TiltOracleType, Functional>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
     {
         AssertIndexRange(level_idx, level_indices.size());
@@ -94,18 +102,19 @@ public:
             timer.restart();
         }
         // Clear table for (W-)cycle
-        auto& convergence_table = conv_table_mg[level];
-        convergence_table.clear();
+        if (m_observer != nullptr) {
+            m_observer->begin_level(level);
+        }
 
         // Fine descent direction (level)
         Vector<double> x_grad(x.size());
         // Coarse descent direction (level-1 -> level)
         Vector<double> dk(x.size());
 
-        // Update the level oracle on the initial guess
-        // This matches m_objective_mg[level]->update(x)
+        // Update the level oracle on the initial guess.
+        // Invariant: O_level and T_level evaluate the same functional (m_objective_mg[level]),
+        // so this update is visible to T_level as well.
         O_level.update(x);
-        // TODO: O_level and T_level should point to same underlying state (GrossPitaevskiiSystem)
 
         // Solve on coarsest level
         if (level_idx == 0) {
@@ -118,7 +127,7 @@ public:
             info.step_size = 0.0;   // no step taken yet
             info.elapsed   = timer.cpu_time();
 
-            cycle_eval(O_level, x, convergence_table, info);
+            cycle_eval(O_level, x, m_observer, info);
 
             // Coarse condition is always false on coarsest level
             // -> gradient descent
@@ -140,8 +149,8 @@ public:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                //auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
-                cycle_eval(O_level, x, convergence_table, info);
+                //auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+                cycle_eval(O_level, x, m_observer, info);
 
                 // Avoid a stalling line search where the solution x does not change
                 if (options_descent_mg[level].line_search && info.step_size == 0.0) {
@@ -170,14 +179,14 @@ public:
         // - T_level:  MassCoarseOracle
         // - T_coarse: MassOracle
         // - O_level:  MassCoarseOracleEnergyAdaptive
-        CoarseOracleBase<dim> qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level], *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
+        CoarseOracleBase qk_base(T_level, T_coarse, *m_manifold_mg[coarse_level],
+            *m_point_transfer_mg[level], *m_vector_transport_mg[level]);
         // Evaluation of coarse model gradient  (-> descent direction, A-gradient)
         CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
         // Evaluation of coarse model objective (-> correction term w, M-gradient)
         TiltCoarseOracleType qk_m(qk_base, options_solver_mg[coarse_level]);
 
-        // T_level.update(x)
-        // TODO: clearly encode that T_level and O_level point to the same GrossPitaevskiiSystem (~Functional)
+        // T_level.update(x) is implied by O_level.update(x) above (shared functional)
 
         bool check_coarse_cond = true;
 
@@ -190,10 +199,9 @@ public:
         info.step_size = 0.0;   // no step taken yet
         info.elapsed   = timer.cpu_time();
 
-        convergence_table.add_value("grad_norm", 0);
-        convergence_table.add_value("grad_restr_norm", 0);
+        info.coarse_cond = true;  // this level has a coarser one: report the condition norms
 
-        auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+        auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
@@ -209,26 +217,30 @@ public:
         for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
             //level_log.push_back(level_indices.at(level_idx));
 
+            // Coarse-condition norms for this step; left at 0 when the condition is not evaluated
+            double cond_grad_norm       = 0.0;
+            double cond_grad_restr_norm = 0.0;
+
             if (check_coarse_cond && (i == 1 || (i-1) % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
                 // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
                 qk_base.update_model(x);
 
-                // Compute coarse condition
+                // Compute coarse condition (in the configured norm, or the oracle's metric by default)
                 const auto& state  = qk_base.get_state();
-                double norm_level  = T_level.norm(state.x_grad);
-                double norm_coarse = T_coarse.norm(state.x_grad_restr);
+                double norm_level  = cond_norm(level,        T_level,  state.x_grad);
+                double norm_coarse = cond_norm(coarse_level, T_coarse, state.x_grad_restr);
 
-                convergence_table.add_value("grad_norm", norm_level);
-                convergence_table.add_value("grad_restr_norm", norm_coarse);
+                cond_grad_norm       = norm_level;
+                cond_grad_restr_norm = norm_coarse;
 
-                if (norm_coarse <= options_fas.eps) {
+                if (norm_level <= options_fas.eps) {
                     check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
                 }
 
                 // Different values of kappa for different levels?
-                if (norm_coarse >= options_fas.kappa * norm_level && norm_coarse > options_fas.eps) {
+                if (norm_coarse >= options_fas.kappa * norm_level && norm_level > options_fas.eps) {
                     // Initialize coarse trial point as the restricted fine point
                     Vector<double> zk = state.y;
 
@@ -268,8 +280,11 @@ public:
                     info.coarse    = true;
                     info.lac_iter  = 0;
                     info.level     = level;
+                    info.coarse_cond     = true;
+                    info.grad_norm       = cond_grad_norm;
+                    info.grad_restr_norm = cond_grad_restr_norm;
 
-                    auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+                    auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
@@ -297,8 +312,6 @@ public:
                 }
             }
             else {
-                convergence_table.add_value("grad_restr_norm", 0);
-                convergence_table.add_value("grad_norm", 0);
 fine_step:
                 // Record that a fine step was taken on this level
                 level_log.push_back(level_indices.at(level_idx));
@@ -319,8 +332,11 @@ fine_step:
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
+                info.coarse_cond     = true;
+                info.grad_norm       = cond_grad_norm;
+                info.grad_restr_norm = cond_grad_restr_norm;
 
-                auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+                auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {
@@ -351,22 +367,16 @@ fine_step:
     }
 
     // TODO: only output on certain levels OR include the current level in the table
-    template <typename TiltOracleType, typename TiltCoarseOracleType, typename CoarseModelType>
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
+        requires TiltOracle<TiltOracleType, Functional>
     void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
     {
         cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(O_level, T_level, x, level_idx);
 
         unsigned level = level_indices.at(level_idx);
-        auto& convergence_table = conv_table_mg[level];
-
-        // TODO: this is only set if an actual coarse step was taken
-        for (const char* col : {"grad_norm", "grad_restr_norm"}) {
-            if (convergence_table.has_column(col)) {
-                convergence_table.set_precision(col, 4);
-                convergence_table.set_scientific(col, true);
-            }
+        if (m_observer != nullptr) {
+            m_observer->end_level(level, os);
         }
-        cycle_finalize(convergence_table, os, dealii::TableHandler::TextOutputFormat::org_mode_table);
     }
 
     const std::vector<unsigned> cycle_log() const
@@ -377,7 +387,14 @@ fine_step:
     const auto& history() const { return x_hist; }
 
 private:
-    MGLevelObject<ConvergenceTable> conv_table_mg;
+    double cond_norm(unsigned level, const OracleBase& T, const Vector<double>& v) const
+    {
+        const LevelNorm& norm = m_cond_norm_mg[level];
+        if (norm)              // a norm was configured for this level
+            return norm(v);
+        return T.norm(v);      // default: metric of the (tilt) oracle on this level
+    }
+
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
     std::vector<unsigned> level_indices;
@@ -386,7 +403,8 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
-    MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>>  m_objective_mg;
+    MGLevelObject<LevelNorm>                              m_cond_norm_mg;
+    MGLevelObject<std::shared_ptr<Functional>>            m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
     FAS_Options                                           options_fas;
@@ -394,6 +412,6 @@ private:
     std::vector<Vector<double>> x_hist;
 };
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_FAS_H
+#endif //RMO_ROPT_FAS_H

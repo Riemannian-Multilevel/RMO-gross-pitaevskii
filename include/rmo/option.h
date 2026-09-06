@@ -1,15 +1,15 @@
-#ifndef GPE_OPTION_CLI_H
-#define GPE_OPTION_CLI_H
+#ifndef RMO_OPTION_H
+#define RMO_OPTION_H
 
-#include <gpe/option_types.h>
-#include <gpe/util/util.h>
+#include <rmo/option_types.h>
+#include <rmo/util/util.h>
 
 #include <boost/program_options.hpp>
 #include <charconv>
 #include <ranges>
 #include <string_view>
 
-namespace gpe
+namespace rmo
 {
 namespace po = boost::program_options;
 
@@ -21,22 +21,16 @@ BOOST_DESCRIBE_STRUCT(SolverOptions, (),
     (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (n_levels, v_levels));
-BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta, order, bc, mesh_kind));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
-    (kappa, eps, coarse_every, metric_t, transport_t, interpol_t));
+    (kappa, eps, coarse_every));
 
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE, KING, MIN_DEG);
 BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
-BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE)
-BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
-                    ADJOINT_RESTRICTION_FROBENIUS, ADJOINT_DIFFERENTIAL_FROBENIUS, DIFFERENTIAL_FROBENIUS);
-BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 
 
 // ---------- MG_Options ----------
@@ -113,50 +107,6 @@ inline void apply_mg_options(const po::variables_map& vm, MG_Options& mg)
 }
 
 
-// ---------- GPE_Options ----------
-inline po::options_description gpe_cli_options() {
-    po::options_description d("General problem options");
-    d.add_options()
-        ("degree", po::value<int>()->default_value(1),
-            "polynomial degree for finite element")
-        ("dimension", po::value<int>()->default_value(2),
-            "problem dimension")
-        ("order", po::value<std::string>()->default_value("default"),
-            "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
-        ("boundary", po::value<std::string>()->default_value("neumann"),
-            "boundary constraints (neumann|dirichlet)")
-        ("radius", po::value<double>()->default_value(10.0),
-            "default radius of the cube domain")
-        ("beta", po::value<double>()->default_value(100.0),
-            "non-linearity factor")
-        ("mesh", po::value<std::string>()->default_value("quadrilateral"),
-            "type of mesh elements used (quadrilateral|simplex)")
-        ("potential", po::value<std::string>()->default_value("square"),
-            "used potential (square|optical_lattice)")
-        ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
-            "export incumbent solutions in binary format");
-    return d;
-}
-
-inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options) {
-    const auto order_str    = upper(vm["order"].as<std::string>());
-    const auto boundary_str = upper(vm["boundary"].as<std::string>());
-    const auto mesh_str     = upper(vm["mesh"].as<std::string>());
-    const auto potential_str= upper(vm["potential"].as<std::string>());
-
-    options.order     = string_to_enum<Ordering>(order_str);
-    options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
-    options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
-    options.potential = string_to_enum<Potential>(potential_str);
-    options.degree    = vm["degree"].as<int>();
-    options.dimension = vm["dimension"].as<int>();
-    options.beta      = vm["beta"].as<double>();
-    options.radius    = vm["radius"].as<double>();
-    options.export_solution = vm["export-solution"].as<bool>();
-}
-
-
-// TODO: encode default values in option_type.h and remove default_value()?
 // ---------- DescentOptions ----------
 inline po::options_description descent_cli_options() {
     po::options_description d("RGD options");
@@ -227,19 +177,10 @@ inline po::options_description inner_cli_options() {
 // ---------- FAS_Options ----------
 inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_fas)
 {
-    const auto metric_str = upper(vm["metric"].as<std::string>());
-    const auto transp_str = upper(vm["transport"].as<std::string>());
-    const auto interp_str = upper(vm["interpolate"].as<std::string>());
-    // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
-
     options_fas.kappa        = vm["kappa"].as<double>();
     options_fas.eps          = vm["eps"].as<double>();
     options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
     // options_fas.coarse_energy_adaptive = vm["coarse-energy-adaptive"].as<bool>();
-    // options_fas.smooth_t     = vm["metric-smooth"].as<bool>();
-    options_fas.metric_t     = string_to_enum<MetricKind>(metric_str);
-    options_fas.transport_t  = string_to_enum<Transport>(transp_str);
-    options_fas.interpol_t   = string_to_enum<Interpolate>(interp_str);
 }
 
 inline po::options_description fas_cli_options()
@@ -251,11 +192,82 @@ inline po::options_description fas_cli_options()
         ("eps", po::value<double>()->default_value(1e-4),
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
-            "minimum number of fine steps before coarse step is taken")
+            "minimum number of fine steps before coarse step is taken");
         // ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
         //     "solve coarse model with energy-adaptive gradient")
+    return d;
+}
+
+
+// ---------- Gross-Pitaevskii problem ----------
+namespace gpe
+{
+
+BOOST_DESCRIBE_STRUCT(GPE_Options, (),
+    (dimension, degree, radius, beta, order, bc, mesh_kind));
+BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
+BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
+    (metric_t, transport_t, interpol_t));
+BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
+                    ADJOINT_RESTRICTION_FROBENIUS, ADJOINT_DIFFERENTIAL_FROBENIUS, DIFFERENTIAL_FROBENIUS);
+BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
+
+
+// ---------- GPE_Options ----------
+inline po::options_description gpe_cli_options() {
+    po::options_description d("General problem options");
+    d.add_options()
+        ("degree", po::value<int>()->default_value(1),
+            "polynomial degree for finite element")
+        ("dimension", po::value<int>()->default_value(2),
+            "problem dimension")
+        ("order", po::value<std::string>()->default_value("default"),
+            "ordering for degrees of freedom (default|random|cuthill_mckee|king|min_deg)")
+        ("boundary", po::value<std::string>()->default_value("neumann"),
+            "boundary constraints (neumann|dirichlet)")
+        ("radius", po::value<double>()->default_value(10.0),
+            "default radius of the cube domain")
+        ("beta", po::value<double>()->default_value(100.0),
+            "non-linearity factor")
+        ("mesh", po::value<std::string>()->default_value("quadrilateral"),
+            "type of mesh elements used (quadrilateral|simplex)")
+        ("potential", po::value<std::string>()->default_value("square"),
+            "used potential (square|optical_lattice)")
+        ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
+            "export incumbent solutions in binary format");
+    return d;
+}
+
+inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options) {
+    const auto order_str    = upper(vm["order"].as<std::string>());
+    const auto boundary_str = upper(vm["boundary"].as<std::string>());
+    const auto mesh_str     = upper(vm["mesh"].as<std::string>());
+    const auto potential_str= upper(vm["potential"].as<std::string>());
+
+    options.order     = string_to_enum<Ordering>(order_str);
+    options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
+    options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
+    options.potential = string_to_enum<Potential>(potential_str);
+    options.degree    = vm["degree"].as<int>();
+    options.dimension = vm["dimension"].as<int>();
+    options.beta      = vm["beta"].as<double>();
+    options.radius    = vm["radius"].as<double>();
+    options.export_solution = vm["export-solution"].as<bool>();
+}
+
+
+// TODO: encode default values in option_type.h and remove default_value()?
+
+
+// ---------- CoarseModelOptions ----------
+inline po::options_description coarse_model_cli_options()
+{
+    po::options_description d("Coarse model options");
+    d.add_options()
         ("metric", po::value<std::string>()->default_value("mass"),
             "metric for coarse model (none|frobenius|mass)")
+        ("metric-cond", po::value<std::string>()->default_value("none"),
+            "metric for coarse condition evaluation (none|frobenius|mass)")
         // ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
         //     "metric for smoother (energy_adaptive|mass|frobenius)")
         ("transport", po::value<std::string>()->default_value("mass"),
@@ -266,6 +278,23 @@ inline po::options_description fas_cli_options()
     return d;
 }
 
+inline void apply_coarse_model_options(const po::variables_map& vm, CoarseModelOptions& options_cm)
+{
+    const auto metric_str = upper(vm["metric"].as<std::string>());
+    const auto ccond_str  = upper(vm["metric-cond"].as<std::string>());
+    const auto transp_str = upper(vm["transport"].as<std::string>());
+    const auto interp_str = upper(vm["interpolate"].as<std::string>());
+    // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
+
+    options_cm.metric_t    = string_to_enum<MetricKind>(metric_str);
+    options_cm.ccond_t     = string_to_enum<MetricKind>(ccond_str);
+    // options_cm.smooth_t    = string_to_enum<MetricKind>(smooth_str);
+    options_cm.transport_t = string_to_enum<Transport>(transp_str);
+    options_cm.interpol_t  = string_to_enum<Interpolate>(interp_str);
+}
+
 } // namespace gpe
 
-#endif //GPE_OPTION_CLI_H
+} // namespace rmo
+
+#endif //RMO_OPTION_H

@@ -1,15 +1,16 @@
-#include <gpe/fe/space.h>
-#include <gpe/fe/grid.h>
-#include <gpe/util/sparsity.h>
-#include <gpe/util/util.h>
-#include <gpe/option.h>
+#include <rmo/fe/space.h>
+#include <rmo/fe/grid.h>
+#include <rmo/util/sparsity.h>
+#include <rmo/util/util.h>
+#include <rmo/option.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_q.h>
 #include <fmt/format.h>
 #include <iostream>
 
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 using namespace dealii;
 
 template <int dim>
@@ -46,7 +47,7 @@ public:
         std::string grid_file = fmt::format("{}_{}d_{}_lvl{}", prefix, dim, mesh, level);
 
         if (dim == 2) {
-            write_grid<dim>(grid_file + ".svg", grid.triangulation, dealii::GridOut::OutputFormat::svg);
+            fe::write_grid<dim>(grid_file + ".svg", grid.triangulation, dealii::GridOut::OutputFormat::svg);
             std::cerr << "Saving " + grid_file + ".svg" << std::endl;
         }
         // only for quadrilateral mesh
@@ -64,9 +65,9 @@ public:
     }
 
 private:
-    HyperCube<dim> grid;
+    fe::HyperCube<dim> grid;
     SparsityPattern sparsity_pattern;
-    FeSpace<dim> space;
+    fe::FeSpace<dim> space;
 
     // Variable for simplex or quadrilateral meshes
     std::unique_ptr<Mapping<dim>> mapping;

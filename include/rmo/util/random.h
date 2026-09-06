@@ -1,10 +1,10 @@
-#ifndef RANDOM_H
-#define RANDOM_H
+#ifndef RMO_UTIL_RANDOM_H
+#define RMO_UTIL_RANDOM_H
 #include <random>
 #include <algorithm>
 #include <stdexcept>
 
-namespace gpe {
+namespace rmo {
 
 /// XXX: allow user-specified seed
 inline std::mt19937& random_engine()
@@ -81,6 +81,6 @@ RandSparseVecIdx(int s, int n) {
     return {idx.begin(), idx.begin() + s};
 }
 
-} // namespace gpe
+} // namespace rmo
 
-#endif // RANDOM_H
+#endif //RMO_UTIL_RANDOM_H

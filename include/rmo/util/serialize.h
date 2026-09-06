@@ -1,5 +1,5 @@
-#ifndef GPE_SERIALIZE_H
-#define GPE_SERIALIZE_H
+#ifndef RMO_UTIL_SERIALIZE_H
+#define RMO_UTIL_SERIALIZE_H
 
 #include <deal.II/base/point.h>
 #include <deal.II/dofs/dof_handler.h>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace gpe
+namespace rmo
 {
 
 /**
@@ -79,6 +79,6 @@ inline void write_solution(const dealii::Vector<double>& solution, const std::st
     out.write(reinterpret_cast<const char*>(solution.begin()), n_dofs * sizeof(double));
 }
 
-} // namespace gpe
+} // namespace rmo
 
-#endif //GPE_SERIALIZE_H
+#endif //RMO_UTIL_SERIALIZE_H

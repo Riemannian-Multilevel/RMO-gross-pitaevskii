@@ -2,14 +2,14 @@
 // Created by Ferdinand Vanmaele on 12.01.26.
 //
 
-#ifndef GPE_GRID_H
-#define GPE_GRID_H
+#ifndef RMO_FE_GRID_H
+#define RMO_FE_GRID_H
 
 #include <deal.II/grid/tria.h>
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_out.h>
 
-namespace gpe
+namespace rmo::fe
 {
 
 /**
@@ -126,5 +126,5 @@ write_grid_svg(const std::string& s, const dealii::Triangulation<2>& triangulati
     write_grid(s, triangulation, dealii::GridOut::OutputFormat::svg);
 }
 
-}
-#endif //GPE_GRID_H
+} // namespace rmo::fe
+#endif //RMO_FE_GRID_H

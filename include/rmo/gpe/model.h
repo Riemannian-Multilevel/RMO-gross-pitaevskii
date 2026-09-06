@@ -2,14 +2,14 @@
 // Created by Ferdinand Vanmaele on 12.05.26.
 //
 
-#ifndef GPE_MODEL_H
-#define GPE_MODEL_H
+#ifndef RMO_GPE_MODEL_H
+#define RMO_GPE_MODEL_H
 
-#include <gpe/problem/gpe.h>
-#include <gpe/option_types.h>
+#include <rmo/gpe/gpe.h>
+#include <rmo/option_types.h>
 
 
-namespace gpe
+namespace rmo::gpe
 {
 
 /**
@@ -92,6 +92,6 @@ private:
     GPE_Options options;
 };
 
-} // namespace gpe
+} // namespace rmo::gpe
 
-#endif //GPE_MODEL_H
+#endif //RMO_GPE_MODEL_H

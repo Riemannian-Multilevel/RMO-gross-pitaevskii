@@ -4,7 +4,8 @@
 
 #include "test_gradient.h"
 
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 
 template <int dim>
 void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,

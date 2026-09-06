@@ -1,9 +1,10 @@
-#include <gpe/problem/oracle.h>
-#include <gpe/main/model.h>
-#include <gpe/util/util.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/gpe/model.h>
+#include <rmo/util/util.h>
 
-#include <gpe/ropt/manifold.h>
-#include <gpe/ropt/descent.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/ropt/solver.h>
+#include <rmo/ropt/observer_table.h>
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
@@ -15,7 +16,8 @@
 #include <sstream>
 
 using namespace dealii;
-using namespace gpe;
+using namespace rmo;
+using namespace rmo::gpe;
 
 
 template <int dim>
@@ -130,7 +132,12 @@ int main()
                         UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
                         EnergyOracle<dim> oracle(gp_func, options_slv_level[ref]);
 
-                        x[ref] = gradient_descent(oracle, manifold, y0[ref], options_gd_level[ref], file);
+                        GradientDescent solver(oracle, manifold, options_gd_level[ref]);
+                        ConvergenceTableObserver conv_observer;
+                        solver.set_observer(conv_observer);
+
+                        x[ref] = y0[ref];  // cycle() updates the iterate in place
+                        solver.cycle(x[ref], file);
                     }
 
                     // Prolongate to the next finer grid
@@ -156,7 +163,10 @@ int main()
                 UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
                 EnergyOracle<dim> oracle(gp_func, options_slv);
 
-                gradient_descent(oracle, manifold, y0_fine, options_gd, file);
+                GradientDescent solver(oracle, manifold, options_gd);
+                ConvergenceTableObserver conv_observer;
+                solver.set_observer(conv_observer);
+                solver.cycle(y0_fine, file);  // cycle() updates the iterate in place
             }
         });
     }
