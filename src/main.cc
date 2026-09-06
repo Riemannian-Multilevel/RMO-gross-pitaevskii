@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
             constexpr int dim = T0::value;
-            auto potential_v= potential::get_potential<dim>(options.potential);
+            auto potential_v= potential::get_potential<dim>(options.potential, options.potential_expr);
 
             for (unsigned int level : options_mg.v_levels) {
                 // Set up the grid (Package) and finite element space
