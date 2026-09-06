@@ -13,11 +13,15 @@
 
 #include <rmo/util/sparsity.h>
 
+#include <deal.II/base/function_parser.h>
 #include <deal.II/fe/fe_simplex_p.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_simplex_p_bubbles.h>  // for higher degree simplex elements with mass lumping
 
+#include <memory>
 #include <numbers>
+#include <string>
+#include <variant>
 
 namespace rmo::gpe
 {
@@ -71,18 +75,46 @@ private:
 };
 
 
+/**
+ * @brief Potential given as an expression in the coordinates x[,y[,z]], e.g. "0.5*(x^2+y^2)".
+ *
+ * dealii::FunctionParser is neither copyable nor movable, so it is held through a shared_ptr to
+ * keep this functor a value type: PVar is returned by value and forwarded into ModelBuilder.
+ */
 template <int dim>
-using PVar = std::variant<Square<dim>, OpticalLattice<dim>>;
+class Expression
+{
+public:
+    explicit Expression(const std::string& expr)
+        : m_parser(std::make_shared<dealii::FunctionParser<dim>>(
+              expr, "", dealii::FunctionParser<dim>::default_variable_names()))
+    {}
+
+    double operator()(const Point<dim>& p) const
+    {
+        return m_parser->value(p);
+    }
+
+private:
+    std::shared_ptr<const dealii::FunctionParser<dim>> m_parser;
+};
+
+
+template <int dim>
+using PVar = std::variant<Square<dim>, OpticalLattice<dim>, Expression<dim>>;
 
 template <int dim>
 PVar<dim>
-get_potential(Potential potential_t) {
+get_potential(Potential potential_t, const std::string& expr = "") {
     switch (potential_t)
     {
         case Potential::SQUARE:
             return Square<dim>();
         case Potential::OPTICAL_LATTICE:
             return OpticalLattice<dim>();
+        case Potential::EXPRESSION:
+            AssertThrow(!expr.empty(), dealii::ExcMessage("empty potential expression"));
+            return Expression<dim>(expr);
         default:
             throw std::invalid_argument("Unknown potential type");
     }

@@ -205,7 +205,7 @@ namespace gpe
 
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind));
-BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE);
+BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE, EXPRESSION);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
     (metric_t, transport_t, interpol_t));
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
@@ -232,7 +232,10 @@ inline po::options_description gpe_cli_options() {
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
             "type of mesh elements used (quadrilateral|simplex)")
         ("potential", po::value<std::string>()->default_value("square"),
-            "used potential (square|optical_lattice)")
+            "used potential (square|optical_lattice|expression)")
+        ("potential-expr", po::value<std::string>()->default_value(""),
+            "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
+            "implies --potential expression")
         ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
             "export incumbent solutions in binary format");
     return d;
@@ -248,6 +251,15 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
     options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
     options.potential = string_to_enum<Potential>(potential_str);
+    options.potential_expr = vm["potential-expr"].as<std::string>();
+
+    // A supplied expression selects the parsed potential; asking for it without one is an error
+    if (!options.potential_expr.empty()) {
+        options.potential = Potential::EXPRESSION;
+    }
+    else if (options.potential == Potential::EXPRESSION) {
+        throw std::invalid_argument("--potential expression requires --potential-expr");
+    }
     options.degree    = vm["degree"].as<int>();
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();

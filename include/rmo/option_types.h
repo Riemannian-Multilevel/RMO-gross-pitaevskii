@@ -4,6 +4,7 @@
 
 #ifndef RMO_OPTION_TYPES_H
 #define RMO_OPTION_TYPES_H
+#include <string>
 #include <vector>
 
 namespace rmo
@@ -124,7 +125,8 @@ namespace gpe
 enum class Potential
 {
     SQUARE,
-    OPTICAL_LATTICE
+    OPTICAL_LATTICE,
+    EXPRESSION      // muparser expression, see GPE_Options::potential_expr
 };
 
 
@@ -138,6 +140,7 @@ struct GPE_Options
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
     Potential potential;    // used potential V for matrix M_V
+    std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
     bool export_solution;   // write incumbent solutions to disk
 };
 
