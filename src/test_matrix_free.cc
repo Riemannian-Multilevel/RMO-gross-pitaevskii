@@ -6,7 +6,8 @@
 #include <rmo/option_types.h>
 #include <rmo/gpe/model.h>
 
-#include "test_gradient.h"
+#include <rmo/ropt/manifold.h>
+#include <rmo/util/random.h>
 #include <fmt/format.h>
 
 #define NUM_TRIALS 200
@@ -94,7 +95,7 @@ int main()
 {
     GPE_Options options = {.dimension=DIM, .degree=FE_DEGREE, .radius=RADIUS, .beta=BETA};
     MGLevelObject<std::vector<double>> time_value(MIN_LEVEL, MAX_LEVEL);
-    MGLevelObject<std::vector<double>> time_value_matrix_free(MIN_LEVEL, MAX_LEVEL);
+    MGLevelObject<std::vector<double>> time_value_cell_loop(MIN_LEVEL, MAX_LEVEL);
     MGLevelObject<std::vector<double>> value_error(MIN_LEVEL, MAX_LEVEL);
 
     for (unsigned level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
@@ -105,25 +106,25 @@ int main()
         const auto& eval = model.get_eval(options.beta, SolverOptions{});
         const unsigned n_dofs = model.n_dofs();
 
-        // Average time over trials for value() + assembly, and value_matrix_free()
+        // Average time over trials for value() + assembly, and the cell-loop reference
         time_value[level].reserve(NUM_TRIALS);
-        time_value_matrix_free[level].reserve(NUM_TRIALS);
+        time_value_cell_loop[level].reserve(NUM_TRIALS);
         value_error[level].reserve(NUM_TRIALS);
 
         for (unsigned int trial = 0; trial < NUM_TRIALS; trial++) {
-            double value, value_matrix_free;
+            double value, value_cell_loop;
             Vector<double> x(n_dofs);
             ellipsoid::random_point(x, model.get_M(), MEAN, STDDEV);
 
-            { // Value through sparse matrix-vector products
+            { // Reference value, assembled on the fly in a cell loop
                 auto begin_t = timer.cpu_time();
-                value_matrix_free = get_energy(model.get_dofs(), x, system.get_A0(), options.beta);
+                value_cell_loop = get_energy(model.get_dofs(), x, system.get_A0(), options.beta);
 
                 auto end_t = timer.cpu_time();
-                time_value_matrix_free[level].push_back(end_t - begin_t);
+                time_value_cell_loop[level].push_back(end_t - begin_t);
             }
 
-            { // Value through matrix-free implementation
+            { // Value through sparse matrix-vector products (LinearCombination)
                 auto begin_t = timer.cpu_time();
                 system.assemble_nonlinear_term(x);
                 value = eval.value(x);
@@ -134,16 +135,16 @@ int main()
 
             // Verify both match within a given margin (done in extended precision to reduce cancellation)
             // TODO: mean/standard deviation of errors
-            const long double error = std::abs(static_cast<long double>(value) - value_matrix_free);
+            const long double error = std::abs(static_cast<long double>(value) - value_cell_loop);
             value_error[level].push_back(static_cast<double>(error));
 
             AssertThrow(error < MARGIN, dealii::ExcInternalError(fmt::format(
-            "mismatch between value: {} and value_matrix_free: {} (level: {}, trial: {})",
-                value, value_matrix_free, level, trial)));
+            "mismatch between value: {} and value_cell_loop: {} (level: {}, trial: {})",
+                value, value_cell_loop, level, trial)));
         }
-        // TODO: write time_value / time_value_matrix_free to file for plotting
+        // TODO: write time_value / time_value_cell_loop to file for plotting
         std::cerr << fmt::format("Average time on level {}, spmv: {}s\n", level, mean(time_value[level]))
-                  << fmt::format("Average time on level {}, matrix-free: {}s\n", level, mean(time_value_matrix_free[level]))
+                  << fmt::format("Average time on level {}, cell loop: {}s\n", level, mean(time_value_cell_loop[level]))
                   << fmt::format("Average error on level {}: {}\n", level, mean(value_error[level]));
     }
 }

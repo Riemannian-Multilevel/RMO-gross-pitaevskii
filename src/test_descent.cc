@@ -2,7 +2,13 @@
 // Created by Ferdinand Vanmaele on 04.04.26.
 //
 
-#include "test_gradient.h"
+#include <rmo/gpe/gpe.h>
+#include <rmo/gpe/model.h>
+#include <rmo/ropt/manifold.h>
+#include <rmo/util/random.h>
+
+#include <iostream>
+#include <stdexcept>
 
 using namespace rmo;
 using namespace rmo::gpe;
@@ -14,7 +20,7 @@ void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
     const unsigned n_dofs = problem.n_dofs();
     auto A = problem.get_operator_A(beta);
     auto M = problem.get_operator_M();
-    PreconditionInverse<decltype(A), decltype(M)> A_inv(A, options_slv);
+    InverseOpType A_inv(A, options_slv);
 
     // 1. Generate random base point and tilt vector
     Vector<double> phi(n_dofs), w(n_dofs);
@@ -49,5 +55,31 @@ void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
 
 int main()
 {
+    // Discretization: the condition is metric-level, so one small level suffices
+    GPE_Options options{};
+    options.dimension = 2;
+    options.degree    = 1;
+    options.radius    = 10;
+    options.beta      = 100;
+    options.order     = Ordering::CUTHILL_MCKEE;
+    options.bc        = BoundaryCondition::DIRICHLET;
+    options.mesh_kind = MeshKind::QUADRILATERAL;
+
+    SolverOptions options_slv{};
+    options_slv.solver    = SolverMethod::CG;
+    options_slv.precond   = Precondition::NONE;
+    options_slv.max_inner = 2000;
+    options_slv.tol_inner = 1e-12;
+
+    constexpr unsigned n_levels = 6;
+
+    try {
+        ModelBuilder<2> builder(potential::Square<2>(), options, n_levels);
+        check_adaptive_descent_condition(builder.get_system(), options.beta, options_slv);
+    }
+    catch (std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
     return 0;
 }
