@@ -78,7 +78,6 @@ add_rmo_executable(main LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(main_operator)
 
 # --- Create targets for tests
 enable_testing()
@@ -87,6 +86,7 @@ add_rmo_executable(test_arpack LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(test_descent LINK_LIBS fmt::fmt)
 add_rmo_executable(test_gradient LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(test_matrix_free LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_operator)
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
@@ -96,3 +96,4 @@ add_test(descent test_descent COMMAND test_descent)
 add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
          --boundary dirichlet --order cuthill_mckee)
 add_test(NAME matrix_free COMMAND test_matrix_free --min-level 4 --max-level 6 --trials 20)
+add_test(NAME operator COMMAND test_operator)
