@@ -53,6 +53,21 @@ public:
         ellipsoid::retract_by_norm(get_M(), x_retr);
     }
 
+    //! @brief Applies the linear constraints to @p z.
+    //! The assembled operators represent the energy only on admissible vectors, so test points
+    //! and tangent vectors must satisfy the constraints.
+    void distribute(Vector<double>& z) const
+    {
+        m_system.get_constraints().distribute(z);
+    }
+
+    //! @brief Constrains a base point and puts it back on the manifold.
+    void make_admissible(Vector<double>& x) const
+    {
+        distribute(x);
+        ellipsoid::retract_by_norm(get_M(), x);
+    }
+
     double constraint_value(const Vector<double>& x) const
     {
         Vector<double> Mx(x.size());
@@ -216,6 +231,8 @@ struct CheckGradInfo
     double grad_xv;             // <grad x, v>_x
     double dir_xv;              // DE(x)[v]
     double grad_res;            // |v-Proj(v)|_x
+    double dir_xv_c;            // DE(x)[v] by central difference, O(h^2) accurate
+    double slope;               // slope of the linear piece of log E(t) vs. log t; 2 iff correct
 
     std::vector<double> ts;
     std::vector<double> Ets;
