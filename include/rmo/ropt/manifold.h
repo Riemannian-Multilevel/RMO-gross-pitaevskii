@@ -5,6 +5,8 @@
 #endif
 
 #include <rmo/lac.h>
+#include <rmo/util/random.h>
+
 #include <deal.II/base/function.h>
 
 namespace rmo
@@ -139,6 +141,19 @@ void gradient(const InverseMatrixType& A_inv, const MatrixType& M,
     project_onto_tangent_space(A_inv, x, M, output);
 }
 
+template <typename MatrixType, typename InverseMatrixType>
+void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>& x, const MatrixType& M,
+                           Vector<double>& v,
+                           const double mean = 0.0, const double stddev = 1.0)
+{
+    // 1. generate random vector in ambient space
+    Vector<double> tmp(v.size());
+    normrnd(mean, stddev, tmp);
+
+    // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
+    energy::project_onto_tangent_space(A_inv, x, M, tmp, v);
+}
+
 } // namespace energy
 
 
@@ -207,6 +222,19 @@ void gradient(const InverseMatrixType& Minv, const MatrixType& A, const MatrixTy
     Minv.vmult(output, Ax);
 }
 
+template <typename MatrixType>
+void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
+                           Vector<double>& v,
+                           double mean = 0.0, double stddev = 1.0)
+{
+    // 1. generate random vector in ambient space
+    Vector<double> tmp(v.size());
+    normrnd(mean, stddev, tmp);
+
+    // 2. project orthogonally onto tangent space at x, wrt. the mass metric
+    mass::project_onto_tangent_space(x, M, tmp, v);
+}
+
 } // namespace mass
 
 
@@ -261,7 +289,33 @@ void gradient(const MatrixType& A, const MatrixType& M,
     output.add(-num / Mx_sq, Mx);
 }
 
+template <typename MatrixType>
+void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
+                           Vector<double>& v,
+                           const double mean = 0.0, const double stddev = 1.0)
+{
+    // 1. generate random vector in ambient space
+    Vector<double> tmp(v.size());
+    normrnd(mean, stddev, tmp);
+
+    // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
+    frobenius::project_onto_tangent_space(x, M, tmp, v);
+}
+
 } // namespace frobenius
+
+
+template <typename MatrixType>
+void random_point(Vector<double>& x, const MatrixType& M,
+                  double mean = 0.0, double stddev = 1.0)
+{
+    normrnd(mean, stddev, x);
+    Vector<double> Mx(x.size());
+    M.vmult(Mx, x);
+
+    const double factor = x*Mx;
+    x /= std::sqrt(factor);
+}
 
 
 /**

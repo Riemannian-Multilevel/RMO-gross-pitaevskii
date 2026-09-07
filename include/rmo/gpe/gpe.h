@@ -237,6 +237,9 @@ public:
 
     unsigned int n_dofs() const { return dof_handler.n_dofs(); }  // A0.m()
 
+    /** @brief Returns the linear constraints the operators were assembled with. */
+    const dealii::AffineConstraints<double>& get_constraints() const { return constraints; }
+
 private:
     const dealii::DoFHandler<dim>& dof_handler;
     const dealii::Quadrature<dim>& quadrature;
