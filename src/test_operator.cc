@@ -17,7 +17,7 @@
 //   In particular R is neither P^T (full weighting / Galerkin restriction) nor a row-normalised
 //   P^T (half weighting) -- both of those have several nonzeros per row.
 //
-// That is why fe::LinearTransferBase carries two different restrictions. to_coarse_mesh() is the
+// That is why LinearTransferBase carries two different restrictions. to_coarse_mesh() is the
 // injection above (primal, magnitude preserving), while Tfine() is the adjoint P^T (dual, row sums
 // 2^dim on interior nodes). The transports pick one or the other, so this test pins both down --
 // mixing them up rescales a restricted vector by 2^dim.
@@ -153,17 +153,17 @@ int main(int argc, char* argv[])
         const fe::LinearTransfer<dim>   transfer(dof_coarse, dof_fine, constr_coarse, constr_fine);
         const fe::LinearTransferMG<dim> transfer_mg(dof_coarse, dof_fine, constr_coarse, constr_fine);
 
-        auto matrix_of = [&](const fe::LinearTransferBase& t, auto method, unsigned ns, unsigned nd) {
+        auto matrix_of = [&](const LinearTransferBase& t, auto method, unsigned ns, unsigned nd) {
             return transfer_matrix([&](const Vector<double>& src, Vector<double>& dst) {
                 (t.*method)(src, dst);
             }, ns, nd);
         };
 
-        const auto P    = matrix_of(transfer,    &fe::LinearTransferBase::to_fine_mesh,   n_c, n_f);
-        const auto R    = matrix_of(transfer,    &fe::LinearTransferBase::to_coarse_mesh, n_f, n_c);
-        const auto P_mg = matrix_of(transfer_mg, &fe::LinearTransferBase::to_fine_mesh,   n_c, n_f);
-        const auto R_mg = matrix_of(transfer_mg, &fe::LinearTransferBase::to_coarse_mesh, n_f, n_c);
-        const auto T_mg = matrix_of(transfer_mg, &fe::LinearTransferBase::Tfine,          n_f, n_c);
+        const auto P    = matrix_of(transfer,    &LinearTransferBase::to_fine_mesh,   n_c, n_f);
+        const auto R    = matrix_of(transfer,    &LinearTransferBase::to_coarse_mesh, n_f, n_c);
+        const auto P_mg = matrix_of(transfer_mg, &LinearTransferBase::to_fine_mesh,   n_c, n_f);
+        const auto R_mg = matrix_of(transfer_mg, &LinearTransferBase::to_coarse_mesh, n_f, n_c);
+        const auto T_mg = matrix_of(transfer_mg, &LinearTransferBase::Tfine,          n_f, n_c);
 
         // 1. Both prolongations are the canonical bilinear interpolation, and agree
         check_bilinear_prolongation(P,    "LinearTransfer::to_fine_mesh");

@@ -1,10 +1,15 @@
 #include <rmo/lac.h>
-#include <rmo/gpe/model.h>
+
 #include <rmo/ropt/fas.h>
 #include <rmo/ropt/observer_table.h>
-#include <rmo/gpe/oracle_coarse.h>
-#include <rmo/option.h>
 #include <rmo/ropt/manifold.h>
+#include <rmo/ropt/interpolate.h>
+
+#include <rmo/gpe/model.h>
+#include <rmo/gpe/interpolate.h>
+#include <rmo/gpe/oracle_coarse.h>
+
+#include <rmo/option.h>
 #include <rmo/util/serialize.h>
 
 #include <fmt/format.h>
@@ -22,12 +27,12 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
                      const OperatorType& M_c, const OperatorType& M_f, const InverseOpType& M_inv_c,
                      const CoarseModelOptions& options_cm)
 {
-    std::shared_ptr<fe::LinearTransferBase> transfer;
+    std::shared_ptr<LinearTransferBase> transfer;
     std::shared_ptr<ManifoldTransferBase> point_transfer;
     std::shared_ptr<VectorTransportBase> vector_transport;
 
     if (options_cm.interpol_t == Interpolate::MASS) {
-        transfer = std::make_shared<fe::MassTransfer<dim,fe::LinearTransferMG<dim>,OperatorType,InverseOpType>>(
+        transfer = std::make_shared<MassTransfer<dim,fe::LinearTransferMG<dim>,OperatorType,InverseOpType>>(
             dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
     }
     else if (options_cm.interpol_t == Interpolate::NONE) {
@@ -321,7 +326,7 @@ private:
     MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>> objective_mg;
     MGLevelObject<LevelNorm> cond_norm_mg;
     MGLevelObject<std::shared_ptr<ManifoldBase>>                   manifold_mg;
-    MGLevelObject<std::shared_ptr<fe::LinearTransferBase>>             transfer_mg;
+    MGLevelObject<std::shared_ptr<LinearTransferBase>>             transfer_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>           point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>            vector_transport_mg;
     MGLevelObject<DescentOptions>                                  options_descent_mg;
