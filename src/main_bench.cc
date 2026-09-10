@@ -1,16 +1,16 @@
 #include <rmo/gpe/oracle.h>
 #include <rmo/gpe/model.h>
-#include <rmo/option.h>
-#include <rmo/util/util.h>
+#include <rmo/gpe/manifold.h>
 
 #include <rmo/fe/interpolate.h>
-#include <rmo/ropt/manifold.h>
 #include <rmo/ropt/solver.h>
 #include <rmo/ropt/observer_table.h>
 
+#include <rmo/option.h>
+#include <rmo/util/util.h>
+
 #include <deal.II/base/timer.h>
 #include <deal.II/base/mg_level_object.h>
-#include <deal.II/numerics/vector_tools.h>
 
 #include <fstream>
 #include <memory>
@@ -141,7 +141,7 @@ int main(int argc, char* argv[])
 
                         // New Architecture Pipeline
                         auto gp_func = builder[ref]->get_eval(options.beta, options_slv_level[ref]);
-                        UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
+                        UnitMassSphere<OperatorType> manifold(gp_func.get_M());
                         EnergyOracle<dim> oracle(gp_func, options_slv_level[ref]);
 
                         GradientDescent solver(oracle, manifold, options_gd_level[ref]);
@@ -172,7 +172,7 @@ int main(int argc, char* argv[])
                 std::ofstream file("solve_ref_max_cold.csv");
 
                 auto gp_func = builder[ref_max]->get_eval(options.beta, options_slv_level[ref_max]);
-                UnitMassSphere<dim, OperatorType> manifold(gp_func.get_M());
+                UnitMassSphere<OperatorType> manifold(gp_func.get_M());
                 EnergyOracle<dim> oracle(gp_func, options_slv);
 
                 GradientDescent solver(oracle, manifold, options_gd);

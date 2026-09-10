@@ -3,7 +3,8 @@
 //
 #include <rmo/gpe/model.h>
 #include <rmo/gpe/oracle.h>
-#include <rmo/ropt/manifold.h>
+#include <rmo/gpe/manifold.h>
+
 #include <rmo/ropt/solver.h>
 #include <rmo/ropt/observer_table.h>
 #include <rmo/option.h>
@@ -69,7 +70,7 @@ int main(int argc, char* argv[])
                 // Define objective in ambient space
                 auto gp = context.get_eval(options.beta, options_slv);
                 // Define manifold
-                auto manifold = UnitMassSphere<dim, SparseMatrix<double>>(context.get_M());
+                auto manifold = UnitMassSphere<SparseMatrix<double>>(context.get_M());
                 // Define Riemannian metric
                 EnergyOracle<dim> oracle(gp, options_slv);
 

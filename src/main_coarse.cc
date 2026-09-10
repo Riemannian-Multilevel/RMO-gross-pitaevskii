@@ -2,12 +2,12 @@
 
 #include <rmo/ropt/fas.h>
 #include <rmo/ropt/observer_table.h>
-#include <rmo/ropt/manifold.h>
-#include <rmo/ropt/interpolate.h>
 
 #include <rmo/gpe/model.h>
 #include <rmo/gpe/interpolate.h>
 #include <rmo/gpe/oracle_coarse.h>
+#include <rmo/gpe/manifold.h>
+#include <rmo/gpe/transport.h>
 
 #include <rmo/option.h>
 #include <rmo/util/serialize.h>
@@ -115,7 +115,7 @@ public:
         objective = std::make_shared<GrossPitaevskiiFunctional<dim>>(
             builder->get_system(), options.beta, options_slv
         );
-        manifold = std::make_shared<UnitMassSphere<dim, OperatorType>>(
+        manifold = std::make_shared<UnitMassSphere<OperatorType>>(
             objective->get_M()
         );
     }
@@ -211,7 +211,7 @@ public:
             objective_mg[l] = std::make_shared<GrossPitaevskiiFunctional<dim>>(
                 builders_mg[l]->get_system(), options.beta, options_solver_mg[l]
             );
-            manifold_mg[l] = std::make_shared<UnitMassSphere<dim, OperatorType>>(
+            manifold_mg[l] = std::make_shared<UnitMassSphere<OperatorType>>(
                 objective_mg[l]->get_M()
             );
         }

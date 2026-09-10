@@ -32,8 +32,8 @@ public:
         throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
     }
 
-    virtual unsigned n_coarse() const = 0;
-    virtual unsigned n_fine() const = 0;
+    [[nodiscard]] virtual unsigned n_coarse() const = 0;
+    [[nodiscard]] virtual unsigned n_fine() const = 0;
 };
 
 
