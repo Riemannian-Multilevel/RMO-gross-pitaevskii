@@ -4,7 +4,8 @@
 
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/model.h>
-#include <rmo/ropt/manifold.h>
+#include <rmo/gpe/oracle_coarse.h>
+
 #include <rmo/util/random.h>
 
 #include <iostream>
@@ -14,8 +15,8 @@ using namespace rmo;
 using namespace rmo::gpe;
 
 template <int dim>
-void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
-                                      double beta, SolverOptions options_slv)
+static void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
+                                             double beta, SolverOptions options_slv)
 {
     const unsigned n_dofs = problem.n_dofs();
     auto A = problem.get_operator_A(beta);
@@ -27,11 +28,11 @@ void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
     ellipsoid::random_point(phi, M);
     normrnd(0.0, 1.0, w);
     Vector<double> w_proj(n_dofs);
-    ellipsoid::frobenius::project_onto_tangent_space(phi, M, w, w_proj);
+    metric::frobenius::project_onto_tangent_space(phi, M, w, w_proj);
 
     // 2. Generate random evaluation point safely near phi
     Vector<double> v(n_dofs);
-    ellipsoid::frobenius::random_tangent_vector(phi, M, v);
+    metric::frobenius::random_tangent_vector(phi, M, v);
     v /= v.l2_norm();
 
     Vector<double> x(phi);             // retract_by_norm() updates its base point in place,
@@ -39,13 +40,13 @@ void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
 
     // 3. Compute the adaptive gradient
     Vector<double> g_adapt(n_dofs);
-    coarse::frobenius::energy_adaptive_gradient(M, A_inv, A, x, phi, w_proj, g_adapt);
+    detail::coarse_frobenius_grad_energy_adaptive(M, A_inv, A, x, phi, w_proj, g_adapt);
 
     // 4. Verify it is a valid descent direction: Df(x)[-g_adapt] < 0
     Vector<double> neg_g_adapt(g_adapt);
     neg_g_adapt *= -1.0;
 
-    double slope = coarse::frobenius::directional_derivative(x, phi, w_proj, neg_g_adapt, M, A);
+    double slope = detail::coarse_frobenius_dir_deriv(x, phi, w_proj, neg_g_adapt, M, A);
 
     std::cerr << "Adaptive Gradient Slope: " << slope << "\n";
     if (slope >= 0.0) {

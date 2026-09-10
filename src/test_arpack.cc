@@ -15,10 +15,12 @@
 //
 #include <rmo/gpe/model.h>
 #include <rmo/gpe/oracle.h>
-#include <rmo/option.h>
+#include <rmo/gpe/manifold.h>
+
 #include <rmo/ropt/observer_table.h>
-#include <rmo/ropt/manifold.h>
 #include <rmo/ropt/solver.h>
+
+#include <rmo/option.h>
 #include <rmo/util/util.h>
 
 #include <deal.II/base/config.h>
@@ -102,7 +104,7 @@ bool run_check(GPE_Options options, SolverOptions options_slv, DescentOptions op
     GrossPitaevskiiFunctional<dim> objective(system, options.beta, options_slv);
 
     // 1. Minimize E on the unit mass sphere
-    UnitMassSphere<dim, OperatorType> manifold(objective.get_M());
+    UnitMassSphere<OperatorType> manifold(objective.get_M());
     EnergyOracle<dim> oracle(objective, options_slv);
 
     Vector<double> x(system.n_dofs());

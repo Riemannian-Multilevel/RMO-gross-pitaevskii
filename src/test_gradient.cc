@@ -20,8 +20,8 @@ using namespace rmo::gpe;
 // TODO: long double doesn't do much here, since F() is evaluated in double
 // Finite difference: O(h) accurate
 template <typename FuncType>
-long double finite_difference(const FuncType& F, const Vector<double>& x,
-                              const Vector<double>& v, long double h, long double Fx)
+static long double finite_difference(const FuncType& F, const Vector<double>& x,
+                                     const Vector<double>& v, long double h, long double Fx)
 {
     // Evaluate at x + hv
     Vector<double> tmp(x);
@@ -34,8 +34,8 @@ long double finite_difference(const FuncType& F, const Vector<double>& x,
 
 // Central difference: O(h^2) accurate
 template <typename FuncType>
-long double central_difference(const FuncType& F, const Vector<double>& x,
-                               const Vector<double>& v, long double h)
+static long double central_difference(const FuncType& F, const Vector<double>& x,
+                                      const Vector<double>& v, long double h)
 {
     Vector<double> tmp(x);
     tmp.add(h, v);
@@ -49,7 +49,7 @@ long double central_difference(const FuncType& F, const Vector<double>& x,
 }
 
 
-std::vector<double>
+static std::vector<double>
 logspace(double start_exp, double end_exp, int num) {
     std::vector<double> values;
     if (num <= 0) return values;
@@ -77,8 +77,8 @@ struct EmptyStrategy
 //! least squares, and returns the slope of the window with the smallest residual. This picks out
 //! the region where the Taylor error follows a clean power law, ignoring both the round-off noise
 //! at small t and the loss of the asymptotic regime at large t.
-inline double identify_linear_piece(const std::vector<double>& x, const std::vector<double>& y,
-                                    unsigned window_len = 10)
+static double identify_linear_piece(const std::vector<double>& x, const std::vector<double>& y,
+                                    const unsigned window_len = 10)
 {
     AssertDimension(x.size(), y.size());
     AssertThrow(x.size() > window_len,
@@ -120,7 +120,7 @@ inline double identify_linear_piece(const std::vector<double>& x, const std::vec
 // TODO: additional data (h=1-8, n_trial_points=100, start_exp=-8)
 //       include exact directional derivative
 template <int dim>
-CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
+static CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
 {
     CheckGradInfo check;
     const unsigned int n_dofs = test_grad.n_dofs();
@@ -143,13 +143,13 @@ CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
     Vector<double> v_ambient(v);
     test_grad.to_tangent_space(x, v_ambient, v);  // constraining v moved it off T_x
 
-    v /= std::sqrt(test_grad.metric(v, v));  // tangent vector with |v|_x = 1
+    v /= std::sqrt(test_grad.inner(v, v));  // tangent vector with |v|_x = 1
 
     // Verify g_x(\grad(x), v) = DE(x)[v] for finite difference (directional derivative)
     // metric() and gradient() should match
     double fx             = test_grad.value(x);
     Vector<double> x_grad = test_grad.gradient(x);
-    double g_xv           = test_grad.metric(x_grad, v);
+    double g_xv           = test_grad.inner(x_grad, v);
     check.grad_xv         = g_xv;
 
     // --- FINITE DIFFERENCE CHECK ---
@@ -174,7 +174,7 @@ CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
     // Residual of difference between gradient, and projected gradient in T_x S
     Vector<double> x_grad_res(x_grad);
     x_grad_res.add(-1.0, x_grad_proj);
-    double grad_res = std::sqrt(test_grad.metric(x_grad_res,x_grad_res));
+    double grad_res = std::sqrt(test_grad.inner(x_grad_res,x_grad_res));
     check.grad_res  = grad_res;
 
     // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
@@ -213,8 +213,8 @@ CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
 
 
 template <int dim, typename Strategy = EmptyStrategy>
-void check_gradient(GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix,
-                    double slope_tol, Strategy&& setup_trial = {})
+static void check_gradient(GradientTestBase<dim>& test_grad, unsigned n_trials, std::string prefix,
+                           double slope_tol, Strategy&& setup_trial = {})
 {
     dealii::ConvergenceTable convergence_table;
 
@@ -378,7 +378,7 @@ int main(int argc, char* argv[])
                 test_mass.make_admissible(phi);
 
                 Vector<double> w_proj(n_dofs);
-                ellipsoid::mass::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
+                metric::mass::project_onto_tangent_space(phi, test_mass.get_M(), w, w_proj);
 
                 test_coarse_mass.update_parameters(w_proj, phi);
             };
@@ -404,7 +404,7 @@ int main(int argc, char* argv[])
 
                 // Project the ambient tilt vector w onto the F-metric tangent space
                 Vector<double> w_proj(n_dofs);
-                ellipsoid::frobenius::project_onto_tangent_space(phi, test_frob.get_M(), w, w_proj);
+                metric::frobenius::project_onto_tangent_space(phi, test_frob.get_M(), w, w_proj);
 
                 test_coarse_frob.update_parameters(w_proj, phi);
             };
