@@ -27,7 +27,13 @@ using namespace rmo::cc;
 int main()
 {
     constexpr double alpha   = 0.1;    // fine-level regularization weight (Sec. 6.3.4)
-    constexpr double epsilon = 1e-4;   // fine-level TV smoothing (Sec. 6.3.4)
+    // eps convention: cc.h squares eps under the root (eq. (42)'s eps^2), but the reference
+    // (objective.py) adds its eps argument unsquared, and Sec. 6.3.4 states the paper's figures
+    // were produced by the reference -- so eps_paper = sqrt(eps_ref), with eps_ref = 1e-4 being
+    // the reference's own fine-level number (see main_cc_coarse.cc and
+    // REVIEW-continuous-cuts.md \S3.3, which also uses this driver for the single-level
+    // baseline in \S4.2).
+    constexpr double epsilon = 1e-2;   // fine-level TV smoothing = sqrt(1e-4)
 
     const SyntheticImage img(41);
     const PixelGrid grid(img.rows, img.cols);

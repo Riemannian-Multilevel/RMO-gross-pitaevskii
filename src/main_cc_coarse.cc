@@ -14,21 +14,24 @@
 // center of a 2x2 block the way a plain image pyramid's would.
 //
 // Regularization parameters match the paper's two-level continuous-cuts
-// experiment (Sec. 6.3.4): (alpha,eps) = (0.1,1e-4) fine, (0.4,1e-3) coarse; the
-// coarse solver runs for 10 iterations per call, eta=0.6 (Fig. 15, Option 1).
+// experiment (Sec. 6.3.4): alpha = 0.1 fine / 0.4 coarse; the coarse solver
+// runs for 10 iterations per call, eta = 0.6 (Fig. 15, Option 1). eps follows
+// the reference's convention (eps_paper = sqrt(eps_ref), see the eps= comments
+// below and REVIEW-continuous-cuts.md \S3.3): 1e-2 fine, ~3.16e-2 coarse.
 //
-// This still does not demonstrate a speedup over main_cc.cc's single-level
-// baseline: final energy after 300 iterations is -94.01 here (was -93.99 with
-// the earlier injected-image rho), against -112.23 in 147 iterations
-// single-level, and the run-time behavior (grad_norm ~2.5 vs grad_restr_norm
-// ~548 by the end -- the same ~220x gap as before) is essentially unchanged.
-// So the earlier hypothesis that recomputing rho from an injected coarse image
-// (rather than averaging it, as here) was contributing to the poor convergence
-// was tested directly and ruled out: switching the rho construction changes the
-// numbers but not the qualitative behavior. The scale mismatch between
-// grad_norm and grad_restr_norm that eq. (16)'s trigger condition compares (see
-// doc/plan_continuous_cuts.tex) is squarely a property of Option 1's vector
-// transport (R = 4F_h^H), independent of how the coarse data term is built.
+// This now reproduces the reference's speedup: with the reference's Armijo
+// (coarse ls.alpha = 1, undamped) and its lockout on consecutive coarse
+// corrections (coarse_every = 2), the driver reaches E = -109.62 after the
+// first fine iteration -- what main_cc.cc's single-level baseline needs 16
+// iterations to reach -- and E = -112.23 by iteration 300, matching
+// single-level to 5 digits. The earlier committed state (coarse ls.alpha =
+// 0.01, coarse_every = 1) instead stalled at E = -94.01 with every fine step
+// forced to be a rejected coarse step (2464 "Step rejected" lines): those two
+// parameters, not the vector transport's DC gain, were the cause (measured in
+// REVIEW-continuous-cuts.md \S3.2/\S4.2, cross-checked against the Python
+// reference in \S4.1, which shows the same one-iteration jump). See
+// doc/plan_continuous_cuts.tex \S"main_cc_coarse.cc" for the retracted
+// R = 4F_h^H narrative and its replacement.
 //
 #include <rmo/cc/cc.h>
 #include <rmo/cc/condition.h>
@@ -76,8 +79,14 @@ int main()
     grid_transfer->Tfine(rho_fine, rho_coarse);
     rho_coarse *= 0.25;
 
-    auto obj_coarse = std::make_shared<ContinuousCutsFunctional>(D_coarse, rho_coarse, /*alpha=*/0.4, /*eps=*/1e-3);
-    auto obj_fine   = std::make_shared<ContinuousCutsFunctional>(D_fine, rho_fine, /*alpha=*/0.1, /*eps=*/1e-4);
+    // eps convention: cc.h squares eps under the root (eq. (42)'s eps^2), but the reference
+    // (objective.py) adds its eps argument unsquared -- and \S6.3.4 states the paper's figures
+    // were produced by the reference. So eps_paper = sqrt(eps_ref), with eps_ref = 1e-4 fine /
+    // 1e-3 coarse being the reference's own numbers; passing eps_ref directly here (as before)
+    // made the smoothing 100x sharper than any run the paper reports (REVIEW-continuous-cuts.md
+    // \S3.3).
+    auto obj_coarse = std::make_shared<ContinuousCutsFunctional>(D_coarse, rho_coarse, /*alpha=*/0.4, /*eps=*/3.1622776601683795e-2);
+    auto obj_fine   = std::make_shared<ContinuousCutsFunctional>(D_fine, rho_fine, /*alpha=*/0.1, /*eps=*/1e-2);
 
     dealii::MGLevelObject<std::shared_ptr<ManifoldBase>>                manifold_mg(min_level, max_level);
     dealii::MGLevelObject<std::shared_ptr<ManifoldTransferBase>>        point_transfer_mg(min_level, max_level);
@@ -100,12 +109,19 @@ int main()
     options_fine.ls           = {50, 1.0, 0.5, 1e-4, 1e-12};
 
     DescentOptions options_coarse = options_fine;
-    options_coarse.max_iter  = 10;    // paper: coarse-level solver runs for 10 iterations per call
-    options_coarse.ls.alpha  = 0.01;  // the coarse model q_k is unbounded below as z -> boundary
-                                       // (its correction term is +/- w_k^T logit(z)), so a full
-                                       // (alpha=1) first step can retract right up to the boundary
-                                       // while still satisfying Armijo, in one shot -- damp the
-                                       // starting step so backtracking gets a chance to engage
+    options_coarse.max_iter  = 10;   // paper: coarse-level solver runs for 10 iterations per call
+    options_coarse.ls.alpha  = 1.0;  // reference (optimizer.py:8): Armijo starts at alpha=1 on
+                                      // every level and never damps. The coarse model q_k is
+                                      // indeed unbounded below as z -> boundary (its correction
+                                      // term is +/- w_k^T logit(z)), so a full first step can
+                                      // retract close to it -- but the reference lives with this
+                                      // by clamping iterates (optimizer.py:15,49) rather than
+                                      // damping alpha, and this port's own MIN_WEIGHT clamp
+                                      // (metric.h) does the same job. Damping to 0.01 instead
+                                      // left the coarse model unminimised (10 steps of exactly
+                                      // 0.01) and was the main cause of the "no speedup" result
+                                      // this driver used to report (REVIEW-continuous-cuts.md
+                                      // \S3.2/\S4.2).
 
     options_descent_mg[min_level] = options_coarse;
     options_descent_mg[max_level] = options_fine;
@@ -113,12 +129,20 @@ int main()
 
     FAS_Options options_fas{};
     options_fas.kappa                  = 0.6;    // eta in eq. (16); paper's Fig. 15 value for Option 1
-    options_fas.eps                    = 0.5;    // mu in eq. (16)
-    options_fas.coarse_every           = 1;
+    options_fas.eps                    = 0.5;    // mu in eq. (16); bounds the coarse norm, see
+                                                  // cc::ScaledCoarseCondition below
+    options_fas.coarse_every           = 2;      // paper \S6.4 / reference multilevel.py:148
+                                                  // "lockouts": consecutive coarse corrections are
+                                                  // not permitted -- every coarse correction is
+                                                  // preceded by a fine-level gradient step. With
+                                                  // coarse_every = 1 a rejected coarse step was
+                                                  // followed by another rejected coarse step
+                                                  // forever once the trigger fired, freezing the
+                                                  // driver (REVIEW-continuous-cuts.md \S3.2).
     options_fas.coarse_energy_adaptive = false;  // GP-specific, unused here
 
-    // grid_scale = 2 reproduces the reference's own compensation for one factor-2 step under
-    // Option 1/4's R = 4F_h^H (operators.py, get_grid_scale("Option 1", n_pools=1)); the
+    // grid_scale = 2 is a reference-side deviation (operators.py, get_grid_scale("Option 1",
+    // n_pools=1)) absent from the paper's eq. (16); it compensates for one factor-2 step under
     // trigger condition is otherwise the framework's default (see doc/plan_continuous_cuts.tex).
     dealii::MGLevelObject<std::shared_ptr<CoarseConditionBase>> condition_mg(min_level, max_level);
     condition_mg[max_level] = std::make_shared<ScaledCoarseCondition>(2.0);
