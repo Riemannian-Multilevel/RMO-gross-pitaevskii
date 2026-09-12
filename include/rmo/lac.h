@@ -94,7 +94,13 @@ public:
      */
     void add_component(double weight, const MatrixType &matrix)
     {
-        Assert(weight != 0, dealii::ExcMessage("weight must be non-zero"));
+        if (weight == 0.0) {
+            return;   // a zero coefficient contributes nothing to vmult_add/Tvmult_add
+                       // (e.g. ARPACK's shift-invert combination with beta = 0); skip it
+                       // instead of aborting, since asserting non-zero here was pre-existing
+                       // load-bearing behaviour for nothing -- test_arpack aborted on it in
+                       // every Debug build.
+        }
 
         if (m_components.size()) {
             AssertDimension(matrix.n(), this->n());

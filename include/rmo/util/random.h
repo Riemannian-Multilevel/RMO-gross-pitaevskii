@@ -2,14 +2,35 @@
 #define RMO_UTIL_RANDOM_H
 #include <random>
 #include <algorithm>
+#include <cstdlib>
+#include <iostream>
 #include <stdexcept>
 
 namespace rmo {
 
-/// XXX: allow user-specified seed
+/**
+ * @brief Seeds @ref random_engine from the environment variable @c RMO_TEST_SEED
+ * when set (base 10), otherwise from @c std::random_device. Either way the seed
+ * actually used is printed to stderr once, on first use, so a test failure that
+ * depended on the draw can be reproduced by rerunning with
+ * @c RMO_TEST_SEED=<printed value> set.
+ */
+inline unsigned int seed_from_env()
+{
+    if (const char* env = std::getenv("RMO_TEST_SEED")) {
+        return static_cast<unsigned int>(std::strtoul(env, nullptr, 10));
+    }
+    return std::random_device{}();
+}
+
 inline std::mt19937& random_engine()
 {
-    static thread_local std::mt19937 twister{std::random_device{}()};
+    static thread_local std::mt19937 twister = [] {
+        const unsigned int seed = seed_from_env();
+        std::cerr << "rmo::random_engine: seed = " << seed
+                  << " (set RMO_TEST_SEED=" << seed << " to reproduce)" << std::endl;
+        return std::mt19937(seed);
+    }();
     return twister;
 }
 

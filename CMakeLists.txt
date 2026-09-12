@@ -112,7 +112,7 @@ add_test(NAME cc_manifold COMMAND test_manifold)
 add_test(NAME cc_oracle COMMAND test_oracle)
 add_test(NAME cc_oracle_coarse COMMAND test_oracle_coarse)
 add_test(NAME coherence COMMAND test_coherence)
-add_test(descent test_descent COMMAND test_descent)
+add_test(NAME descent COMMAND test_descent)
 add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
          --boundary dirichlet --order cuthill_mckee)
 add_test(NAME matrix_free COMMAND test_matrix_free --min-level 4 --max-level 6 --trials 20)
