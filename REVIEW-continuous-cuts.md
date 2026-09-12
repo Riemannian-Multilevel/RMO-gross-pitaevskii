@@ -329,3 +329,73 @@ python3 test/cc/compare_reference.py ../RMO-continuous-cuts --every 1 --iters 12
 9. Fork housekeeping: delete `fix/coarse-residual-tilt`, `test/real-assertions`,
    `feat/dealii-features` on `pepopepopepo/RMO-gross-pitaevskii` (superseded upstream);
    rebase `build/packaging` and `docs/architecture` onto current `main` if still wanted.
+
+## 7. CPU-time comparison, single- vs. two-level (addendum, 2026-09-13)
+
+Recommendation 1's fix (§3.2) restores the reference's *iteration-count* behaviour: one
+fine iteration with a coarse correction reaches an energy single-level needs 16 iterations
+for. That is a claim about iterations, not CPU time -- a coarse correction also runs 10
+coarse-level Armijo iterations on a quarter-size grid plus two grid transfers, which is not
+free. `src/main_cc_bench.cc` (new) measures CPU time directly: both drivers already report
+cumulative CPU time per iterate (`CycleInfo::elapsed`, a `dealii::Timer` restarted once per
+run and read with `cpu_time()`, not paused during a coarse correction); the benchmark
+records that history for both solvers at four problem sizes (41, 81, 161, 321 fine pixels
+per side, each one exact coarse/fine doubling apart as `interpolate.h` requires) and
+reports, for two convergence targets, the CPU time each solver needs to first reach it.
+
+Methodology: 3 repeats per (size, solver), fastest kept; single-threaded
+(`DEAL_II_NUM_THREADS=1` -- deal.II's own thread pool, not OpenMP, parallelizes
+`Vector`/`SparseMatrix` operations above an internal size threshold, which otherwise
+inflates `cpu_time()` non-deterministically by summing time across worker threads: an
+early run without it measured 640% CPU utilization and gave inconsistent numbers). Two
+targets: "90% converged" (energy within 10% of single-level's own 300-iteration energy
+drop -- a scale-independent milestone reached well before either solver's residual
+plateau, §3.5) and "fully converged" (matches single-level's own 300-iteration energy
+outright).
+
+| n_fine | n_dofs  | target | SL it | SL cpu (s) | ML it | ML cpu (s) | ML coarse corr. | speedup (SL/ML) |
+|---|---|---|---|---|---|---|---|---|
+| 41  | 1,681   | 90%  | 9   | 1.21e-3 | 1   | 1.63e-3 | 4 | 0.74 |
+| 41  | 1,681   | full | 161 | 2.07e-2 | 161 | 2.80e-2 | 4 | 0.74 |
+| 81  | 6,561   | 90%  | 9   | 4.89e-3 | 1   | 6.13e-3 | 2 | 0.80 |
+| 81  | 6,561   | full | 161 | 8.27e-2 | 158 | 1.04e-1 | 2 | 0.79 |
+| 161 | 25,921  | 90%  | 9   | 1.97e-2 | 1   | 2.28e-2 | 2 | 0.86 |
+| 161 | 25,921  | full | 161 | 3.34e-1 | 157 | 4.38e-1 | 2 | 0.76 |
+| 321 | 103,041 | 90%  | 9   | 8.18e-2 | 1   | 9.30e-2 | 5 | 0.88 |
+| 321 | 103,041 | full | 161 | 1.40e0  | 161 | 2.54e0  | 5 | 0.55 |
+
+Reading: at every size and both targets, single-level reaches the same energy in *less*
+CPU time than the two-level driver, despite needing between 9x (90% target) and
+effectively the same number (full target -- both solvers plateau around iteration
+~158-161, the residual floor from §3.5) of outer iterations. The one-iteration jump
+recommendation 1 restored is real -- one fine iteration with a correction reaches the 90%
+target that single-level needs 9 iterations for -- but that one iteration is not cheap: it
+runs the coarse solver for up to 10 Armijo iterations on a grid a quarter the size, plus
+two grid transfers, which on this problem costs about as much as the 9-16 fine iterations
+it replaces. At the full-convergence target the picture is worse, not better: both solvers
+still need essentially the same ~160 fine-level steps to grind the residual down to its
+plateau, so the coarse corrections taken along the way (2-5, depending on size) are pure
+overhead once the trigger's μ gate is satisfied and no further correction fires.
+
+This does not contradict recommendation 1 -- restoring the reference's parameters was
+still necessary to make the port behave like the reference algorithmically (§3.2), and the
+iteration-count claim (Fig. 15's motivation) is now reproduced correctly. But it does mean
+the port's two-level driver has not demonstrated a *CPU-time* speedup on any synthetic
+problem size tested here, up to 321x321. Two explanations, not mutually exclusive: (a) the
+fine-level solver is cheap per iteration on this problem (a forward difference and an
+elementwise divide, no linear solve), so there is little slow, expensive work for a coarse
+correction to substitute for -- unlike a linear-solver-based multigrid method, where a
+fine-level smoothing step is the expensive part and a coarse solve is comparatively cheap;
+(b) the coarse solve's own cost (10 fixed iterations, independent of problem size, at a
+quarter the resolution) does not shrink relative to a fine iteration's cost as the problem
+grows, since both scale the same way with resolution here -- consistent with the roughly
+constant ~9-11x cost ratio (90% target) across all four sizes tested. Reaching the paper's
+own 960x1280 image (§3.4) would test this at a size 375x larger than the biggest one here;
+extrapolating the current per-size trend gives no reason to expect the ratio to improve
+from problem size alone.
+
+Reproduction:
+```sh
+ninja -C build main_cc_bench
+DEAL_II_NUM_THREADS=1 ./build/main_cc_bench
+```
