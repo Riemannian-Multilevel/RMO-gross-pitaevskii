@@ -38,11 +38,20 @@ the geometry of the product Bernoulli manifold (Table 9), the pixel-grid discret
 and objective (\S 6.3.1), the grid transfer operators (\S 6.3.2, Table 10), and the
 two-level coarse model.
 
-Every module in Table~\ref{tab:status} is implemented and tested, including a two-level
-driver wiring the coarse model into the framework's generic multilevel solver
-(\texttt{FullApproximationScheme}). It runs correctly and stably, but does not demonstrate
-a clear speedup over the single-level baseline on the synthetic problem it uses -- getting
-one would need per-problem tuning beyond this module's scope; see \S\ref{sec:mlcc-design}.
+Every module in Table~\ref{tab:status} is implemented and tested on the $41\times41$
+synthetic disk this module's drivers use, including a two-level driver wiring the coarse
+model into the framework's generic multilevel solver (\texttt{FullApproximationScheme}); an
+earlier revision of this note reported that the driver did not demonstrate a clear speedup
+over the single-level baseline there. That conclusion was wrong -- it was caused by two
+parameter choices in \texttt{main\_cc\_coarse.cc} (an over-damped coarse line search and a
+missing lockout on consecutive coarse corrections), not by anything structural, and is
+retracted in \S\ref{sec:mlcc-design}; with those two parameters corrected the driver reaches
+in one fine iteration an energy the single-level baseline needs 16 iterations to reach,
+matching the Python reference on the same problem. The port still cannot run the paper's own
+$960\times1280$ experiment (\S6.3): the grid transfer requires \texttt{fine = 2\textperiodcentered
+coarse}$-1$ per dimension and has no operator composition for the paper's two pooling steps,
+no image input, and none of Options 2/3/5 -- that is the module's actual scope gap, tracked as
+future work, not a tuning problem on the synthetic image.
 
 Every non-trivial formula here has been checked two ways: once as an internal consistency
 check (e.g.\ a gradient against a central difference of the matching value), and once
@@ -303,13 +312,17 @@ downcast to the concrete oracle type is needed, unlike GP's coarse oracles.
 \paragraph{\texttt{main\_cc.cc}: single-level driver.} A synthetic image (a bright disk on
 a dark background) with a foreground/background seed patch known to lie inside/outside it
 stands in for a loaded image and its seed regions (cf.\ Fig.~12); $\rho$ is built from it
-exactly as in eq.~(41)/(42), with $(\alpha,\varepsilon)=(0.1,10^{-4})$ matching the paper's
-fine-level parameters (\S 6.3.4). It wires \texttt{FisherRaoOracle} and
-\texttt{BernoulliManifold} directly into the already problem-independent
-\texttt{GradientDescent} solver and \texttt{ConvergenceTableObserver} -- no CC-specific
-solver code was needed. On a $41\times41$ grid it converges in 147 iterations (residual
-$10^{-6}$, energy from $182.7$ to $-112.2$, monotonically), with a reduction rate that
-drifts between $1.08$ and $1.26$ rather than settling at a fixed ratio -- i.e.\ visibly
+exactly as in eq.~(41)/(42), with $\alpha=0.1$ matching the paper's fine-level regularization
+weight (\S 6.3.4) and $\varepsilon=10^{-2}=\sqrt{\varepsilon_{\text{ref}}}$
+(\S\ref{sec:mlcc-design}'s $\varepsilon$-convention paragraph). It wires
+\texttt{FisherRaoOracle} and \texttt{BernoulliManifold} directly into the already
+problem-independent \texttt{GradientDescent} solver and \texttt{ConvergenceTableObserver} --
+no CC-specific solver code was needed. On a $41\times41$ grid it runs all 300 configured
+iterations (the residual plateaus at $1.446\times10^{-5}$ from iteration $\sim\!161$ on and
+never reaches \texttt{tol\_residual}$=10^{-6}$; an earlier revision of this note claimed
+convergence at 147 iterations, which \texttt{REVIEW-continuous-cuts.md} \S3.5 found does not
+match the committed driver's actual output), with energy monotonically from $184.4$ to
+$-110.6$ and a reduction rate that drifts rather than settling at a fixed ratio -- i.e.\ visibly
 sublinear, matching the paper's own observation that RGD is sublinear for this problem
 (\S 6.4).
 
@@ -360,70 +373,89 @@ no-linear-solve design happened not to satisfy:
         while still satisfying the sufficient-decrease condition, since the objective
         genuinely has no lower bound in that direction. This is a property of the
         construction itself (Prop.~3.1's correction term is linear in $\operatorname{logit}$),
-        not a bug to fix in \texttt{oracle\_coarse.h} -- the coarse solver's initial step
-        size is simply damped (\texttt{ls.alpha}$=0.01$) so backtracking gets a chance to
-        engage before a single step can do this.
+        not a bug to fix in \texttt{oracle\_coarse.h}. An earlier revision of this driver
+        damped the coarse solver's initial step size (\texttt{ls.alpha}$=0.01$) to give
+        backtracking a chance to engage before a single step could do this; \S\ref{sec:mlcc-design}
+        below explains why that damping, rather than the run-away it guarded against, was
+        itself the cause of the driver's reported failure to speed up, and why the reference's
+        own approach -- \texttt{ls.alpha}$=1$ with boundary clamping instead of step damping
+        (\texttt{optimizer.py:15,49}, matching this port's own \texttt{MIN\_WEIGHT} clamp in
+        \texttt{metric.h}) -- is used instead.
 \end{itemize}
 
 With those fixed, the driver runs to completion without error: energy decreases
 monotonically, and with the coarse correction disabled (via an unreachably high $\eta$) it
 reproduces \texttt{main\_cc.cc}'s single-level result almost to machine precision, as it
-should. What it does \emph{not} do is demonstrate a speedup over that single-level baseline:
-the ratio $\|R\operatorname{grad}f_h(x)\|/\|\operatorname{grad}f_h(x)\|$ the trigger
-condition (eq.~(16)) compares against $\eta$ ranges from about 2 early in the run to over
-200 later, rather than staying near one scale, so a single constant $\eta$ either triggers a
-correction on virtually every iteration (a low $\eta$, as with the paper's own $\eta=0.6$ for
-this problem -- each correction mildly useful but not free, and slower overall on this
-synthetic image than the single-level baseline) or never triggers at all (any $\eta$ above
-about 2, which just silently disables the coarse model and reproduces the single-level run).
+should.
+
+\paragraph{Retraction: the earlier ``no speedup'' conclusion was wrong, and about the wrong
+component.} An earlier revision of this section argued at length -- from the ratio
+$\|R\operatorname{grad}f_h(x)\|/\|\operatorname{grad}f_h(x)\|$ growing from about 2 early in
+the run to over 200 later -- that Option 1's vector transport ($R=4F_h^H$, a summing rather
+than averaging restriction) was structurally unable to produce a speedup on this problem: its
+DC gain of 4 was said to amplify the gradient's norm once the segmentation's TV term
+concentrates at a sharpening interface, decoupling the trigger condition's two sides. That
+argument is retracted. \texttt{REVIEW-continuous-cuts.md} \S3.2 and \S4.2 (independent audit,
+measurements reproduced by rerunning the committed and modified drivers) trace the ratio's
+growth instead to the fine-level trajectory \emph{stalling}, driven by two parameter choices
+in this file, neither of them the vector transport:
+\begin{itemize}[nosep]
+  \item \texttt{options\_coarse.ls.alpha = 0.01} left the coarse model unminimised (10 steps of
+        exactly $0.01$, backtracking only -- Armijo never got the chance to try a larger step),
+        so the prolonged correction was too small to move $x$ meaningfully.
+  \item \texttt{options\_fas.coarse\_every = 1} meant every fine iteration after the trigger
+        first fired was itself a candidate for another coarse correction, with no intervening
+        fine-level gradient step (violating \S6.4's rule, cf.\ eq.~(17)) -- so a rejected coarse
+        step was followed by another rejected coarse step, forever.
+\end{itemize}
+With \texttt{ls.alpha}$=1$ (matching \texttt{optimizer.py:8}, undamped on every level) and
+\texttt{coarse\_every}$=2$ (matching \texttt{multilevel.py:148}'s lockout), the driver reaches
+$E=-109.62$ after the \emph{first} fine iteration -- \texttt{main\_cc.cc}'s single-level
+baseline needs 16 iterations to reach that energy -- and $E=-112.23$ by iteration 300,
+matching single-level to five digits, with only a handful of rejected line searches rather
+than the 2464 the unfixed driver produced. The Python reference, run on the identical
+synthetic image by \texttt{test/cc/compare\_reference.py} (added alongside this audit), shows
+the same one-iteration jump ($E=-108.55$ under this port's $\varepsilon$ convention). The
+ratio growing to $\sim\!200$ in the original run was measuring a point the algorithm should
+never have stayed at -- the stall's frozen gradient -- not a per-step property of $R$; in the
+fixed run the ratio is $\sim\!10^5$ by iteration 3 and the trigger fires every time it is
+checked, exactly as in the reference (where only the $\mu$ gate, not the trigger itself, stops
+corrections after the first).
+
 A second, unrelated deviation from the reference was tested and ruled out as a contributing
-cause. \texttt{main\_cc\_coarse.cc} originally built its coarse image by injecting the fine
-one and recomputing $\rho$ at coarse resolution; \texttt{problem.py} instead computes $\rho$
-once at the finest resolution and average-pools \emph{that} down to each coarser level (the
-seed patches are applied exactly once). The driver now matches the reference -- $\rho$ is
-coarsened directly, via full-weighting ($F_h^H=\tfrac14\texttt{Tfine}$, this grid's analogue
-of average-pooling, since a coarse pixel here coincides with a fine one rather than sitting
-at a $2{\times}2$ block's center) -- but the outcome is essentially unchanged: final energy
-after 300 iterations is $-94.01$ (was $-93.99$), and $\|\operatorname{grad}f_h\|\approx2.5$
-against $\|R\operatorname{grad}f_h\|\approx548$ at the end, the same $\sim\!220\times$ gap as
-before. So how the coarse data term is built was not the cause of the poor convergence; the
-scale mismatch above is squarely a property of Option 1's vector transport
-($R=4F_h^H$), independent of it.
+cause, independently of the above. \texttt{main\_cc\_coarse.cc} originally built its coarse
+image by injecting the fine one and recomputing $\rho$ at coarse resolution;
+\texttt{problem.py} instead computes $\rho$ once at the finest resolution and average-pools
+\emph{that} down to each coarser level (the seed patches are applied exactly once). The driver
+now matches the reference -- $\rho$ is coarsened directly, via full-weighting
+($F_h^H=\tfrac14\texttt{Tfine}$, this grid's analogue of average-pooling) -- and
+\texttt{REVIEW-continuous-cuts.md} \S3.3 confirms the effect is negligible on this image
+($-106.94$ vs.\ $-106.96$ at the first coarse step, reference-side comparison), so this was
+never the cause either.
 
-\paragraph{Two further causes, found by reading \texttt{operators.py}/\texttt{multilevel.py}
-directly.} First, a genuine gap: the reference's trigger check, \texttt{c\_check}, does not
-compare $\|R\operatorname{grad}f_h\|$ against $\eta\|\operatorname{grad}f_h\|$ directly -- it
-scales the coarse side by a per-approach \texttt{grid\_scale} first
+\paragraph{The \texttt{grid\_scale} factor: real, but a reference-side deviation, not a paper
+requirement.} The reference's trigger check, \texttt{c\_check}, does not compare
+$\|R\operatorname{grad}f_h\|$ against $\eta\|\operatorname{grad}f_h\|$ directly -- it scales
+the coarse side by a per-approach \texttt{grid\_scale} first
 (\texttt{scaled\_norm\_coarse = grid\_scale * norm\_coarse}), and for Option 1 this factor is
-$2^{n_{\text{pools}}}$ ($=2$ for one factor-2 step). \texttt{FullApproximationScheme}'s own
-check (\texttt{fas.h}, \texttt{norm\_coarse >= options\_fas.kappa * norm\_level}) has no such
-factor, so the $\eta=0.6$ used here and the paper's $\eta=0.6$ (Fig.~15) are not actually
-comparable: reproducing the reference's trigger exactly would need an extra
-\texttt{grid\_scale} multiplier on \texttt{norm\_coarse} before the comparison. This gap is now
-fixed, generally rather than just for this one factor (\S\ref{sec:condition-design}), but by
-itself the factor only rescales the comparison by a constant, and cannot explain a ratio that
-itself grows from about 2 to about 220 over the course of the run --- confirmed by running
-\texttt{main\_cc\_coarse.cc} with the \texttt{grid\_scale}$=2$ condition in place: the trigger
-still fires on every iteration and the final energy is unchanged to five digits.
+$2^{n_{\text{pools}}}$ ($=2$ for one factor-2 step, \texttt{operators.py}). Eq.~(16) itself has
+no such factor. \texttt{cc::ScaledCoarseCondition} (\S\ref{sec:condition-design}) implements it
+as an explicit, labelled deviation, applied to \texttt{norm\_coarse} before both halves of
+eq.~(16)'s comparison -- including the $\mu$ gate, which the same review (\S3.3) found the
+port had been applying to the \emph{fine} norm instead of the coarse one as eq.~(16) states;
+both variants give the same final energy on this problem, only the coarse-step count differs
+(3 vs.\ 4).
 
-Second, and more load-bearing: that growth is consistent with $R$'s own character. $R=4F_h^H$
-is a \emph{summing} restriction (its stencil coefficients are all positive and sum to 4 -- the
-same DC-gain-4 stencil as the reference's \texttt{restrict\_adjoint\_bilinear}, verified
-identical coefficient-for-coefficient), not an averaging one; whether it grows or shrinks a
-given gradient's norm depends on how spatially coherent that gradient is. Early in the descent,
-$\operatorname{grad}f_h$ is dominated by the smooth, diffuse pull of the data term $\rho$
-(quadratic difference-of-means, varying gently over the image) -- $R$'s summing barely changes
-its norm, so the ratio sits near the DC-gain-driven value of about 2--4. As the segmentation
-sharpens, the TV term comes to dominate $\operatorname{grad}f_h$ and concentrates into a narrow
-band along the emerging interface, where neighboring fine pixels' gradient values are large and
-of the same sign over several pixels at once (the interface's width, set by the
-$\varepsilon$-smoothing) -- exactly the locally-coherent regime a summing operator amplifies
-rather than attenuates. So the $\sim\!220\times$ gap by the end of the run is not a fixed
-discretization artifact but tracks how ``DC-like'' the fine gradient has become near
-convergence; it compounds with, but is distinct from, the missing \texttt{grid\_scale} factor
-above. (The forward-difference operator's lack of a $1/h$ mesh-spacing normalization was also
-considered and ruled out as a cause: \texttt{objective.py}'s \texttt{get\_isotropic\_tv} has no
-such factor either, so \texttt{ForwardDifference} matches the reference exactly here.)
+\paragraph{$\varepsilon$ convention.} Eq.~(42) squares $\varepsilon$ under the root; the
+reference's \texttt{objective.py} adds its \texttt{eps} argument unsquared. \S6.3.4 states the
+paper's own figures were produced by the reference, so $\varepsilon_{\text{paper}} =
+\sqrt{\varepsilon_{\text{ref}}}$ is the convention used from here on in both drivers:
+$\varepsilon=10^{-2}$ fine (was $10^{-4}$), $\varepsilon\approx3.16\times10^{-2}$ coarse (was
+$10^{-3}$). The previous values were the reference's own numbers passed unsquared into eq.~(42)'s
+squared form, making the smoothing 100$\times$ sharper than anything the reference (and hence
+the paper) ran; \texttt{REVIEW-continuous-cuts.md} \S3.3 measures the effect on the minimum
+($-110.63$ vs.\ $-112.23$) and confirms it changes energies but not the qualitative behaviour
+above.
 
 \paragraph{Replicating the transfer operators outside deal.II.} \texttt{interpolate.h} and
 \texttt{transport.h} were already free of deal.II's FE/mesh machinery -- \texttt{to\_fine\_mesh}
