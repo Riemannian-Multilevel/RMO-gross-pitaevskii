@@ -40,7 +40,9 @@ public:
     // oracles with inner solvers use it for the tolerance, others ignore it
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;
 
-    //! Metric of the Riemannian gradient
+    //! Metric of the Riemannian gradient. A metric that depends on the base point (unlike a fixed mass matrix) must
+    //! read it from the underlying model or functional instead of caching it: FullApproximationScheme creates more
+    //! than one oracle on the same model, and update() on one of them must be visible to the others.
     [[nodiscard]] virtual const MetricBase& metric() const = 0;
 
     [[nodiscard]] virtual unsigned n_dofs() const = 0;
