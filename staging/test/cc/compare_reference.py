@@ -22,7 +22,13 @@ Parameter conventions (see --help):
                     therefore what the paper's Figures 13-15 were produced with.
   --eps-mode paper  eps is squared before being handed to the reference, so the
                     TV term is sqrt(g^2 + eps^2) as in eq. (42) -- the convention
-                    the C++ port implements.
+                    the C++ port implements (main_cc.cc / main_cc_coarse.cc now
+                    pass sqrt(eps_ref) so the two conventions agree numerically;
+                    see REVIEW-continuous-cuts.md \\S3.3).
+
+This script and derive_golden_values.py are the two differential tests against
+the Python reference (algorithm trajectory here; primitives there) -- run both
+whenever cc/ or the reference implementation changes.
 """
 import argparse
 import math
