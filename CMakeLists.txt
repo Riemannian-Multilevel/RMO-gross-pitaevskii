@@ -98,10 +98,19 @@ add_rmo_executable(test_matrix_free SRC_DIR test/gpe LINK_LIBS Boost::program_op
 
 add_rmo_executable(test_operator SRC_DIR test/fe)
 
+add_rmo_executable(test_interpolate SRC_DIR test/cc)
+add_rmo_executable(test_manifold SRC_DIR test/cc)
+add_rmo_executable(test_oracle SRC_DIR test/cc)
+add_rmo_executable(test_oracle_coarse SRC_DIR test/cc)
+
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
 set_tests_properties(arpack PROPERTIES SKIP_RETURN_CODE 77)
 
+add_test(NAME cc_interpolate COMMAND test_interpolate)
+add_test(NAME cc_manifold COMMAND test_manifold)
+add_test(NAME cc_oracle COMMAND test_oracle)
+add_test(NAME cc_oracle_coarse COMMAND test_oracle_coarse)
 add_test(NAME coherence COMMAND test_coherence)
 add_test(descent test_descent COMMAND test_descent)
 add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
