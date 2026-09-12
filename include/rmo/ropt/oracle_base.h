@@ -32,6 +32,11 @@ public:
 
     // TODO: move this to a separate interface?
     //       (-> class Metric - arguments may differ from evaluation point)
+    // Take no base point of their own, so an implementation whose metric depends on one
+    // (unlike e.g. a fixed mass matrix) must read it from the underlying model/functional
+    // rather than caching it privately: FullApproximationScheme constructs more than one
+    // oracle instance over the same model (see CoarseOracleBase's T_fine/T_level), and
+    // update() on one must be visible to the others.
     [[nodiscard]] virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
     [[nodiscard]] virtual double inner(const Vector<double>&, const Vector<double>&) const = 0;
 
