@@ -30,6 +30,10 @@ BOOST_DESCRIBE_ENUM(BoundaryCondition, NEUMANN, DIRICHLET);
 BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
+// FISHER_RAO is intentionally left out here: it is not yet handled by any
+// --metric/--metric-cond consumer (main_coarse.cc is GP-specific), so parsing
+// it from the CLI would only reach an abort()/exception downstream. Add it
+// once main_cc.cc exists and wires up a handler.
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE)
 
 
