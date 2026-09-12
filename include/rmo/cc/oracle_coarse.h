@@ -9,7 +9,8 @@
 #include <rmo/cc/metric.h>
 #include <rmo/cc/oracle.h>
 
-#include <rmo/ropt/oracle_coarse_base.h>
+#include <rmo/ropt/oracle_coarse.h>
+#include <rmo/ropt/residual.h>
 
 namespace rmo::cc
 {
@@ -83,7 +84,7 @@ public:
     ContinuousCutsCoarseOracle(CoarseOracleBase& model, SolverOptions = {})
         : m_model(model)
     {
-        AssertThrow(model.coarse().get_metric() == metric_t,
+        AssertThrow(model.metric().kind() == metric_t,
             dealii::ExcInternalError("Fisher-Rao metric expected"));
     }
 
@@ -115,7 +116,7 @@ public:
 
         // Undo diag(z(1-z)) to recover the ambient gradient of E_H at z.
         Vector<double> ambient(z.size());
-        T_coarse.apply_metric(riemannian, ambient);
+        T_coarse.metric().apply(ambient, riemannian);
 
         detail::coarse_grad(ambient, z, m_model.get_state().w, output);
         return info;
@@ -127,31 +128,39 @@ public:
         return gradient(z, output);
     }
 
-    [[nodiscard]] double residual(const Vector<double>& z) const override
-    {
-        Vector<double> g(z.size());
-        gradient(z, g);
-
-        return metric::fisher_rao::norm(g, z);
-    }
-
-    [[nodiscard]] double norm(const Vector<double>& v) const override { return m_model.norm(v); }
-
-    [[nodiscard]] double inner(const Vector<double>& u, const Vector<double>& v) const override
-    {
-        return m_model.metric(u, v);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        m_model.apply_metric(src, dst);
-    }
-
-    [[nodiscard]] MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_model.metric(); }
     [[nodiscard]] unsigned n_dofs() const override { return m_model.coarse().n_dofs(); }
 
 private:
     CoarseOracleBase& m_model;
+};
+
+
+/** @brief Stationarity measure of the coarse model, @f$ \|\operatorname{grad} q_k(z)\|_z @f$. */
+class ContinuousCutsCoarseResidual : public ResidualBase
+{
+public:
+    // model: coarse model, providing the correction w_k
+    // func:  functional of the coarse level, assumed to be updated at z
+    ContinuousCutsCoarseResidual(const CoarseOracleBase& model, const ContinuousCutsFunctional& func)
+        : m_model(model)
+        , m_func(func)
+    {}
+
+    [[nodiscard]] double residual(const Vector<double>& z) const override
+    {
+        Vector<double> ambient(z.size()), g(z.size());
+        m_func.gradient(z, ambient);
+        detail::coarse_grad(ambient, z, m_model.get_state().w, g);
+
+        return metric::fisher_rao::norm(g, z);
+    }
+
+    [[nodiscard]] unsigned n_dofs() const override { return m_func.n_dofs(); }
+
+private:
+    const CoarseOracleBase& m_model;
+    const ContinuousCutsFunctional& m_func;
 };
 
 } // namespace rmo::cc

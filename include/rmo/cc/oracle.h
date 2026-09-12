@@ -8,7 +8,9 @@
 #include <rmo/cc/cc.h>
 #include <rmo/cc/metric.h>
 
-#include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/metric.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/residual.h>
 
 #include <deal.II/base/timer.h>
 
@@ -33,7 +35,7 @@ inline void grad_fisher_rao(const Vector<double>& ambient_grad, const Vector<dou
 
 
 /** @brief Stationarity measure @f$ \|\operatorname{grad} E_\varepsilon^{CC}(\phi)\|_\phi @f$, used as the residual. */
-class ContinuousCutsResidual
+class ContinuousCutsResidual : public ResidualBase
 {
 public:
     explicit ContinuousCutsResidual(const ContinuousCutsFunctional& func)
@@ -41,7 +43,7 @@ public:
     {}
 
     // Assumes m_func.update(phi) has already been called.
-    [[nodiscard]] double residual(const Vector<double>& phi) const
+    [[nodiscard]] double residual(const Vector<double>& phi) const override
     {
         Vector<double> ambient(phi.size());
         m_func.gradient(phi, ambient);
@@ -51,6 +53,42 @@ public:
 
         return metric::fisher_rao::norm(riemannian, phi);
     }
+
+    [[nodiscard]] unsigned n_dofs() const override { return m_func.n_dofs(); }
+
+private:
+    const ContinuousCutsFunctional& m_func;
+};
+
+
+/**
+ * @brief Fisher-Rao metric at the point of the last update of @p func,
+ * @f$ G = \operatorname{diag}(1 / (\phi(1-\phi))) @f$.
+ */
+class FisherRaoMetric : public MetricBase
+{
+public:
+    explicit FisherRaoMetric(const ContinuousCutsFunctional& func)
+        : m_func(func)
+    {}
+
+    [[nodiscard]] double inner(const Vector<double>& u, const Vector<double>& v) const override
+    {
+        return metric::fisher_rao::inner(u, v, m_func.get_phi());
+    }
+
+    void apply(Vector<double>& dst, const Vector<double>& src) const override
+    {
+        const Vector<double>& phi = m_func.get_phi();
+        AssertDimension(src.size(), phi.size());
+        dst.reinit(src.size());
+
+        for (unsigned int i = 0; i < src.size(); i++) {
+            dst[i] = src[i] / metric::fisher_rao::weight(phi[i]);
+        }
+    }
+
+    [[nodiscard]] MetricKind kind() const override { return MetricKind::FISHER_RAO; }
 
 private:
     const ContinuousCutsFunctional& m_func;
@@ -68,7 +106,7 @@ public:
     // FisherRaoOracle satisfies TiltOracle<FisherRaoOracle, ContinuousCutsFunctional> for
     // FullApproximationScheme, matching rmo::gpe::FrobeniusOracle's constructor.
     FisherRaoOracle(ContinuousCutsFunctional& func, SolverOptions = {})
-        : m_func(func), m_res(func)
+        : m_func(func), m_res(func), m_metric(func)
     {}
 
     void update(const Vector<double>& phi) override
@@ -107,38 +145,16 @@ public:
         return gradient(phi, output);
     }
 
-    [[nodiscard]] double residual(const Vector<double>& phi) const override
-    {
-        return m_res.residual(phi);
-    }
-
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return metric::fisher_rao::norm(v, m_func.get_phi());
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& u, const Vector<double>& v) const override
-    {
-        return metric::fisher_rao::inner(u, v, m_func.get_phi());
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        const Vector<double>& phi = m_func.get_phi();
-        AssertDimension(src.size(), phi.size());
-        dst.reinit(src.size());
-
-        for (unsigned int i = 0; i < src.size(); i++) {
-            dst[i] = src[i] / metric::fisher_rao::weight(phi[i]);
-        }
-    }
-
-    [[nodiscard]] MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
     [[nodiscard]] unsigned n_dofs() const override { return m_func.n_dofs(); }
+
+    //! Residual of the problem, for the solvers
+    const ContinuousCutsResidual& get_residual() const { return m_res; }
 
 private:
     ContinuousCutsFunctional& m_func;
-    ContinuousCutsResidual m_res;
+    const ContinuousCutsResidual m_res;
+    const FisherRaoMetric m_metric;
 };
 
 } // namespace rmo::cc
