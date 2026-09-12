@@ -14,18 +14,37 @@ Usage:
     python3 derive_golden_values.py /path/to/RMO-continuous-cuts
 
 bernoulli_multilevel's package __init__.py unconditionally imports .problem,
-which needs scikit-image; if it is not installed, this script still works
-because none of the functions used below need it -- only import the
-submodules used here would be needed, but bernoulli_multilevel does not
-support that without the package import succeeding first.
+which needs scikit-image (reproduced: ModuleNotFoundError: No module named
+'skimage' without it, contrary to what this docstring used to claim). None of
+the functions used below actually need scikit-image, so a stub module is
+installed for it before the import, the same workaround
+test/cc/compare_reference.py uses.
 """
 import sys
+import types
 
 import torch
 
 
+def install_skimage_stub():
+    if "skimage" in sys.modules:
+        return
+    try:
+        import skimage  # noqa: F401
+        return
+    except ImportError:
+        pass
+    stub = types.ModuleType("skimage")
+    for name in ("color", "filters", "io", "transform"):
+        sub = types.ModuleType(f"skimage.{name}")
+        setattr(stub, name, sub)
+        sys.modules[f"skimage.{name}"] = sub
+    sys.modules["skimage"] = stub
+
+
 def main(src_dir: str) -> None:
     sys.path.insert(0, src_dir)
+    install_skimage_stub()
 
     from bernoulli_multilevel.manifold import exp, lifting
     from bernoulli_multilevel.objective import create_cc_objective
