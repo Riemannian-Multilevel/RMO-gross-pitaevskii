@@ -41,12 +41,18 @@ file(GLOB_RECURSE HEADER_ALL "include/*.h")
 function(add_rmo_executable TARGET_NAME)
     # Parse the arguments
     set(options "")
-    set(oneValueArgs "")
+    set(oneValueArgs SRC_DIR)
     set(multiValueArgs LINK_LIBS EXTRA_SOURCES)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
+    # Executables (main*) live under src/ by default; tests pass SRC_DIR to
+    # point at their test/<subdir> location instead (see below).
+    if(NOT ARG_SRC_DIR)
+        set(ARG_SRC_DIR "src")
+    endif()
+
     # Construct the path to the source file
-    set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${TARGET_NAME}.cc")
+    set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/${ARG_SRC_DIR}/${TARGET_NAME}.cc")
 
     if(NOT EXISTS "${SRC_FILE}")
         message(FATAL_ERROR "Cannot create target '${TARGET_NAME}': Source file ${SRC_FILE} not found.")
@@ -82,11 +88,12 @@ add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 # --- Create targets for tests
 enable_testing()
 
-add_rmo_executable(test_arpack LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_descent LINK_LIBS fmt::fmt)
-add_rmo_executable(test_gradient LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_matrix_free LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_operator)
+add_rmo_executable(test_arpack SRC_DIR test/gpe LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_descent SRC_DIR test/gpe LINK_LIBS fmt::fmt)
+add_rmo_executable(test_gradient SRC_DIR test/gpe LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_matrix_free SRC_DIR test/gpe LINK_LIBS Boost::program_options fmt::fmt)
+
+add_rmo_executable(test_operator SRC_DIR test/fe)
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)

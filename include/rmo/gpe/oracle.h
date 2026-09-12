@@ -69,7 +69,6 @@ void grad_mass(const InverseMatrixType& Minv, const MatrixType& A, const MatrixT
     Minv.vmult(output, Ax);
 }
 
-
 /**
  * @brief Computes the Riemannian gradient in the F-metric.
  * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
@@ -102,17 +101,15 @@ class GrossPitaevskiiResidual
 public:
     explicit GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
         : m_func(m_func)
-          , m_norm(m_func.get_M())
-    {
-    }
+        , m_norm(m_func.get_M())
+    {}
 
     GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func, OperatorType op)
         : m_func(m_func)
-          , m_norm(op)
-    {
-    }
+        , m_norm(op)
+    {}
 
-    Vector<double> residual_vector(const Vector<double>& x) const
+    [[nodiscard]] Vector<double> residual_vector(const Vector<double>& x) const
     {
         Vector<double> Mx(x.size());
         m_func.get_M().vmult(Mx, x);

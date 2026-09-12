@@ -7,8 +7,7 @@
 
 #include <rmo/lac.h>
 #include <rmo/gpe/gpe.h>
-#include <rmo/ropt/manifold.h>
-#include <rmo/ropt/transport.h>
+#include <rmo/gpe/oracle.h>
 
 #include <deal.II/base/timer.h>
 
