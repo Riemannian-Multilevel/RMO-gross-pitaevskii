@@ -60,7 +60,8 @@ enum class MetricKind
     NONE,   // Galerkin condition not fulfilled
     FROBENIUS,
     MASS,
-    ENERGY_ADAPTIVE
+    ENERGY_ADAPTIVE,
+    FISHER_RAO
 };
 
 // ----- Option structures
