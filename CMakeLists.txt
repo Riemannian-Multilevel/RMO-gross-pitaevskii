@@ -89,6 +89,7 @@ add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 enable_testing()
 
 add_rmo_executable(test_arpack SRC_DIR test/gpe LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_coherence SRC_DIR test/gpe)
 add_rmo_executable(test_descent SRC_DIR test/gpe LINK_LIBS fmt::fmt)
 add_rmo_executable(test_gradient SRC_DIR test/gpe LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(test_matrix_free SRC_DIR test/gpe LINK_LIBS Boost::program_options fmt::fmt)
@@ -99,6 +100,7 @@ add_rmo_executable(test_operator SRC_DIR test/fe)
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
 set_tests_properties(arpack PROPERTIES SKIP_RETURN_CODE 77)
 
+add_test(NAME coherence COMMAND test_coherence)
 add_test(descent test_descent COMMAND test_descent)
 add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
          --boundary dirichlet --order cuthill_mckee)
