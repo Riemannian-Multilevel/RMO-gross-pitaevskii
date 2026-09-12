@@ -334,9 +334,11 @@ python3 test/cc/compare_reference.py ../RMO-continuous-cuts --every 1 --iters 12
 
 Recommendation 1's fix (§3.2) restores the reference's *iteration-count* behaviour: one
 fine iteration with a coarse correction reaches an energy single-level needs 16 iterations
-for. That is a claim about iterations, not CPU time -- a coarse correction also runs 10
-coarse-level Armijo iterations on a quarter-size grid plus two grid transfers, which is not
-free. `src/main_cc_bench.cc` (new) measures CPU time directly: both drivers already report
+for. That is a claim about iterations, not CPU time -- a coarse correction also runs up to
+`options_coarse.max_iter` coarse-level Armijo iterations on a quarter-size grid plus two
+grid transfers, which is not free (the paper/reference value is 10 per call, Sec. 6.3.4;
+`main_cc_coarse.cc` now uses 5, see §7.1). `src/main_cc_bench.cc` (new) measures CPU time
+directly: both drivers already report
 cumulative CPU time per iterate (`CycleInfo::elapsed`, a `dealii::Timer` restarted once per
 run and read with `cpu_time()`, not paused during a coarse correction); the benchmark
 records that history for both solvers at four problem sizes (41, 81, 161, 321 fine pixels
@@ -353,16 +355,19 @@ drop -- a scale-independent milestone reached well before either solver's residu
 plateau, §3.5) and "fully converged" (matches single-level's own 300-iteration energy
 outright).
 
+Numbers below are with `options_coarse.max_iter = 5` (§7.1); the original run used the
+paper/reference's 10 and is kept there for comparison.
+
 | n_fine | n_dofs  | target | SL it | SL cpu (s) | ML it | ML cpu (s) | ML coarse corr. | speedup (SL/ML) |
 |---|---|---|---|---|---|---|---|---|
-| 41  | 1,681   | 90%  | 9   | 1.21e-3 | 1   | 1.63e-3 | 4 | 0.74 |
-| 41  | 1,681   | full | 161 | 2.07e-2 | 161 | 2.80e-2 | 4 | 0.74 |
-| 81  | 6,561   | 90%  | 9   | 4.89e-3 | 1   | 6.13e-3 | 2 | 0.80 |
-| 81  | 6,561   | full | 161 | 8.27e-2 | 158 | 1.04e-1 | 2 | 0.79 |
-| 161 | 25,921  | 90%  | 9   | 1.97e-2 | 1   | 2.28e-2 | 2 | 0.86 |
-| 161 | 25,921  | full | 161 | 3.34e-1 | 157 | 4.38e-1 | 2 | 0.76 |
-| 321 | 103,041 | 90%  | 9   | 8.18e-2 | 1   | 9.30e-2 | 5 | 0.88 |
-| 321 | 103,041 | full | 161 | 1.40e0  | 161 | 2.54e0  | 5 | 0.55 |
+| 41  | 1,681   | 90%  | 9   | 1.29e-3 | 1   | 1.70e-3 | 4 | 0.76 |
+| 41  | 1,681   | full | 161 | 2.19e-2 | 161 | 2.73e-2 | 4 | 0.80 |
+| 81  | 6,561   | 90%  | 9   | 4.80e-3 | 1   | 6.18e-3 | 2 | 0.78 |
+| 81  | 6,561   | full | 161 | 8.13e-2 | 158 | 1.07e-1 | 2 | 0.76 |
+| 161 | 25,921  | 90%  | 9   | 1.98e-2 | 1   | 2.38e-2 | 2 | 0.83 |
+| 161 | 25,921  | full | 161 | 3.35e-1 | 157 | 4.38e-1 | 2 | 0.76 |
+| 321 | 103,041 | 90%  | 9   | 8.51e-2 | 1   | 9.11e-2 | 5 | 0.93 |
+| 321 | 103,041 | full | 161 | 1.42e0  | 161 | 2.26e0  | 5 | 0.63 |
 
 Reading: at every size and both targets, single-level reaches the same energy in *less*
 CPU time than the two-level driver, despite needing between 9x (90% target) and
@@ -370,12 +375,13 @@ effectively the same number (full target -- both solvers plateau around iteratio
 ~158-161, the residual floor from §3.5) of outer iterations. The one-iteration jump
 recommendation 1 restored is real -- one fine iteration with a correction reaches the 90%
 target that single-level needs 9 iterations for -- but that one iteration is not cheap: it
-runs the coarse solver for up to 10 Armijo iterations on a grid a quarter the size, plus
-two grid transfers, which on this problem costs about as much as the 9-16 fine iterations
-it replaces. At the full-convergence target the picture is worse, not better: both solvers
-still need essentially the same ~160 fine-level steps to grind the residual down to its
-plateau, so the coarse corrections taken along the way (2-5, depending on size) are pure
-overhead once the trigger's μ gate is satisfied and no further correction fires.
+runs the coarse solver for up to `options_coarse.max_iter` Armijo iterations on a grid a
+quarter the size, plus two grid transfers, which on this problem costs about as much as the
+9-16 fine iterations it replaces. At the full-convergence target the picture is worse, not
+better: both solvers still need essentially the same ~160 fine-level steps to grind the
+residual down to its plateau, so the coarse corrections taken along the way (2-5, depending
+on size) are pure overhead once the trigger's μ gate is satisfied and no further correction
+fires.
 
 This does not contradict recommendation 1 -- restoring the reference's parameters was
 still necessary to make the port behave like the reference algorithmically (§3.2), and the
@@ -386,13 +392,43 @@ fine-level solver is cheap per iteration on this problem (a forward difference a
 elementwise divide, no linear solve), so there is little slow, expensive work for a coarse
 correction to substitute for -- unlike a linear-solver-based multigrid method, where a
 fine-level smoothing step is the expensive part and a coarse solve is comparatively cheap;
-(b) the coarse solve's own cost (10 fixed iterations, independent of problem size, at a
+(b) the coarse solve's own cost (fixed iterations, independent of problem size, at a
 quarter the resolution) does not shrink relative to a fine iteration's cost as the problem
 grows, since both scale the same way with resolution here -- consistent with the roughly
-constant ~9-11x cost ratio (90% target) across all four sizes tested. Reaching the paper's
-own 960x1280 image (§3.4) would test this at a size 375x larger than the biggest one here;
-extrapolating the current per-size trend gives no reason to expect the ratio to improve
-from problem size alone.
+constant cost ratio (90% target) across all four sizes tested, both at 10 and at 5 coarse
+iterations (§7.1). Reaching the paper's own 960x1280 image (§3.4) would test this at a size
+375x larger than the biggest one here; extrapolating the current per-size trend gives no
+reason to expect the ratio to improve from problem size alone.
+
+### 7.1 Halving the coarse iteration budget (10 -> 5)
+
+Since the coarse solve's fixed iteration count was one of the two suspected causes of the
+CPU-time gap above, `main_cc_coarse.cc` and `main_cc_bench.cc` were changed from the
+paper/reference's `options_coarse.max_iter = 10` to `5`, to see whether that closes it.
+
+| n_fine | target | speedup at max_iter=10 | speedup at max_iter=5 |
+|---|---|---|---|
+| 41  | 90%  | 0.74 | 0.76 |
+| 41  | full | 0.74 | 0.80 |
+| 81  | 90%  | 0.80 | 0.78 |
+| 81  | full | 0.79 | 0.76 |
+| 161 | 90%  | 0.86 | 0.83 |
+| 161 | full | 0.76 | 0.76 |
+| 321 | 90%  | 0.88 | 0.93 |
+| 321 | full | 0.55 | 0.63 |
+
+It does not: halving the coarse budget moves each ratio by a few points in either
+direction, well within the noise of the two other confounds it shares with iteration count
+-- the per-correction overhead outside the coarse Armijo loop itself (grid transfers,
+coarse gradient/oracle setup) and the fact that final energy and coarse-correction count
+are unchanged (the coarse solves were already converging, or hitting the mu-gated cutoff,
+well inside 5 iterations on this problem; the extra 5 iterations at `max_iter=10` were
+mostly wasted, not what was making the correction expensive). The dominant cost is the
+per-correction fixed overhead and the fine level's own cheapness (reading (a) above), not
+the coarse iteration count -- so reducing it further is unlikely to close the gap either;
+it would need either a cheaper coarse iteration (impossible while the coarse problem's
+per-DOF cost matches the fine level's) or a fine-level problem expensive enough that 9-16
+of its iterations cost more than one coarse correction, which this synthetic disk is not.
 
 Reproduction:
 ```sh

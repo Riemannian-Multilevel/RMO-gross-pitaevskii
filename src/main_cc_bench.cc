@@ -138,7 +138,7 @@ std::vector<CycleInfo> run_multilevel(unsigned n_fine, unsigned max_iter)
     options_fine.ls           = {50, 1.0, 0.5, 1e-4, 1e-12};
 
     DescentOptions options_coarse = options_fine;
-    options_coarse.max_iter  = 10;
+    options_coarse.max_iter  = 5;   // matches main_cc_coarse.cc; see its comment
     options_coarse.ls.alpha  = 1.0;
 
     options_descent_mg[min_level] = options_coarse;

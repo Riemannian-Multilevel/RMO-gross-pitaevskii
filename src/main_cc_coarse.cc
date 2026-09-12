@@ -109,7 +109,13 @@ int main()
     options_fine.ls           = {50, 1.0, 0.5, 1e-4, 1e-12};
 
     DescentOptions options_coarse = options_fine;
-    options_coarse.max_iter  = 10;   // paper: coarse-level solver runs for 10 iterations per call
+    options_coarse.max_iter  = 5;    // paper/reference: 10 iterations per call (Sec. 6.3.4); halved
+                                      // here since the CPU-time benchmark (main_cc_bench.cc,
+                                      // REVIEW-continuous-cuts.md \S7) found the fixed 10-iteration
+                                      // coarse solve costs about as much as the fine iterations it
+                                      // replaces on this problem, wiping out the iteration-count
+                                      // speedup once priced in CPU time -- see \S7 for whether 5
+                                      // iterations changes that.
     options_coarse.ls.alpha  = 1.0;  // reference (optimizer.py:8): Armijo starts at alpha=1 on
                                       // every level and never damps. The coarse model q_k is
                                       // indeed unbounded below as z -> boundary (its correction
