@@ -31,6 +31,7 @@
 // transport (R = 4F_h^H), independent of how the coarse data term is built.
 //
 #include <rmo/cc/cc.h>
+#include <rmo/cc/condition.h>
 #include <rmo/cc/grid.h>
 #include <rmo/cc/interpolate.h>
 #include <rmo/cc/manifold.h>
@@ -116,9 +117,16 @@ int main()
     options_fas.coarse_every           = 1;
     options_fas.coarse_energy_adaptive = false;  // GP-specific, unused here
 
+    // grid_scale = 2 reproduces the reference's own compensation for one factor-2 step under
+    // Option 1/4's R = 4F_h^H (operators.py, get_grid_scale("Option 1", n_pools=1)); the
+    // trigger condition is otherwise the framework's default (see doc/plan_continuous_cuts.tex).
+    dealii::MGLevelObject<std::shared_ptr<CoarseConditionBase>> condition_mg(min_level, max_level);
+    condition_mg[max_level] = std::make_shared<ScaledCoarseCondition>(2.0);
+
     FullApproximationScheme<ContinuousCutsFunctional> fas_solver(
         manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg,
-        level_indices, options_descent_mg, options_solver_mg, options_fas);
+        level_indices, options_descent_mg, options_solver_mg, options_fas,
+        std::nullopt, condition_mg);
 
     ConvergenceTableObserver observer(min_level, max_level);
     fas_solver.set_observer(observer);
