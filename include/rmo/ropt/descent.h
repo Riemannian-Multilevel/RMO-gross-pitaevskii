@@ -87,11 +87,19 @@ double armijo_line_search(OracleType& oracle,
             x = x_trial;    // step accepted, write x
             return alpha;
         }
-        if (alpha < options.ls.min) {
-            x = x_trial;    // step accepted, write x
-            return options.ls.min;
-        }
         oracle.update(x);   // step discarded, restore original state
+
+        if (alpha < options.ls.min) {
+            // Backtracking has shrunk alpha below the configured floor without ever
+            // satisfying the sufficient-decrease condition -- there is no step to
+            // report. Previously this branch accepted x_trial anyway and returned
+            // options.ls.min as if a (nonexistent) floor step had succeeded, which
+            // made "Step rejected by line search" (solver.h) a lie: x had in fact
+            // been overwritten with a step that failed Armijo. Report failure the
+            // same way as hitting max_iter below, so callers can rely on a 0 return
+            // meaning x is unchanged.
+            return 0.0;
+        }
 
         // Backtrack
         alpha *= options.ls.beta;
