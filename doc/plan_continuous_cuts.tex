@@ -47,11 +47,20 @@ parameter choices in \texttt{main\_cc\_coarse.cc} (an over-damped coarse line se
 missing lockout on consecutive coarse corrections), not by anything structural, and is
 retracted in \S\ref{sec:mlcc-design}; with those two parameters corrected the driver reaches
 in one fine iteration an energy the single-level baseline needs 16 iterations to reach,
-matching the Python reference on the same problem. The port still cannot run the paper's own
-$960\times1280$ experiment (\S6.3): the grid transfer requires \texttt{fine = 2\textperiodcentered
-coarse}$-1$ per dimension and has no operator composition for the paper's two pooling steps,
-no image input, and none of Options 2/3/5 -- that is the module's actual scope gap, tracked as
-future work, not a tuning problem on the synthetic image.
+matching the Python reference on the same problem. The port can now also run the paper's
+own $960\times1280\to240\times320$ cow-image problem (\S6.3): \texttt{BernoulliGridTransfer}
+was generalized to even fine sizes and a new \texttt{ComposedGridTransfer}/
+\texttt{ComposedVectorTransport} pair composes the two factor-2 average-pool steps the
+paper's coarse level spans, with the actual JPEG decode/resize/blur delegated to a
+preprocessing script (\texttt{test/cc/prepare\_cow\_data.py}) that reuses the reference's own
+skimage-based pipeline rather than reimplementing it. \texttt{main\_cc\_cow.cc} matches the
+reference to 6 digits at the checked iterations and shows a genuine $3.16\times$ CPU-time
+speedup to 90\% convergence -- the first problem size in this document where the two-level
+driver is actually faster -- alongside a $3\times$ CPU-time \emph{loss} by 300 iterations,
+caused by the coarse-correction trigger firing on 145 of 150 eligible iterations at this
+scale (see \texttt{REVIEW-continuous-cuts.md} \S8 for the full account, including why this is
+the same ratio the retracted paragraph above blamed for the synthetic disk's stall, now
+real rather than an artifact). Options 2/3/5 and a 3+ level hierarchy remain out of scope.
 
 Every non-trivial formula here has been checked two ways: once as an internal consistency
 check (e.g.\ a gradient against a central difference of the matching value), and once

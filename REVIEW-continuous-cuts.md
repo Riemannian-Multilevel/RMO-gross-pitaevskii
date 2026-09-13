@@ -435,3 +435,93 @@ Reproduction:
 ninja -C build main_cc_bench
 DEAL_II_NUM_THREADS=1 ./build/main_cc_bench
 ```
+
+## 8. The paper's own cow-image problem (addendum, 2026-09-13, recommendation 6)
+
+§3.4 found the port could not run the paper's actual 960x1280 -> 240x320 problem at all:
+`BernoulliGridTransfer` required `fine = 2*coarse-1` (one exact mesh-refinement step), while
+the reference's own transfer needs two composed factor-2 average-pool steps on an
+even-sized grid (`fine = 2*coarse`, no shared boundary point). That gap is closed:
+
+- `BernoulliGridTransfer` generalized to `coarse = ceil(fine/2)` for either parity of
+  `fine`, matching the reference's own `r_injection` (`phi[::2,::2]`) exactly; the
+  even-size boundary case (a "+1" neighbor one past the coarse grid's last row/column)
+  drops that term rather than renormalizing, matching the reference's zero-padded
+  `conv2d`. Verified against `primitives.py` on a 2x2 coarse / 4x4 fine grid.
+- `ComposedGridTransfer` / `ComposedVectorTransport` (new) chain two single-hop transfers
+  through an internal 480x640 grid that is never exposed to `FullApproximationScheme` --
+  matching the reference's `operators.make_composed_ops`, including that `P_inj_bil`'s
+  metric weighting is applied at *each* intermediate grid, not just the two endpoints
+  (`R_inj_bil` ignores its `phi`/`psi` arguments entirely, so composing it is just chained
+  `Tfine`). Verified against `make_composed_ops(r_inj_bil, R_inj_bil, P_inj_bil, 2)` on an
+  8x8 -> 4x4 -> 2x2 grid, including a case where several fine points get exactly zero from
+  the composed boundary truncation.
+- `test/cc/prepare_cow_data.py` (new) replicates `problem.py`'s preprocessing (grayscale,
+  2x bilinear enlarge, Gaussian blur sigma=1, foreground/background seed-rectangle means,
+  two composed average-pool steps for the coarse level) using skimage directly, checked
+  against the reference's actual `avg_pool2d` call on the real image (max abs diff 1.2e-7,
+  float32-pooling rounding). The C++ side has no JPEG decoder, resizer, or blur of its own;
+  those stay delegated to skimage (the code path the paper's own figures were produced
+  with) rather than risking a fresh reimplementation silently diverging from it -- what
+  runs in C++ is the actual optimization under test, on real data (`src/main_cc_cow.cc`,
+  new, loading the two precomputed rasters via `cc::load_raster`, new in `cc/rawio.h`).
+
+### 8.1 Correctness: matches the reference to 6 digits at the checked iterations
+
+`src/main_cc_cow.cc`'s single-level run on the real 960x1280 rho matches
+`bernoulli_multilevel.single_level.solve_single_level` on the identical array at every
+checked iteration (`alpha=0.1`, eps unsquared/squared conventions equated as in \S3.3):
+
+| it | 1 | 2 | 3 | 5 | 10 | 20 |
+|---|---|---|---|---|---|---|
+| reference | 37965.978081 | 20493.208684 | 5555.309023 | -14429.485188 | -37795.208389 | -52970.249212 |
+| this port | 37966 | 20493.2 | 5555.31 | -14429.5 | -37795.2 | -52970.2 |
+
+`E0 = 56983.4` also matches `create_cc_objective`'s value on the same array exactly. This
+is the first time this port's fine-level code has been checked against the reference at
+the paper's actual resolution rather than the 41x41 synthetic disk; it passes.
+
+### 8.2 CPU time: a real early speedup, and a real late-stage loss
+
+Same methodology as §7 (best CPU time, single-threaded, `DEAL_II_NUM_THREADS=1`), one
+problem (this one), 300 fine iterations, coarse solver `max_iter=5` (§7.1), `coarse_every=2`,
+`grid_scale=4` (`2^n_pools`, `n_pools=2` -- not the synthetic disk's 2):
+
+| target | SL it | SL cpu (s) | ML it | ML cpu (s) | speedup (SL/ML) |
+|---|---|---|---|---|---|
+| 90% converged | 19 | 2.39 | 1 | 0.76 | **3.16** |
+| fully converged (=SL(300), E=-63143) | 300 | 45.9 | 300 | 145.6 | 0.32 |
+
+(SL final E = -63143; ML final E = -63119, 145 of 150 eligible iterations triggered a
+coarse correction.) This is the first target, on any problem size tried in this review,
+where the two-level driver is actually faster: reaching 90% of the total energy drop takes
+a third of the CPU time single-level needs, matching the paper's own headline claim (Fig.
+13's early, large jump). It is also the first case where the *late*-run picture is a clean
+loss rather than a wash: by 300 iterations the two-level driver has spent over 3x the
+CPU time of single-level and reached a *worse* final energy.
+
+The cause is visible in the trigger norms themselves (first 20 fine iterations, printed by
+`main_cc_cow.cc`): `grad_norm` (fine, Fisher-Rao) drops into the tens by iteration 7 while
+`grid_scale * grad_restr_norm` (coarse, scaled) stays in the hundreds of thousands through
+iteration 20 -- a ratio of ~5000x at iteration 3 and still ~9000x at iteration 20. Eq. (16)'s
+trigger, `norm_coarse_scaled >= max(kappa*norm_level, mu)`, is satisfied by a wide margin on
+essentially every eligible iteration once this gap opens, regardless of how converged the
+fine level already is: 145 of the 150 iterations coarse_every's lockout allows fire a
+correction, each one costing a 5-iteration coarse solve on a 240x320 grid plus two composed
+grid transfers. On the 41x41 synthetic disk this same ratio was the *original, retracted*
+explanation for the (actually parameter-bug-caused) stall in §3.2 -- retracted there because
+the measured ratio was an artifact of a frozen, stalled trajectory, not a per-step property
+of the restriction operator. Here, at the paper's actual scale, with both parameter bugs
+already fixed and the trajectory demonstrably not stalled (§8.1), the same large,
+persistent ratio is real and is not an artifact: `mu=0.5` and `grid_scale=4`, tuned by
+observation on a 1,681-pixel problem, do not gate anything on a 1,228,800-pixel one. Whether
+that is fixable by scaling `mu` with problem size, a larger `grid_scale`, or a different
+gate entirely (§3.3's three variants) is future work -- out of scope for a test-and-benchmark
+pass -- but the mechanism is now measured, not hypothesized.
+
+Reproduction:
+```sh
+python3 test/cc/prepare_cow_data.py /path/to/RMO-continuous-cuts   # writes test/cc/data/*.bin
+ninja -C build main_cc_cow
+DEAL_II_NUM_THREADS=1 ./build/main_cc_cow   # ~3 minutes (SL 46s, ML 146s)
+```
