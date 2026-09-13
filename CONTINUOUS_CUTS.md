@@ -1,3 +1,6 @@
+---
+geometry: margin=2cm
+---
 # `rmo::cc`: continuous cuts on the product Bernoulli manifold
 
 This document covers the `rmo::cc` module — the binary continuous-cuts image
