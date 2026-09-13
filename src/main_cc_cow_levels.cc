@@ -15,7 +15,7 @@
 // N-level recursion, no ComposedGridTransfer needed.
 //
 // All three multilevel configurations use the min_fine_norm floor added to
-// cc::ScaledCoarseCondition (see condition.h and REVIEW-continuous-cuts.md \S8.2/\S9): on
+// cc::ScaledCoarseCondition (see condition.h and CONTINUOUS_CUTS.md \S4.2-\S4.3): on
 // the cow image the scaled restricted gradient stays orders of magnitude above the fine
 // gradient for the entire run, so eq. (16)'s own gate never shuts corrections off on its
 // own once the fine level is well past the point where a correction still helps.

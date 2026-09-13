@@ -13,7 +13,7 @@
 // final (max_iter-iteration) energy, and report the CPU time spent to reach it. That is
 // the actual claim a multilevel method makes -- less CPU time for the same solution
 // quality -- as opposed to "fewer iterations", which does not account for the extra cost
-// of each coarse correction (REVIEW-continuous-cuts.md \S4).
+// of each coarse correction (CONTINUOUS_CUTS.md \S4).
 //
 #include <rmo/cc/cc.h>
 #include <rmo/cc/condition.h>

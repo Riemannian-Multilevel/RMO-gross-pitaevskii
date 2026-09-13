@@ -16,10 +16,10 @@
 // Regularization matches the paper's cow-image experiment (compare_variants.py):
 // alpha = 0.1 fine / 0.4 coarse, eta = 0.6 (Fig. 15, Option 1), mu = 0.5
 // (gnorm_c_threshold), coarse solver 5 iterations per call (halved from the paper's 10,
-// see REVIEW-continuous-cuts.md \S7.1: found not to matter for either final energy or
+// see CONTINUOUS_CUTS.md \S4.1: found not to matter for either final energy or
 // CPU time on the synthetic disk), coarse_every = 2 (\S6.4 lockout). eps follows this
-// port's established convention (eps_paper = sqrt(eps_ref), REVIEW-continuous-cuts.md
-// \S3.3): 1e-2 fine, ~3.16e-2 coarse, matching the reference's own eps = 1e-4 / 1e-3
+// port's established convention (eps_paper = sqrt(eps_ref), CONTINUOUS_CUTS.md \S1):
+// 1e-2 fine, ~3.16e-2 coarse, matching the reference's own eps = 1e-4 / 1e-3
 // unsquared. grid_scale = 2^n_pools = 4 (not 2 as on the synthetic disk's single hop),
 // per the reference's operators.get_grid_scale("Option 1", n_pools=2).
 //
@@ -195,7 +195,7 @@ int main()
     options_fas.coarse_energy_adaptive = false;
 
     // min_fine_norm=10: the fine gradient norm decays steadily (139 -> 6.5 over 300
-    // iterations, REVIEW-continuous-cuts.md \S8.2) while the scaled restricted norm stays
+    // iterations, CONTINUOUS_CUTS.md \S4.2) while the scaled restricted norm stays
     // 5000-9000x larger throughout, so the mu/kappa gate alone never shuts off (145 of 150
     // eligible iterations trigger a correction). 10 is past the halfway point of that decay
     // (crossed between it=121 and it=141 in the ungated run) -- see \S9 for the effect.

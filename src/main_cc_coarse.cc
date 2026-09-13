@@ -17,7 +17,7 @@
 // experiment (Sec. 6.3.4): alpha = 0.1 fine / 0.4 coarse; the coarse solver
 // runs for 10 iterations per call, eta = 0.6 (Fig. 15, Option 1). eps follows
 // the reference's convention (eps_paper = sqrt(eps_ref), see the eps= comments
-// below and REVIEW-continuous-cuts.md \S3.3): 1e-2 fine, ~3.16e-2 coarse.
+// below and CONTINUOUS_CUTS.md \S1's "eps convention"): 1e-2 fine, ~3.16e-2 coarse.
 //
 // This now reproduces the reference's speedup: with the reference's Armijo
 // (coarse ls.alpha = 1, undamped) and its lockout on consecutive coarse
@@ -27,11 +27,9 @@
 // single-level to 5 digits. The earlier committed state (coarse ls.alpha =
 // 0.01, coarse_every = 1) instead stalled at E = -94.01 with every fine step
 // forced to be a rejected coarse step (2464 "Step rejected" lines): those two
-// parameters, not the vector transport's DC gain, were the cause (measured in
-// REVIEW-continuous-cuts.md \S3.2/\S4.2, cross-checked against the Python
-// reference in \S4.1, which shows the same one-iteration jump). See
-// doc/plan_continuous_cuts.tex \S"main_cc_coarse.cc" for the retracted
-// R = 4F_h^H narrative and its replacement.
+// parameters, not the vector transport's DC gain, were the cause -- see
+// CONTINUOUS_CUTS.md \S3 (bugs 1-2) and \S4.1 for the corrected measurement,
+// cross-checked against the Python reference.
 //
 #include <rmo/cc/cc.h>
 #include <rmo/cc/condition.h>
@@ -83,8 +81,7 @@ int main()
     // (objective.py) adds its eps argument unsquared -- and \S6.3.4 states the paper's figures
     // were produced by the reference. So eps_paper = sqrt(eps_ref), with eps_ref = 1e-4 fine /
     // 1e-3 coarse being the reference's own numbers; passing eps_ref directly here (as before)
-    // made the smoothing 100x sharper than any run the paper reports (REVIEW-continuous-cuts.md
-    // \S3.3).
+    // made the smoothing 100x sharper than any run the paper reports (CONTINUOUS_CUTS.md \S1).
     auto obj_coarse = std::make_shared<ContinuousCutsFunctional>(D_coarse, rho_coarse, /*alpha=*/0.4, /*eps=*/3.1622776601683795e-2);
     auto obj_fine   = std::make_shared<ContinuousCutsFunctional>(D_fine, rho_fine, /*alpha=*/0.1, /*eps=*/1e-2);
 
@@ -111,10 +108,10 @@ int main()
     DescentOptions options_coarse = options_fine;
     options_coarse.max_iter  = 5;    // paper/reference: 10 iterations per call (Sec. 6.3.4); halved
                                       // here since the CPU-time benchmark (main_cc_bench.cc,
-                                      // REVIEW-continuous-cuts.md \S7) found the fixed 10-iteration
+                                      // CONTINUOUS_CUTS.md \S4.1) found the fixed 10-iteration
                                       // coarse solve costs about as much as the fine iterations it
                                       // replaces on this problem, wiping out the iteration-count
-                                      // speedup once priced in CPU time -- see \S7 for whether 5
+                                      // speedup once priced in CPU time -- see \S4.1 for whether 5
                                       // iterations changes that.
     options_coarse.ls.alpha  = 1.0;  // reference (optimizer.py:8): Armijo starts at alpha=1 on
                                       // every level and never damps. The coarse model q_k is
@@ -126,8 +123,8 @@ int main()
                                       // (metric.h) does the same job. Damping to 0.01 instead
                                       // left the coarse model unminimised (10 steps of exactly
                                       // 0.01) and was the main cause of the "no speedup" result
-                                      // this driver used to report (REVIEW-continuous-cuts.md
-                                      // \S3.2/\S4.2).
+                                      // this driver used to report (CONTINUOUS_CUTS.md \S3,
+                                      // bugs 1-2, and \S4.1).
 
     options_descent_mg[min_level] = options_coarse;
     options_descent_mg[max_level] = options_fine;
@@ -144,12 +141,12 @@ int main()
                                                   // coarse_every = 1 a rejected coarse step was
                                                   // followed by another rejected coarse step
                                                   // forever once the trigger fired, freezing the
-                                                  // driver (REVIEW-continuous-cuts.md \S3.2).
+                                                  // driver (CONTINUOUS_CUTS.md \S3, bug 2).
     options_fas.coarse_energy_adaptive = false;  // GP-specific, unused here
 
     // grid_scale = 2 is a reference-side deviation (operators.py, get_grid_scale("Option 1",
-    // n_pools=1)) absent from the paper's eq. (16); it compensates for one factor-2 step under
-    // trigger condition is otherwise the framework's default (see doc/plan_continuous_cuts.tex).
+    // n_pools=1)) absent from the paper's eq. (16); it compensates for one factor-2 step's
+    // norm contraction under R (see cc/condition.h / CONTINUOUS_CUTS.md \S1).
     dealii::MGLevelObject<std::shared_ptr<CoarseConditionBase>> condition_mg(min_level, max_level);
     condition_mg[max_level] = std::make_shared<ScaledCoarseCondition>(2.0);
 

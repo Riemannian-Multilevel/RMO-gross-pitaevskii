@@ -4,8 +4,8 @@
 // The expected values below were produced by calling
 // RMO-continuous-cuts/src/bernoulli_multilevel/{primitives,operators}.py
 // directly (r_injection, prolong_bilinear, restrict_adjoint_bilinear,
-// BASE_TRIPLES["Option 1"]) on a fixed 3x3 coarse / 5x5 fine grid; see the
-// plan (doc/plan_continuous_cuts.tex) for the exact derivation.
+// BASE_TRIPLES["Option 1"]) on a fixed 3x3 coarse / 5x5 fine grid; see
+// CONTINUOUS_CUTS.md \S2 for the verification method.
 //
 #include <rmo/cc/interpolate.h>
 #include <rmo/cc/manifold.h>
