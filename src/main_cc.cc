@@ -5,8 +5,8 @@
 // stand-in for a loaded image and its user-provided seed regions (cf.
 // Fig. 12). Regularization parameters match the paper's fine-level
 // continuous-cuts experiment (Sec. 6.3.4). Reproduces a single-level "RGD"
-// run (Fig. 13) as a regression baseline ahead of the multilevel driver
-// (still open, see doc/plan_continuous_cuts.tex).
+// run (Fig. 13) as the CPU-time baseline the multilevel drivers are compared
+// against (CONTINUOUS_CUTS.md \S4).
 //
 #include <rmo/cc/cc.h>
 #include <rmo/cc/grid.h>
@@ -31,8 +31,7 @@ int main()
     // (objective.py) adds its eps argument unsquared, and Sec. 6.3.4 states the paper's figures
     // were produced by the reference -- so eps_paper = sqrt(eps_ref), with eps_ref = 1e-4 being
     // the reference's own fine-level number (see main_cc_coarse.cc and
-    // REVIEW-continuous-cuts.md \S3.3, which also uses this driver for the single-level
-    // baseline in \S4.2).
+    // CONTINUOUS_CUTS.md \S1's "eps convention").
     constexpr double epsilon = 1e-2;   // fine-level TV smoothing = sqrt(1e-4)
 
     const SyntheticImage img(41);

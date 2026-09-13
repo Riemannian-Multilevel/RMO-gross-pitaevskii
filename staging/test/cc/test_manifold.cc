@@ -188,8 +188,8 @@ void check_adjoint_self_consistency(unsigned int n)
 }
 
 // Cross-check against RMO-continuous-cuts/src/bernoulli_multilevel/manifold.py
-// (bernoulli_multilevel.manifold.exp/lifting) on fixed inputs; see the plan
-// (doc/plan_continuous_cuts.tex) for the exact derivation.
+// (bernoulli_multilevel.manifold.exp/lifting) on fixed inputs; see
+// CONTINUOUS_CUTS.md \S2 for the verification method and \S1 for the derivation.
 void check_against_numpy_reference()
 {
     const Vector<double> phi = raster({0.3, 0.6, 0.2, 0.8});

@@ -74,7 +74,7 @@ def main(src_dir: str) -> None:
     u0 = coarse.clone().requires_grad_(True)
     # Note: eq. (42) uses epsilon^2 under the square root; create_cc_objective's
     # eps enters unsquared, so pass sqrt(1e-3) from the C++ side to compare like
-    # for like (see doc/plan_continuous_cuts.tex, Verification section).
+    # for like (see CONTINUOUS_CUTS.md \S2).
     E0 = create_cc_objective(rho, alpha=0.7, eps=1e-3)(u0)
     E0.backward()
     print(f"E(coarse) = {E0.item():.10f}   # -> value(phi)")
