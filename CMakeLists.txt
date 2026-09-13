@@ -86,6 +86,7 @@ add_rmo_executable(main_cc)
 add_rmo_executable(main_cc_coarse)
 add_rmo_executable(main_cc_bench)
 add_rmo_executable(main_cc_cow)
+add_rmo_executable(main_cc_cow_levels)
 add_rmo_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 

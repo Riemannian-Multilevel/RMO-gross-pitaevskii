@@ -525,3 +525,88 @@ python3 test/cc/prepare_cow_data.py /path/to/RMO-continuous-cuts   # writes test
 ninja -C build main_cc_cow
 DEAL_II_NUM_THREADS=1 ./build/main_cc_cow   # ~3 minutes (SL 46s, ML 146s)
 ```
+
+## 9. A minimum-fine-gradient-norm floor, and 3-/4-level hierarchies (addendum, 2026-09-13)
+
+\S8.2 found the cow image's coarse-correction trigger fires on 145 of 150 eligible
+iterations because the scaled restricted gradient stays 5000-9000x the fine gradient's own
+(steadily decaying) norm for the whole run, so eq. (16)'s `max(eta*||g||, mu)` gate never
+shuts off on its own. GPE's `DefaultCoarseCondition` (`ropt/condition.h`) has always had an
+extra term for exactly this situation -- `norm_level > options.eps`, wired to GPE's `--eps`
+CLI flag (`option.h`, default `1e-4`) -- that the paper's own eq. (16) does not include and
+that `cc::ScaledCoarseCondition`'s rewrite to implement eq. (16) literally (commit
+`77e1531`) accordingly dropped. Re-added as an explicit, opt-in parameter rather than
+reusing `options.eps` (already repurposed there as `mu`): `ScaledCoarseCondition(grid_scale,
+min_fine_norm = 0.0)`, gating `trigger()` on `norm_level > min_fine_norm` before eq. (16)'s
+own comparison. Default `0.0` keeps every existing result in \S3-\S8 unchanged.
+
+### 9.1 Effect on the 2-level cow driver
+
+`main_cc_cow.cc` now constructs its condition with `min_fine_norm = 10.0` -- past the
+halfway point of the observed 139 -> 6.5 decay (crossed between iterations 121 and 141 in
+\S8.2's ungated run). Same problem, same 300 iterations, single-threaded:
+
+| | corrections | final E | cpu(300) | 90%-converged speedup | fully-converged speedup |
+|---|---|---|---|---|---|
+| ungated (\S8.2) | 145 | -63119 | 145.6 s | 3.16 | 0.317 |
+| `min_fine_norm=10` | 59 | **-63147** | 85.9 s | 3.20 (unaffected) | **0.615** |
+
+Corrections drop by more than half, CPU time for the full run drops by 41%, and -- unlike
+\S8.2 -- the two-level driver now reaches a *better* final energy than single-level's
+-63143, not a worse one: the corrections the floor removes were not merely wasted CPU, they
+were actively net-negative by this point (each one perturbs `phi` away from the fine
+level's own descent trajectory; past the point where the coarse model still resolves
+something the fine gradient doesn't, that perturbation has nothing to correct). The
+90%-converged speedup is exactly unchanged, as expected -- the floor only removes late
+corrections, and 90% convergence is reached at iteration 1. The fully-converged gap nearly
+halves (0.317 -> 0.615) but does not close: the 59 corrections that still fire before
+`norm_level` crosses 10 remain expensive relative to what they buy late in the run.
+
+### 9.2 3- and 4-level hierarchies
+
+`src/main_cc_cow_levels.cc` (new) replicates `examples/levels_2_3_4.py`'s own "best
+configurations" (RMO-continuous-cuts) for a 3-level (240x320 / 480x640 / 960x1280) and
+4-level (120x160 / 240x320 / 480x640 / 960x1280) hierarchy, both `min_fine_norm=10`, sharing
+one single-level run as baseline. Unlike \S8's 2-level driver, every adjacent pair here is a
+single, un-composed factor-2 step (`cumulative_to_delta_pools([2,1]) == [1,1]`,
+`[3,2,1] == [1,1,1]` in the reference), so this needed no `ComposedGridTransfer` -- plain
+`BernoulliGridTransfer` at each transition and `FullApproximationScheme`'s ordinary N-level
+recursion, `grid_scale=2` (`2^1`) throughout rather than the 2-level driver's 4 (`2^2`).
+
+| | corrections | final E | cpu(300) | 90%-converged (it, cpu, speedup) | fully-converged (it, cpu, speedup) |
+|---|---|---|---|---|---|
+| SL (shared baseline) | -- | -63143 | 47.5 s | it=19, 2.48 s | it=300, 47.5 s |
+| 2-level, `min_fine_norm=10` (\S9.1) | 59 | -63147 | 85.9 s | it=1, 0.77 s, **3.20** | it=262, 76.2 s, 0.615 |
+| 3-level | 31 | -63150 | 142.6 s | it=1, 4.02 s, 0.618 | it=253, 130.8 s, 0.363 |
+| 4-level | 35 | -63148 | 118.5 s | it=1, 2.70 s, 0.922 | it=216, 97.0 s, 0.490 |
+
+Reading: going deeper does not help CPU time on this problem, at either target. The
+90%-converged speedup -- the two-level driver's headline win -- disappears once a genuine
+intermediate level is inserted: single-level is still faster to 90% for both 3- and
+4-level (0.62x and 0.92x). The cause is structural, not a tuning accident: a 3+ level
+hierarchy's first "1 fine iteration" is not cheap the way the composed 2-level's is,
+because `FullApproximationScheme`'s recursion actually *solves* at every intermediate level
+in between -- checking eq. (16) again and potentially firing its own nested correction --
+rather than treating the whole coarse chain as one geometric jump to a single bottom-level
+solve. That per-level solve cost is exactly what the composed transfer in \S8 was designed
+to skip. All three multilevel configurations do reach a *better* final energy than
+single-level (-63147/-63150/-63148 vs -63143) -- deeper hierarchies keep resolving
+something the shallower ones miss -- but none recovers single-level's CPU-time lead by 300
+iterations, and the deepest (4-level) is not the best on either count (3-level's final
+energy is best; 4-level's cpu is lower than 3-level's, presumably because its per-level
+`max_iter` schedule, 10/4/3 vs 3-level's 10/4, spends less on each intermediate solve).
+
+Net conclusion of \S8-\S9: on this problem, the composed 2-level design (one geometric jump
+straight to a single coarse solve, no intermediate optimization) is the only configuration
+tested that is ever faster than single-level in CPU time, and only up to the early
+90%-converged target; a minimum-fine-gradient-norm floor recovers a large fraction, but not
+all, of what late-stage over-triggering was costing it; and adding genuine intermediate
+levels trades that early win away for a better final answer, never for less CPU time.
+
+Reproduction:
+```sh
+python3 test/cc/prepare_cow_data.py /path/to/RMO-continuous-cuts   # writes rho at all 4 levels
+ninja -C build main_cc_cow main_cc_cow_levels
+DEAL_II_NUM_THREADS=1 ./build/main_cc_cow          # ~2.2 minutes (SL 47s, gated ML 86s)
+DEAL_II_NUM_THREADS=1 ./build/main_cc_cow_levels   # ~5.2 minutes (SL 47s, 3-level 143s, 4-level 119s)
+```

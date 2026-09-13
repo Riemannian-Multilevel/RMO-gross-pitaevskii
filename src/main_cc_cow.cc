@@ -194,8 +194,13 @@ int main()
     options_fas.coarse_every           = 2;
     options_fas.coarse_energy_adaptive = false;
 
+    // min_fine_norm=10: the fine gradient norm decays steadily (139 -> 6.5 over 300
+    // iterations, REVIEW-continuous-cuts.md \S8.2) while the scaled restricted norm stays
+    // 5000-9000x larger throughout, so the mu/kappa gate alone never shuts off (145 of 150
+    // eligible iterations trigger a correction). 10 is past the halfway point of that decay
+    // (crossed between it=121 and it=141 in the ungated run) -- see \S9 for the effect.
     dealii::MGLevelObject<std::shared_ptr<CoarseConditionBase>> condition_mg(min_level, max_level);
-    condition_mg[max_level] = std::make_shared<ScaledCoarseCondition>(4.0);   // 2^n_pools, n_pools=2
+    condition_mg[max_level] = std::make_shared<ScaledCoarseCondition>(4.0, 10.0);   // 2^n_pools, n_pools=2
 
     FullApproximationScheme<ContinuousCutsFunctional> fas_solver(
         manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg,
@@ -215,13 +220,17 @@ int main()
     const auto& sl_hist = sl_recorder.history;
     const auto& ml_hist = ml_recorder.history;
 
-    std::cout << "\n=== First 20 fine-level ML iterations (trigger diagnostics) ===\n"
+    std::cout << "\n=== Fine-level ML iterations where the trigger was evaluated ===\n"
               << "  it  coarse  grad_norm  grad_restr_norm*4  energy\n";
+    unsigned printed = 0;
     for (const auto& info : ml_hist) {
-        if (info.iter > 20) break;
-        std::cout << "  " << info.iter << "   " << (info.coarse ? "*" : " ")
-                  << "   " << info.grad_norm << "   " << 4.0 * info.grad_restr_norm
-                  << "   " << info.energy << "\n";
+        if (info.grad_norm <= 0.0) continue;   // not evaluated this iteration
+        if (printed < 20 || printed % 10 == 0) {
+            std::cout << "  " << info.iter << "   " << (info.coarse ? "*" : " ")
+                      << "   " << info.grad_norm << "   " << 4.0 * info.grad_restr_norm
+                      << "   " << info.energy << "\n";
+        }
+        printed++;
     }
 
     const double e0         = sl_hist.front().energy;

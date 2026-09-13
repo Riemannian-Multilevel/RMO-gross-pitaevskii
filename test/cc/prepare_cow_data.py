@@ -22,8 +22,12 @@ multilevel/single-level optimization under test (src/main_cc_cow.cc), on real da
 Usage:
     python3 prepare_cow_data.py /path/to/RMO-continuous-cuts [--out-dir DIR]
 
-Writes two raw, row-major float64 binary files (no header, native byte order) to --out-dir
-(default: test/cc/data next to this script): rho_fine_<H>x<W>.bin, rho_coarse_<H>x<W>.bin.
+Writes raw, row-major float64 binary files (no header, native byte order) to --out-dir
+(default: test/cc/data next to this script): rho_fine_960x1280.bin (the finest level, used
+by every hierarchy depth), rho_coarse_240x320.bin (the 2-level hierarchy's single composed
+coarse level, n_pools=2), and rho_480x640.bin / rho_120x160.bin (the intermediate levels the
+3- and 4-level hierarchies insert, n_pools=1 and 3 respectively -- examples/levels_2_3_4.py's
+own "best configurations", one factor-2 average-pool step apart from their neighbors).
 """
 import argparse
 import pathlib
@@ -78,23 +82,32 @@ def main() -> None:
     u_b = np.mean(f_img[bg_mask])
     rho_fine = ((u_f - f_img) ** 2 - (u_b - f_img) ** 2).astype(np.float64)
 
-    # n_pools=2 cumulative (COARSE_PARAMS = [(2, 0.4, 1e-3)] in compare_variants.py): two
-    # factor-2 average-pool steps composed into one coarse level, 960x1280 -> 480x640 -> 240x320.
-    rho_mid = avg_pool2(rho_fine)
-    rho_coarse = avg_pool2(rho_mid)
+    # Strict pyramid: each level is one more factor-2 average-pool step than the last
+    # (associative, so pooling the previous level's rho by one more step is exactly the
+    # same as pooling rho_fine by the cumulative count directly, as problem.py does).
+    # n_pools=1 -> 480x640 (examples/levels_2_3_4.py's "+ Original" level, coinciding with
+    # the un-enlarged image's own resolution), n_pools=2 -> 240x320 (the 2-level hierarchy's
+    # single composed coarse level), n_pools=3 -> 120x160 (4-level's "Coarse-2 deeper").
+    rho_480 = avg_pool2(rho_fine)
+    rho_240 = avg_pool2(rho_480)
+    rho_120 = avg_pool2(rho_240)
 
-    print(f"rho_fine   {rho_fine.shape}   min={rho_fine.min(): .6f}  max={rho_fine.max(): .6f}")
-    print(f"rho_coarse {rho_coarse.shape}   min={rho_coarse.min(): .6f}  max={rho_coarse.max(): .6f}")
+    for name, rho in [("rho_fine", rho_fine), ("rho_480", rho_480), ("rho_240", rho_240), ("rho_120", rho_120)]:
+        print(f"{name:9s} {rho.shape}   min={rho.min(): .6f}  max={rho.max(): .6f}")
 
     out_dir = pathlib.Path(args.out_dir) if args.out_dir else pathlib.Path(__file__).resolve().parent / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    fine_path = out_dir / f"rho_fine_{h_fine}x{w_fine}.bin"
-    coarse_path = out_dir / f"rho_coarse_{rho_coarse.shape[0]}x{rho_coarse.shape[1]}.bin"
-    rho_fine.astype("<f8").tofile(fine_path)
-    rho_coarse.astype("<f8").tofile(coarse_path)
-    print(f"wrote {fine_path}  ({rho_fine.nbytes} bytes)")
-    print(f"wrote {coarse_path}  ({rho_coarse.nbytes} bytes)")
+    files = {
+        f"rho_fine_{h_fine}x{w_fine}.bin": rho_fine,
+        "rho_480x640.bin": rho_480,
+        "rho_coarse_240x320.bin": rho_240,   # kept for main_cc_cow.cc's existing filename
+        "rho_120x160.bin": rho_120,
+    }
+    for filename, rho in files.items():
+        path = out_dir / filename
+        rho.astype("<f8").tofile(path)
+        print(f"wrote {path}  ({rho.nbytes} bytes)")
 
 
 if __name__ == "__main__":
