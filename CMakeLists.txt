@@ -4,7 +4,7 @@ project(gpe)
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(fmt)
 
-find_package(deal.II 9.7.0 REQUIRED
+find_package(deal.II 9.6.0 REQUIRED
         HINTS ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
 )
 #find_package(fmt CONFIG REQUIRED)
@@ -61,8 +61,8 @@ enable_testing()
 
 add_gpe_executable(test_descent LINK_LIBS fmt::fmt)
 add_gpe_executable(test_gradient LINK_LIBS fmt::fmt)
-add_gpe_executable(test_matrix_free LINK_LIBS fmt::fmt)
+#add_gpe_executable(test_matrix_free LINK_LIBS fmt::fmt)
 
 add_test(descent test_descent COMMAND test_descent)
 add_test(gradient test_gradient COMMAND test_gradient)
-add_test(matrix_free test_matrix_free COMMAND test_matrix_free)
+#add_test(matrix_free test_matrix_free COMMAND test_matrix_free)

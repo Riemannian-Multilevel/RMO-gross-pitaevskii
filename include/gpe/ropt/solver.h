@@ -19,12 +19,12 @@ namespace gpe
 
 struct CycleInfo
 {
-    unsigned iter;
-    unsigned lac_iter;
-    double   step_size;
-    double   elapsed;
-    bool     coarse;
-    unsigned level;
+    unsigned iter      = 0;
+    unsigned lac_iter  = 0;
+    double   step_size = 0.0;
+    double   elapsed   = 0.0;
+    bool     coarse    = false;
+    unsigned level     = 0;
 };
 
 

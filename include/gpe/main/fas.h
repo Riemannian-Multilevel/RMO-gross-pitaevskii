@@ -140,7 +140,8 @@ public:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+                //auto [residual, _] = cycle_eval(O_level, x, convergence_table, info);
+                cycle_eval(O_level, x, convergence_table, info);
 
                 // Avoid a stalling line search where the solution x does not change
                 if (options_descent_mg[level].line_search && info.step_size == 0.0) {
