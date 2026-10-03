@@ -21,6 +21,7 @@
 #include <memory>
 #include <numbers>
 #include <string>
+#include <type_traits>
 #include <variant>
 
 namespace rmo::gpe
@@ -124,6 +125,96 @@ get_potential(Potential potential_t, const std::string& expr = "") {
 
 
 /**
+ * @brief Matrices and operators shared by GrossPitaevskiiSystem and GrossPitaevskiiLumpedSystem.
+ *
+ * Stores the time-independent part \f$ A_0 \f$ (stiffness and potential), the mass matrix \f$ M \f$
+ * and the non-linear term \f$ M_{\phi\phi} \f$, and builds LinearCombination operators from them.
+ * Derived classes assemble the matrices and implement `assemble_nonlinear_term(x)`.
+ *
+ * @tparam dim The spatial dimension of the problem.
+ * @tparam MassMatrixType Storage of \f$ M \f$ and \f$ M_{\phi\phi} \f$: `SparseMatrix<double>`
+ * (consistent) or `DiagonalMatrix<Vector<double>>` (lumped).
+ */
+template <int dim, typename MassMatrixType>
+class GrossPitaevskiiSystemBase
+{
+public:
+    static constexpr int dimension = dim;
+
+    using MassMatrix = MassMatrixType;
+    using Operator   = std::conditional_t<std::is_same_v<MassMatrix, SparseMatrix<double>>,
+                                          LinearCombination<Vector<double>, SparseMatrix<double>>,
+                                          LinearCombination<Vector<double>, SparseMatrix<double>, MassMatrix>>;
+
+    // Since LinearCombination stores pointers to matrices, these functions are lazy;
+    // the (non-linear) terms can be assembled after calling this function.
+    // TODO: rename to operator_A() or similar, since this creates a new object? (potential lifetime issues)
+    /** @brief Operator \f$ w_{A_0} A_0 + w_{M_{\phi\phi}} M_{\phi\phi} \f$. */
+    Operator get_operator_A(const double weight_Mpp, const double weight_A0 = 1.0) const
+    {
+        // Note: We pass pointers to our internal matrices.
+        // The operator is valid as long as this Problem instance exists.
+        Operator Aop;
+        Aop.add_component(weight_A0, A0);
+        Aop.add_component(weight_Mpp, Mpp);
+        Aop.reinit(Vector<double>(A0.m()));
+
+        return Aop;
+    }
+
+    // TODO: rename to operator_M() or similar, since this creates a new object? (potential lifetime issues)
+    /** @brief Operator \f$ w_M M \f$. */
+    Operator get_operator_M(const double weight_M = 1.0) const
+    {
+        Operator Mop;
+        Mop.add_component(weight_M, M);
+        Mop.reinit(Vector<double>(A0.m()));
+
+        return Mop;
+    }
+
+    /** @brief Returns the linear operator \f$ A_0 \f$. */
+    const SparseMatrix<double>& get_A0() const { return A0; }
+
+    /** @brief Returns the mass matrix \f$ M \f$. */
+    const MassMatrix& get_M() const { return M; }
+
+    /** @brief Returns the non-linear mass matrix \f$ M_{\phi\phi} \f$. */
+    const MassMatrix& get_Mpp() const { return Mpp; }
+
+    unsigned int n_dofs() const { return dof_handler.n_dofs(); }  // A0.m()
+
+    /** @brief Returns the linear constraints the operators were assembled with. */
+    const dealii::AffineConstraints<double>& get_constraints() const { return constraints; }
+
+protected:
+    /** @brief Sets up the sparsity pattern and sizes \f$ A_0 \f$; derived classes assemble. */
+    GrossPitaevskiiSystemBase(const dealii::DoFHandler<dim>& dofs,
+                              const dealii::AffineConstraints<double>& cstr)
+        : dof_handler(dofs)
+        , constraints(cstr)
+    {
+        auto dsp = make_sparsity_pattern(dof_handler, constraints);
+        sparsity_pattern.copy_from(dsp);
+        A0.reinit(sparsity_pattern);
+    }
+
+    const dealii::DoFHandler<dim>& dof_handler;
+    const dealii::AffineConstraints<double>& constraints;
+
+    SparsityPattern sparsity_pattern;  ///< Declared before the matrices, which refer to it.
+    SparseMatrix<double> A0;           ///< Constant part of the operator (Laplacian + Potential).
+    MassMatrix M;                      ///< Mass matrix.
+
+    /** @brief Non-linear term (changes every iteration).
+     * In the GPE, \f$ M_{pp} \f$ must be recomputed whenever the solution
+     * density \f$ |\phi|^2 \f$ changes.
+     */
+    MassMatrix Mpp;
+};
+
+
+/**
  * @brief Handles the assembly and storage of matrices for the Gross-Pitaevskii equation.
  * This class manages the linear and non-linear operators resulting from the discretization
  * of the GPE. It stores the time-independent parts (stiffness and potential) separately
@@ -132,11 +223,11 @@ get_potential(Potential potential_t, const std::string& expr = "") {
  * @tparam dim The spatial dimension of the problem.
  */
 template <int dim>
-class GrossPitaevskiiSystem
+class GrossPitaevskiiSystem : public GrossPitaevskiiSystemBase<dim, SparseMatrix<double>>
 {
-public:
-    using Operator = LinearCombination<Vector<double>, SparseMatrix<double>>;
+    using Base = GrossPitaevskiiSystemBase<dim, SparseMatrix<double>>;
 
+public:
     /**
      * @brief Constructor that initializes sparsity patterns and assembles linear matrices.
      * Computes the initial system matrices:
@@ -152,29 +243,23 @@ public:
      */
     template <typename Potential>
     GrossPitaevskiiSystem(const dealii::DoFHandler<dim>& dofs,
-                           const dealii::Quadrature<dim>& quad,
-                           const dealii::Mapping<dim>& map,
-                           const dealii::AffineConstraints<double>& cstr,
-                           Potential&& V)
-        : dof_handler(dofs)
+                          const dealii::Quadrature<dim>& quad,
+                          const dealii::Mapping<dim>& map,
+                          const dealii::AffineConstraints<double>& cstr,
+                          Potential&& V)
+        : Base(dofs, cstr)
         , quadrature(quad)
         , mapping(map)
-        , constraints(cstr)
     {
-        // Setup sparsity pattern
-        auto dsp = make_sparsity_pattern(dof_handler, constraints);
-        sparsity_pattern.copy_from(dsp);
-
         // Assemble S (stiffness) + M_V (weighed mass)
-        A0.reinit(sparsity_pattern);
-        fe::assemble_A0(A0, V, dof_handler, quadrature, mapping, constraints);
+        fe::assemble_A0(this->A0, V, dofs, quadrature, mapping, cstr);
 
         // Assemble M (mass)
-        M.reinit(sparsity_pattern);
-        fe::assemble_mass(M, dof_handler, quadrature, mapping, constraints);
+        this->M.reinit(this->sparsity_pattern);
+        fe::assemble_mass(this->M, dofs, quadrature, mapping, cstr);
 
         // Initialize non-linear term (varies between iterations)
-        Mpp.reinit(sparsity_pattern);
+        this->Mpp.reinit(this->sparsity_pattern);
     }
 
     /**
@@ -188,75 +273,75 @@ public:
     //       call a matrix assembly. Future versions should implement a state pattern
     void assemble_nonlinear_term(const Vector<double>& x)
     {
-        fe::assemble_mass_phiphi(Mpp, x, dof_handler, quadrature, mapping, constraints);
+        fe::assemble_mass_phiphi(this->Mpp, x, this->dof_handler, quadrature, mapping, this->constraints);
     }
-
-    // Since LinearCombination stores pointers to matrices, these functions are lazy;
-    // the (non-linear) terms can be assembled after calling this function.
-    // TODO: rename to operator_A() or similar, since this creates a new object? (potential lifetime issues)
-    auto get_operator_A(const double weight_Mpp,
-                        const double weight_A0 = 1.0) const
-    {
-        // Note: We pass pointers to our internal matrices.
-        // The operator is valid as long as this Problem instance exists.
-        OperatorType Aop;
-        Aop.add_component(weight_A0, A0);
-        Aop.add_component(weight_Mpp, Mpp);
-        Aop.reinit(Vector<double>(A0.m()));
-
-        return Aop;
-    }
-
-    // TODO: rename to operator_A() or similar, since this creates a new object? (potential lifetime issues)
-    auto get_operator_A(const Vector<double>& x, const double weight_Mpp,
-                        const double weight_A0 = 1.0) const
-    {
-        assemble_nonlinear_term(x);
-
-        return get_operator_A(weight_Mpp, weight_A0);
-    }
-
-    // TODO: rename to operator_M() or similar, since this creates a new object? (potential lifetime issues)
-    auto get_operator_M(const double weight_M = 1.0) const
-    {
-        OperatorType Mop;
-        Mop.add_component(weight_M, M);
-        Mop.reinit(Vector<double>(A0.m()));
-
-        return Mop;
-    }
-
-    /** @brief Returns the linear operator \f$ A_0 \f$. */
-    const SparseMatrix<double>& get_A0() const { return A0; }
-
-    /** @brief Returns the mass matrix \f$ M \f$. */
-    const SparseMatrix<double>& get_M() const { return M; }
-
-    /** @brief Returns the non-linear mass matrix \f$ M_{\phi\phi} \f$. */
-    const SparseMatrix<double>& get_Mpp() const { return Mpp; }
-
-    unsigned int n_dofs() const { return dof_handler.n_dofs(); }  // A0.m()
-
-    /** @brief Returns the linear constraints the operators were assembled with. */
-    const dealii::AffineConstraints<double>& get_constraints() const { return constraints; }
 
 private:
-    const dealii::DoFHandler<dim>& dof_handler;
     const dealii::Quadrature<dim>& quadrature;
     const dealii::Mapping<dim>& mapping;
-    const dealii::AffineConstraints<double>& constraints;
-
-    SparseMatrix<double> A0;  ///< Constant part of the operator (Laplacian + Potential).
-    SparseMatrix<double> M;   ///< Standard mass matrix.
-
-    /** @brief The non-linear matrix is mutable to facilitate "lazy assembly."
-     * In the GPE, \f$ M_{pp} \f$ must be recomputed whenever the solution
-     * density \f$ |\phi|^2 \f$ changes.
-     */
-    SparseMatrix<double> Mpp; ///< Non-linear term (changes every iteration).
-    SparsityPattern sparsity_pattern;
 };
 
+
+/**
+ * @brief Gross-Pitaevskii system with lumped (diagonal) mass and nonlinear matrices.
+ *
+ * Same interface as GrossPitaevskiiSystem, with \f$ M \f$ and \f$ M_{\phi\phi} \f$ stored as
+ * `DiagonalMatrix` and the potential term of \f$ A_0 = S + M_{V,L} \f$ lumped. The nodal quadrature
+ * for the lumped terms is derived from the finite element (fe::make_nodal_quadrature()), so the
+ * element must be lumpable and the constraints free of hanging nodes.
+ *
+ * @tparam dim The spatial dimension of the problem.
+ */
+template <int dim>
+class GrossPitaevskiiLumpedSystem : public GrossPitaevskiiSystemBase<dim, DiagonalMatrix<Vector<double>>>
+{
+    using Base = GrossPitaevskiiSystemBase<dim, DiagonalMatrix<Vector<double>>>;
+
+public:
+    /**
+     * @brief Assembles \f$ A_0 = S + M_{V,L} \f$ and the lumped mass matrix \f$ M_L \f$.
+     *
+     * @param dofs The Degree of Freedom handler.
+     * @param quad The quadrature formula for the stiffness matrix.
+     * @param map The mapping from reference to real cells.
+     * @param cstr Linear constraints (e.g., Dirichlet boundary conditions).
+     * @param V The external potential object.
+     */
+    template <typename Potential>
+    GrossPitaevskiiLumpedSystem(const dealii::DoFHandler<dim>& dofs,
+                                const dealii::Quadrature<dim>& quad,
+                                const dealii::Mapping<dim>& map,
+                                const dealii::AffineConstraints<double>& cstr,
+                                Potential&& V)
+        : Base(dofs, cstr)
+    {
+        // Nodal quadrature for the lumped terms; only needed during assembly
+        const auto quad_nodal = fe::make_nodal_quadrature(dofs.get_fe());
+
+        fe::assemble_A0_lumped(this->A0, V, dofs, quad, quad_nodal, map, cstr);
+
+        this->M.get_vector().reinit(dofs.n_dofs());
+        fe::assemble_mass_lumped(this->M, dofs, quad_nodal, map, cstr);
+
+        this->Mpp.get_vector().reinit(dofs.n_dofs());
+    }
+
+    /**
+     * @brief Updates \f$ (M_{\phi\phi})_{ii} = x_i^2 \, (M_L)_{ii} \f$ for the state @p x.
+     *
+     * Equals fe::assemble_mass_phiphi_lumped() on unconstrained rows, without a cell loop.
+     */
+    void assemble_nonlinear_term(const Vector<double>& x)
+    {
+        AssertDimension(x.size(), this->n_dofs());
+        const auto& m = this->M.get_vector();
+        auto& mpp     = this->Mpp.get_vector();
+
+        for (unsigned int i = 0; i < x.size(); ++i) {
+            mpp[i] = x[i] * x[i] * m[i];
+        }
+    }
+};
 
 /**
  * @brief Factory class to discretize a domain and produce a @ref GrossPitaevskiiSystem.
@@ -318,18 +403,17 @@ public:
     }
 
     /**
-     * @brief Generates a new problem instance for a specific potential.
+     * @brief Generates a problem instance for a specific potential.
+     * @tparam System GrossPitaevskiiSystem (default) or GrossPitaevskiiLumpedSystem; both share
+     * the constructor signature.
      * @tparam Potential Type of the potential function.
      * @param V The potential function.
-     * @return GrossPitaevskiiProblem<dim> The assembled problem object.
      */
-    template <typename Potential>
-    GrossPitaevskiiSystem<dim> system(Potential&& V) const
+    template <typename System = GrossPitaevskiiSystem<dim>, typename Potential>
+    System system(Potential&& V) const
     {
-        const auto& dof_handler = space.get_dofs();
-        const auto& constraints = space.get_constraints();
-
-        return GrossPitaevskiiSystem<dim>(dof_handler, *quadrature, *mapping, constraints, V);
+        static_assert(System::dimension == dim, "System dimension must match the package");
+        return System(space.get_dofs(), *quadrature, *mapping, space.get_constraints(), std::forward<Potential>(V));
     }
 
     void distribute(Vector<double>& x) const
