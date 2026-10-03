@@ -97,7 +97,7 @@ public:
 
 protected:
     GrossPitaevskiiSystem<dim> &m_system;
-    GrossPitaevskiiFunctional<dim> m_eval;
+    GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>> m_eval;
     double m_beta;
 };
 

@@ -332,7 +332,7 @@ int main(int argc, char* argv[])
     {
         constexpr int dim = T0::value;
 
-        ModelBuilder<dim> builder(potential::Square<dim>(), options, n_levels);
+        ModelBuilder<GrossPitaevskiiSystem<dim>> builder(potential::Square<dim>(), options, n_levels);
         auto& system = builder.get_system();
         const unsigned n_dofs = builder.n_dofs();
 

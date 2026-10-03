@@ -57,7 +57,7 @@ int main(int argc, char* argv[])
             for (unsigned int level : options_mg.v_levels) {
                 // Set up the grid (Package) and finite element space
                 auto context = std::visit([&](auto&& arg) {
-                    return ModelBuilder<dim>(arg, options, level);
+                    return ModelBuilder<GrossPitaevskiiSystem<dim>>(arg, options, level);
                 }, potential_v);
 
                 // Set starting value, sufficiently far from an optimal solution
@@ -72,7 +72,7 @@ int main(int argc, char* argv[])
                 // Define manifold
                 auto manifold = UnitMassSphere<SparseMatrix<double>>(context.get_M());
                 // Define Riemannian metric
-                EnergyOracle<dim> oracle(gp, options_slv);
+                EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp, options_slv);
 
                 // Termination criterion for gradient descent
                 GradientDescent solver(oracle, manifold, options_gd);
