@@ -2,6 +2,7 @@
 #define RMO_GPE_ORACLE_H
 
 #include <rmo/gpe/gpe.h>
+#include <rmo/gpe/kernels.h>
 #include <rmo/gpe/metric.h>
 
 #include <rmo/ropt/oracle_base.h>
@@ -10,91 +11,6 @@
 
 namespace rmo::gpe
 {
-
-namespace detail
-{
-
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional \f$E^{GP}(\phi)\f$
- * restricted to the sphere \f$S^{n-1}\f$ with an energy-adaptive metric \f$A_\phi\f$. The mathematical
- * formulation for the Riemannian gradient is:
- * \f[ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi \f]
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param A_inv The inverse linear operator (\f$A_\phi^{-1}\f$).
- * @param M The mass matrix (\f$M\f$).
- * @param x The current state vector (\f$\phi\f$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
-template <typename MatrixType, typename InverseMatrixType>
-void grad_energy_adaptive(const InverseMatrixType& A_inv, const MatrixType& M,
-                          const Vector<double>& x, Vector<double>& output)
-{
-    // \Pi_x(x): R^n -> T_x S^{n-1}
-    metric::energy::project_onto_tangent_space(A_inv, x, M, output);
-}
-
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional \f$E^{GP}(\phi)\f$
- * restricted to the sphere \f$S^{n-1}\f$ with a mass metric \f$M\f$. The mathematical
- * formulation for the Riemannian gradient is:
- * \f[ \nabla_M E^{GP}(\phi) = M^{-1}\big(A_\phi\,\phi - (\phi^\top A_\phi\,\phi)M\phi\big) \f]
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param Minv The inverse mass operator (\f$M^{-1}\f$).
- * @param A The state-dependent total linear operator (\f$A_\phi\f$).
- * @param M The mass matrix (\f$M\f$).
- * @param x The current state vector (\f$\phi\f$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
-template <typename MatrixType, typename InverseMatrixType>
-void grad_mass(const InverseMatrixType& Minv, const MatrixType& A, const MatrixType& M,
-               const Vector<double>& x, Vector<double>& output)
-{
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-
-    Ax.add(-(x * Ax), Mx);
-    Minv.vmult(output, Ax);
-}
-
-
-/**
- * @brief Computes the Riemannian gradient in the F-metric.
- * \f[ \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi \f]
-*/
-template <typename MatrixType>
-void grad_frobenius(const MatrixType& A, const MatrixType& M,
-                    const Vector<double>& x, Vector<double>& output)
-{
-    const unsigned int n_dofs = x.size();
-
-    Vector<double> Ax(n_dofs);
-    A.vmult(Ax, x);
-
-    Vector<double> Mx(n_dofs);
-    M.vmult(Mx, x);
-
-    const double Mx_sq = Mx * Mx; // x^T M^2 x
-    const double num = Mx * Ax; // x^T M A x
-
-    output = Ax;
-    output.add(-num / Mx_sq, Mx);
-}
-
-} // namespace detail
-
 
 template <int dim>
 class GrossPitaevskiiResidual
@@ -240,7 +156,7 @@ public:
         }
 
         timer.start();
-        detail::grad_mass(M_inv, this->get_A(), this->get_M(), x, output);
+        kernels::grad_mass(M_inv, this->get_A(), this->get_M(), x, output);
 
         info.num_iter = M_inv.control().last_step();
         info.tolerance = M_inv.control().tolerance();
@@ -317,7 +233,7 @@ public:
         }
 
         timer.start();
-        detail::grad_energy_adaptive(A_inv, this->get_M(), x, output);
+        kernels::grad_energy_adaptive(A_inv, this->get_M(), x, output);
 
         info.num_iter = A_inv.control().last_step();
         info.tolerance = A_inv.control().tolerance();
@@ -374,7 +290,7 @@ public:
         GradInfo info{};
 
         timer.start();
-        detail::grad_frobenius(this->get_A(), this->get_M(), x, output);
+        kernels::grad_frobenius(this->get_A(), this->get_M(), x, output);
         timer.stop();
 
         // F-gradient evaluation does not involve a linear solver.
