@@ -17,17 +17,17 @@ namespace detail
 /**
  * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
  *
- * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
- * restricted to the sphere $S^{n-1}$ with an energy-adaptive metric $A_\phi$. The mathematical
+ * This function calculates the gradient of the energy functional \f$E^{GP}(\phi)\f$
+ * restricted to the sphere \f$S^{n-1}\f$ with an energy-adaptive metric \f$A_\phi\f$. The mathematical
  * formulation for the Riemannian gradient is:
- * $$ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi $$
+ * \f[ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi \f]
  *
  * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
  * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
  *
- * @param A_inv The inverse linear operator ($A_\phi^{-1}$).
- * @param M The mass matrix ($M$).
- * @param x The current state vector ($\phi$).
+ * @param A_inv The inverse linear operator (\f$A_\phi^{-1}\f$).
+ * @param M The mass matrix (\f$M\f$).
+ * @param x The current state vector (\f$\phi\f$).
  * @param output The vector where the computed Riemannian gradient will be stored.
  */
 template <typename MatrixType, typename InverseMatrixType>
@@ -41,18 +41,18 @@ void grad_energy_adaptive(const InverseMatrixType& A_inv, const MatrixType& M,
 /**
  * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
  *
- * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
- * restricted to the sphere $S^{n-1}$ with a mass metric $M$. The mathematical
+ * This function calculates the gradient of the energy functional \f$E^{GP}(\phi)\f$
+ * restricted to the sphere \f$S^{n-1}\f$ with a mass metric \f$M\f$. The mathematical
  * formulation for the Riemannian gradient is:
- * $$ \nabla_M E^{GP}(\phi) = M^{-1}\big(A_\phi\,\phi - (\phi^\top A_\phi\,\phi)M\phi\big) $$
+ * \f[ \nabla_M E^{GP}(\phi) = M^{-1}\big(A_\phi\,\phi - (\phi^\top A_\phi\,\phi)M\phi\big) \f]
  *
  * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
  * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
  *
- * @param Minv The inverse mass operator ($M^{-1}$).
- * @param A The state-dependent total linear operator ($A_\phi$).
- * @param M The mass matrix ($M$).
- * @param x The current state vector ($\phi$).
+ * @param Minv The inverse mass operator (\f$M^{-1}\f$).
+ * @param A The state-dependent total linear operator (\f$A_\phi\f$).
+ * @param M The mass matrix (\f$M\f$).
+ * @param x The current state vector (\f$\phi\f$).
  * @param output The vector where the computed Riemannian gradient will be stored.
  */
 template <typename MatrixType, typename InverseMatrixType>
@@ -72,7 +72,7 @@ void grad_mass(const InverseMatrixType& Minv, const MatrixType& A, const MatrixT
 
 /**
  * @brief Computes the Riemannian gradient in the F-metric.
- * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
+ * \f[ \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi \f]
 */
 template <typename MatrixType>
 void grad_frobenius(const MatrixType& A, const MatrixType& M,
@@ -291,7 +291,7 @@ public:
 
     /**
      * @brief Computes the Riemannian gradient in the A-metric.
-     * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
+     * Solves the inner linear system \f$ A^{-1} \nabla E \f$ using the PreconditionInverse wrapper.
      */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
@@ -366,7 +366,7 @@ public:
 
     /**
      * @brief Computes the Riemannian gradient in the F-metric.
-     * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
+     * \f[ \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi \f]
      */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {

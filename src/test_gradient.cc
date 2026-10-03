@@ -177,7 +177,7 @@ static CheckGradInfo check_gradient_trial(GradientTestBase<dim>& test_grad)
     double grad_res = std::sqrt(test_grad.inner(x_grad_res,x_grad_res));
     check.grad_res  = grad_res;
 
-    // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10−8,0]
+    // 4. Compute E(t) for several values of t logarithmically spaced on the interval [10^-8,0]
     check.ts  = logspace(-8,0,100);
     check.Ets = std::vector<double>{};
 
@@ -235,7 +235,7 @@ static void check_gradient(GradientTestBase<dim>& test_grad, unsigned n_trials, 
         slope_min = std::min(slope_min, info.slope);
         slope_max = std::max(slope_max, info.slope);
 
-        // 5. Plot E(t) as a function of t, in a log–log plot;
+        // 5. Plot E(t) as a function of t, in a log-log plot;
         std::string filename;
         if (n_trials > 1) {
             filename = prefix + fmt::format("_{:03}.dat",trial);
