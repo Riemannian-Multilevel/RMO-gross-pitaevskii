@@ -34,7 +34,7 @@ struct HyperCube
     const bool has_simplex = false;
 
     /**
-     * @brief Constructs a hypercube domain $[-radius, radius]^{\text{dim}}$.
+     * @brief Constructs a hypercube domain \f$[-radius, radius]^{\text{dim}}\f$.
      *
      * @param radius The half-width of the cube. The domain extends from -radius to +radius.
      * @param simplex_mesh If `true`, the domain is tessellated with simplices (triangles in 2D,

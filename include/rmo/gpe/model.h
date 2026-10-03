@@ -14,9 +14,9 @@ namespace rmo::gpe
 
 /**
  * @brief Orchestrator for Gross-Pitaevskii simulations.
- * The @ref EnergySimulator manages the persistent @ref GrossPitaevskiiPackage
- * (discretization) and coordinates the execution of the energy minimization
- * using a given @ref Oracle.
+ * The ModelBuilder owns the persistent @ref GrossPitaevskiiPackage (discretization) and the
+ * assembled @ref GrossPitaevskiiSystem, and creates the @ref GrossPitaevskiiFunctional evaluators
+ * (see get_eval()) used by the oracles, e.g. @ref GrossPitaevskiiOracle.
  *
  * @tparam dim The spatial dimension.
  */

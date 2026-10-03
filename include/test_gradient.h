@@ -5,8 +5,11 @@
 #define RMO_TEST_GRADIENT_H
 
 #include <rmo/gpe/gpe.h>
+#include <rmo/gpe/manifold.h>
+#include <rmo/gpe/oracle.h>
+#include <rmo/gpe/oracle_coarse.h>
+
 #include <rmo/util/random.h>
-#include <rmo/ropt/manifold.h>
 
 #include <boost/math/special_functions/math_fwd.hpp>
 
@@ -68,7 +71,7 @@ public:
         ellipsoid::retract_by_norm(get_M(), x);
     }
 
-    double constraint_value(const Vector<double>& x) const
+    [[nodiscard]] double constraint_value(const Vector<double>& x) const
     {
         Vector<double> Mx(x.size());
         get_M().vmult(Mx, x);
@@ -80,16 +83,16 @@ public:
     const auto& get_M() const { return m_eval.get_M(); }
     const auto& get_A_inv() const { return m_eval.get_A_inv(); }
     const auto& get_M_inv() const { return m_eval.get_M_inv(); }
-    unsigned n_dofs() const { return m_eval.n_dofs(); }
+    [[nodiscard]] unsigned n_dofs() const { return m_eval.n_dofs(); }
 
     virtual void random_point(Vector<double>& x) const = 0;  // virtual for problems with parameters (i.e. coarse model, w, phi)
     virtual void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const = 0;
     virtual void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const = 0;
 
-    virtual double value(const Vector<double>&) const = 0;
-    virtual double directional_derivative(const Vector<double>& x, const Vector<double>& z) const = 0;
-    virtual Vector<double> gradient(const Vector<double>&) const = 0;
-    virtual double metric(const Vector<double>&, const Vector<double>&) const = 0;
+    [[nodiscard]] virtual double value(const Vector<double>&) const = 0;
+    [[nodiscard]] virtual double directional_derivative(const Vector<double>& x, const Vector<double>& z) const = 0;
+    [[nodiscard]] virtual Vector<double> gradient(const Vector<double>&) const = 0;
+    [[nodiscard]] virtual double inner(const Vector<double>&, const Vector<double>&) const = 0;
 
 
 protected:
@@ -107,12 +110,12 @@ public:
         : GradientTestBase<dim>(system, beta, options)
     {}
 
-    double value(const Vector<double>& x) const override
+    [[nodiscard]] double value(const Vector<double>& x) const override
     {
         return this->m_eval.value(x);
     }
 
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
+    [[nodiscard]] double directional_derivative(const Vector<double>& x, const Vector<double>& z) const override
     {
         return this->m_eval.directional_derivative(x, z);
     }
@@ -130,15 +133,15 @@ class GradientTestEnergy : public GradientTest<dim>
 public:
     using GradientTest<dim>::GradientTest;
 
-    Vector<double> gradient(const Vector<double>& x) const final
+    [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::energy::gradient(this->get_A_inv(), this->get_M(), x, x_grad);
+        detail::grad_energy_adaptive(this->get_A_inv(), this->get_M(), x, x_grad);
 
         return x_grad;
     }
 
-    double metric(const Vector<double>& y, const Vector<double>& z) const final
+    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const final
     {
         AssertDimension(y.size(), z.size());
         Vector<double> Az(z.size());
@@ -149,12 +152,12 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
-        ellipsoid::energy::project_onto_tangent_space(this->get_A_inv(), x, this->get_M(), v, v_proj);
+        metric::energy::project_onto_tangent_space(this->get_A_inv(), x, this->get_M(), v, v_proj);
     }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
     {
-        ellipsoid::energy::random_tangent_vector(this->get_A_inv(), x, this->get_M(), v);
+        metric::energy::random_tangent_vector(this->get_A_inv(), x, this->get_M(), v);
     }
 };
 
@@ -165,15 +168,15 @@ class GradientTestMass : public GradientTest<dim>
 public:
     using GradientTest<dim>::GradientTest;
 
-    Vector<double> gradient(const Vector<double>& x) const override
+    [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::mass::gradient(this->get_M_inv(), this->get_A(), this->get_M(), x, x_grad);
+        detail::grad_mass(this->get_M_inv(), this->get_A(), this->get_M(), x, x_grad);
 
         return x_grad;
     }
 
-    double metric(const Vector<double>& y, const Vector<double>& z) const override
+    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const override
     {
         AssertDimension(y.size(), z.size());
         Vector<double> Mz(z.size());
@@ -184,12 +187,12 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
+        metric::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
     {
-        ellipsoid::mass::random_tangent_vector(x, this->get_M(), v);
+        metric::mass::random_tangent_vector(x, this->get_M(), v);
     }
 };
 
@@ -200,14 +203,15 @@ class GradientTestFrobenius : public GradientTest<dim>
 public:
     using GradientTest<dim>::GradientTest;
 
-    Vector<double> gradient(const Vector<double>& x) const override
+    [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        ellipsoid::frobenius::gradient(this->get_A(), this->get_M(), x, x_grad);
+        detail::grad_frobenius(this->get_A(), this->get_M(), x, x_grad);
+
         return x_grad;
     }
 
-    double metric(const Vector<double>& y, const Vector<double>& z) const override
+    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const override
     {
         // The Frobenius metric is exactly the standard Euclidean L2 inner product
         AssertDimension(y.size(), z.size());
@@ -216,12 +220,12 @@ public:
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
     {
-        ellipsoid::frobenius::random_tangent_vector(x, this->get_M(), v);
+        metric::frobenius::random_tangent_vector(x, this->get_M(), v);
     }
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
-        ellipsoid::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
+        metric::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 };
 
@@ -283,28 +287,28 @@ class GradientTestCoarseMass : public GradientTestCoarse<dim>
 public:
     using GradientTestCoarse<dim>::GradientTestCoarse;
 
-    double value(const Vector<double>& x) const final
+    [[nodiscard]] double value(const Vector<double>& x) const final
     {
         const double energy = this->m_eval.value(x);
 
-        return coarse::mass::function_value(x, this->m_phi, this->m_w, this->get_M(), energy);
+        return detail::coarse_mass_value(x, this->m_phi, this->m_w, this->get_M(), energy);
     }
 
-    double directional_derivative(const Vector<double>& x, const Vector<double>& z) const final
+    [[nodiscard]] double directional_derivative(const Vector<double>& x, const Vector<double>& z) const final
     {
-        return coarse::mass::directional_derivative(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
+        return detail::coarse_mass_dir_deriv(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
     }
 
-    Vector<double> gradient(const Vector<double>& x) const final
+    [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> q_grad(x.size());
-        coarse::mass::gradient(this->get_M(), this->get_M_inv(), this->get_A(), x, this->m_phi, this->m_w, q_grad);
+        detail::coarse_mass_grad(this->get_M(), this->get_M_inv(), this->get_A(), x, this->m_phi, this->m_w, q_grad);
 
         return q_grad;
     }
 
     // Metric and gradient should correspond for testing identities <grad_x f(x), v>_x = Df(x)[v]
-    double metric(const Vector<double>& y, const Vector<double>& z) const final
+    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const final
     {
         AssertDimension(y.size(), z.size());
         Vector<double> Mz(z.size());
@@ -315,7 +319,7 @@ public:
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
     {
-        ellipsoid::mass::random_tangent_vector(x, this->get_M(), v);
+        metric::mass::random_tangent_vector(x, this->get_M(), v);
     }
 
     // Generate a random point x safely in the neighborhood of phi
@@ -325,7 +329,7 @@ public:
         Vector<double> v(x.size());
         this->random_tangent_vector(this->m_phi, v);
 
-        v /= std::sqrt(this->metric(v, v));
+        v /= std::sqrt(this->inner(v, v));
 
         // Retract to find an x that is safely near phi
         this->retract(this->m_phi, v, x);
@@ -333,7 +337,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
-        ellipsoid::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
+        metric::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 };
 
@@ -344,29 +348,29 @@ class GradientTestCoarseFrobenius : public GradientTestCoarse<dim>
 public:
     using GradientTestCoarse<dim>::GradientTestCoarse;
 
-    double value(const Vector<double>& x) const override
+    [[nodiscard]] double value(const Vector<double>& x) const override
     {
         const double energy = this->m_eval.value(x);
 
-        return coarse::frobenius::function_value(x, this->m_phi, this->m_w, this->get_M(), energy);
+        return detail::coarse_frobenius_value(x, this->m_phi, this->m_w, this->get_M(), energy);
     }
 
-    double directional_derivative(const dealii::Vector<double>& x, const dealii::Vector<double>& z) const override
+    [[nodiscard]] double directional_derivative(const dealii::Vector<double>& x, const dealii::Vector<double>& z) const override
     {
-        return coarse::frobenius::directional_derivative(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
+        return detail::coarse_frobenius_dir_deriv(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
     }
 
-    Vector<double> gradient(const Vector<double>& x) const final
+    [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> q_grad(x.size());
         // Pure F-metric gradient of the coarse model
-        coarse::frobenius::gradient(this->get_M(), this->get_A(),
+        detail::coarse_frobenius_grad(this->get_M(), this->get_A(),
             x, this->m_phi, this->m_w, q_grad);
 
         return q_grad;
     }
 
-    double metric(const Vector<double>& y, const Vector<double>& z) const final
+    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const final
     {
         AssertDimension(y.size(), z.size());
         return y * z; // F-metric inner product
@@ -377,7 +381,7 @@ public:
         Vector<double> tmp(v.size());
         normrnd(this->mean, this->stddev, tmp);
 
-        ellipsoid::frobenius::project_onto_tangent_space(x, this->get_M(), tmp, v);
+        metric::frobenius::project_onto_tangent_space(x, this->get_M(), tmp, v);
     }
 
     void random_point(Vector<double>& x) const final
@@ -385,7 +389,7 @@ public:
         // Generate a random tangent vector at phi
         Vector<double> v(x.size());
         this->random_tangent_vector(this->m_phi, v);
-        v /= std::sqrt(this->metric(v, v));
+        v /= std::sqrt(this->inner(v, v));
 
         // Retract to find an x that is safely near phi
         this->retract(this->m_phi, v, x);
@@ -393,7 +397,7 @@ public:
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
-        ellipsoid::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
+        metric::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
 };
 

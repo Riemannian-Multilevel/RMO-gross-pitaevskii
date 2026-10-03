@@ -3,13 +3,13 @@
 //
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/oracle.h>
+#include <rmo/gpe/manifold.h>
+#include <rmo/gpe/model.h>
+
 #include <rmo/option.h>
 #include <rmo/option_types.h>
 #include <rmo/util/util.h>
-#include <rmo/gpe/model.h>
 
-#include <rmo/ropt/manifold.h>
-#include <rmo/util/random.h>
 #include <fmt/format.h>
 
 #include <iostream>

@@ -180,7 +180,7 @@ public:
     /**
      * @brief Assembles the non-linear matrix term \f$ M_{\phi\phi} \f$ based on a solution.
      * In the GPE, the non-linearity usually takes the form \f$ \beta |\psi|^2 \f$.
-     * This method updates the internal @ref Mpp matrix using the values in @p x.
+     * This method updates the internal @c Mpp matrix (see get_Mpp()) using the values in @p x.
      *
      * @param x The current solution vector.
      */
@@ -259,7 +259,7 @@ private:
 
 
 /**
- * @brief Factory class to discretize a domain and produce a @ref GrossPitaevskiiProblem.
+ * @brief Factory class to discretize a domain and produce a @ref GrossPitaevskiiSystem.
  * This class handles the setup phase:
  * 1. Generates the mesh (Simplex or Hypercube).
  * 2. Selects appropriate Finite Elements and Quadrature rules.

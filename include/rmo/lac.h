@@ -277,8 +277,8 @@ private:
  *
  * This class encapsulates a `deal.II` iterative Krylov solver (such as CG, MINRES,
  * or GMRES) and a preconditioner. It acts mathematically as the inverse operator
- * $A^{-1}$, meaning that calling `vmult(dst, src)` executes the iterative solver
- * to find `dst` such that $A \cdot dst = src$.
+ * \f$A^{-1}\f$, meaning that calling `vmult(dst, src)` executes the iterative solver
+ * to find `dst` such that \f$A \cdot dst = src\f$.
  *
  * ### Architectural Role
  * By wrapping the solver in this interface, it can be passed into other algorithms
@@ -286,7 +286,7 @@ private:
  * It strictly separates the action of the operator from the construction of the
  * preconditioner.
  *
- * @tparam OperatorType The forward linear operator $A$. This is typically a
+ * @tparam OperatorType The forward linear operator \f$A\f$. This is typically a
  * matrix-free abstraction (e.g., @ref LinearCombination) that computes matrix-vector
  * products on the fly. The only strict requirement is that it provides a
  * `vmult(VectorType&, const VectorType&)` method.
@@ -305,6 +305,7 @@ public:
      * @brief Constructor.
      * @param matrix The matrix to be inverted (solved).
      * @param options Options for the iterative solver (preconditioner, iteration count, tolerance)
+     * @param precond The preconditioner passed to the Krylov solver.
      */
     InverseMatrix(const OperatorType& matrix,
                   const SolverOptions options,
@@ -325,6 +326,7 @@ public:
      * This method initializes the solver and control parameters based on the
      * norm of the @p rhs vector and the specified relative tolerance.
      *
+     * @param matrix The operator to solve with.
      * @param dst The solution vector.
      * @param rhs The right-hand side vector.
      * @throws std::invalid_argument If an unsupported SolverMethod is provided.
@@ -402,7 +404,7 @@ private:
  * and dynamic preconditioners (rebuilt when the non-linear density changes).
  *
  * ### Template Parameter Contracts
- * @tparam OperatorType Represents the linear operator $A$. This does **not** need
+ * @tparam OperatorType Represents the linear operator \f$A\f$. This does **not** need
  * to be an explicitly assembled matrix. It can be any matrix-free class (such as
  * @ref LinearCombination) as long as it provides a `vmult(dst, src)` method for
  * the Krylov solver to compute matrix-vector products.
@@ -421,6 +423,7 @@ public:
 
     /**
      * @brief Constructs the generic preconditioned solver.
+     * @param matrix The operator to be inverted (solved); stored by reference.
      * @param options Options for the iterative solver (method, preconditioner, iteration count, tolerance)
      */
     PreconditionInverse(const OperatorType& matrix, SolverOptions options)

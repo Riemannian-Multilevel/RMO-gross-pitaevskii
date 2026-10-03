@@ -126,7 +126,7 @@ public:
     }
     double metric(const Vector<double> &x, const Vector<double> &z) const
     {
-        return T_coarse.metric(x, z);
+        return T_coarse.inner(x, z);
     }
     void apply_metric(const Vector<double>& src, Vector<double>& dst) const
     {
