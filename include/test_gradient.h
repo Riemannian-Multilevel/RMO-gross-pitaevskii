@@ -27,7 +27,7 @@ public:
     const double stddev = 1.0;
 
     using MatrixType    = SparseMatrix<double>;
-    using OperatorType  = LinearCombination<MatrixType, Vector<double>>;
+    using OperatorType  = LinearCombination<Vector<double>, MatrixType>;
     using InverseOpType = PreconditionInverse<OperatorType, MatrixType>;
 
     GradientTestBase(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)

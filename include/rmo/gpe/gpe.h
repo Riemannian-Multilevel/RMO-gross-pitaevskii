@@ -135,7 +135,7 @@ template <int dim>
 class GrossPitaevskiiSystem
 {
 public:
-    using Operator = LinearCombination<SparseMatrix<double>, Vector<double>>;
+    using Operator = LinearCombination<Vector<double>, SparseMatrix<double>>;
 
     /**
      * @brief Constructor that initializes sparsity patterns and assembles linear matrices.
