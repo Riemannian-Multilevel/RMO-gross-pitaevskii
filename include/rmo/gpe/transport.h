@@ -23,16 +23,16 @@ public:
     /**
      * @brief Restricts a point from the fine manifold to the coarse manifold.
      *
-     * The point restriction map $r(y)$ transfers a state vector $y \in \mathcal{S}_{M_h}$
-     * on the fine grid to a state vector on the coarse grid $x \in \mathcal{S}_{M_H}$.
-     * It does this by first applying the standard linear restriction operator $I_h^H$,
+     * The point restriction map \f$r(y)\f$ transfers a state vector \f$y \in \mathcal{S}_{M_h}\f$
+     * on the fine grid to a state vector on the coarse grid \f$x \in \mathcal{S}_{M_H}\f$.
+     * It does this by first applying the standard linear restriction operator \f$I_h^H\f$,
      * and then projecting (retracting) the result back onto the mass-weighted unit sphere
      * of the coarse space.
-     * * Mathematically:
+     * Mathematically:
      * \f[ r(y) = \frac{I_h^H y}{\|I_h^H y\|_{M_H}} \f]
      *
-     * @param x_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
-     * @param y_coarse [out] The restricted point $r(y) \in \mathcal{S}_{M_H}$ on the coarse grid.
+     * @param x_fine The base point \f$y \in \mathcal{S}_{M_h}\f$ on the fine grid.
+     * @param y_coarse [out] The restricted point \f$r(y) \in \mathcal{S}_{M_H}\f$ on the coarse grid.
      */
     void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const override
     {
@@ -44,16 +44,16 @@ public:
     /**
      * @brief Prolongs a point from the coarse manifold to the fine manifold.
      *
-     * The point prolongation map $p(x)$ transfers a state vector $x \in \mathcal{S}_{M_H}$
-     * on the coarse grid to a state vector on the fine grid $y \in \mathcal{S}_{M_h}$.
-     * It does this by first applying the standard linear prolongation operator $I_H^h$,
+     * The point prolongation map \f$p(x)\f$ transfers a state vector \f$x \in \mathcal{S}_{M_H}\f$
+     * on the coarse grid to a state vector on the fine grid \f$y \in \mathcal{S}_{M_h}\f$.
+     * It does this by first applying the standard linear prolongation operator \f$I_H^h\f$,
      * and then projecting (retracting) the result back onto the mass-weighted unit sphere
      * of the fine space.
-     * * Mathematically:
+     * Mathematically:
      * \f[ p(x) = \frac{I_H^h x}{\|I_H^h x\|_{M_h}} \f]
      *
-     * @param y_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
-     * @param x_fine [out] The prolonged point $p(x) \in \mathcal{S}_{M_h}$ on the fine grid.
+     * @param y_coarse The base point \f$x \in \mathcal{S}_{M_H}\f$ on the coarse grid.
+     * @param x_fine [out] The prolonged point \f$p(x) \in \mathcal{S}_{M_h}\f$ on the fine grid.
      */
     void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const override
     {
@@ -65,18 +65,18 @@ public:
     /**
      * @brief Computes the differential of the restriction map.
      *
-     * The differential of the restriction map $r(y)$ evaluates the pushforward
-     * of a tangent vector $v \in T_y \mathcal{S}_{M_h}$ onto the coarse tangent space.
+     * The differential of the restriction map \f$r(y)\f$ evaluates the pushforward
+     * of a tangent vector \f$v \in T_y \mathcal{S}_{M_h}\f$ onto the coarse tangent space.
      * It is computed in five steps:
-     * 1. **Linear restriction of the base point:** $\hat{x} = I_h^H y$
-     * 2. **Norm of the linear point:** $n_H = \|\hat{x}\|_{M_H}$
-     * 3. **Linear restriction of the tangent vector:** $v_H = I_h^H v$
-     * 4. **Mass-weighted inner product:** $\langle \hat{x}, v_H \rangle_{M_H} = \hat{x}^\top M_H v_H$
-     * 5. **Assembly:** $\Drm r(y)[v] = \frac{1}{n_H} \left( v_H - \frac{\langle \hat{x}, v_H \rangle_{M_H}}{n_H^2} \hat{x} \right)$
+     * 1. **Linear restriction of the base point:** \f$\hat{x} = I_h^H y\f$
+     * 2. **Norm of the linear point:** \f$n_H = \|\hat{x}\|_{M_H}\f$
+     * 3. **Linear restriction of the tangent vector:** \f$v_H = I_h^H v\f$
+     * 4. **Mass-weighted inner product:** \f$\langle \hat{x}, v_H \rangle_{M_H} = \hat{x}^\top M_H v_H\f$
+     * 5. **Assembly:** \f$\Drm r(y)[v] = \frac{1}{n_H} \left( v_H - \frac{\langle \hat{x}, v_H \rangle_{M_H}}{n_H^2} \hat{x} \right)\f$
      *
-     * @param x_fine The base point $y \in \mathcal{S}_{M_h}$ on the fine grid.
-     * @param v The tangent vector $v \in T_y \mathcal{S}_{M_h}$.
-     * @param dst The mapped tangent vector $\Drm r(y)[v] \in T_{r(y)} \mathcal{S}_{M_H}$.
+     * @param x_fine The base point \f$y \in \mathcal{S}_{M_h}\f$ on the fine grid.
+     * @param v The tangent vector \f$v \in T_y \mathcal{S}_{M_h}\f$.
+     * @param dst The mapped tangent vector \f$\Drm r(y)[v] \in T_{r(y)} \mathcal{S}_{M_H}\f$.
      */
     void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const override
     {
@@ -108,18 +108,18 @@ public:
     /**
      * @brief Computes the differential of the prolongation map.
      *
-     * The differential of the prolongation map $p(x)$ evaluates the pushforward
-     * of a tangent vector $v \in T_x \mathcal{S}_{M_H}$ onto the fine tangent space.
+     * The differential of the prolongation map \f$p(x)\f$ evaluates the pushforward
+     * of a tangent vector \f$v \in T_x \mathcal{S}_{M_H}\f$ onto the fine tangent space.
      * It is computed in five steps:
-     * 1. **Linear prolongation of the base point:** $\hat{y} = I_H^h x$
-     * 2. **Norm of the linear point:** $n_h = \|\hat{y}\|_{M_h}$
-     * 3. **Linear prolongation of the tangent vector:** $v_h = I_H^h v$
-     * 4. **Mass-weighted inner product:** $\langle \hat{y}, v_h \rangle_{M_h} = \hat{y}^\top M_h v_h$
-     * 5. **Assembly:** $\Drm p(x)[v] = \frac{1}{n_h} \left( v_h - \frac{\langle \hat{y}, v_h \rangle_{M_h}}{n_h^2} \hat{y} \right)$
+     * 1. **Linear prolongation of the base point:** \f$\hat{y} = I_H^h x\f$
+     * 2. **Norm of the linear point:** \f$n_h = \|\hat{y}\|_{M_h}\f$
+     * 3. **Linear prolongation of the tangent vector:** \f$v_h = I_H^h v\f$
+     * 4. **Mass-weighted inner product:** \f$\langle \hat{y}, v_h \rangle_{M_h} = \hat{y}^\top M_h v_h\f$
+     * 5. **Assembly:** \f$\Drm p(x)[v] = \frac{1}{n_h} \left( v_h - \frac{\langle \hat{y}, v_h \rangle_{M_h}}{n_h^2} \hat{y} \right)\f$
      *
-     * @param y_coarse The base point $x \in \mathcal{S}_{M_H}$ on the coarse grid.
-     * @param v The tangent vector $v \in T_x \mathcal{S}_{M_H}$.
-     * @param dst The mapped tangent vector $\Drm p(x)[v] \in T_{p(x)} \mathcal{S}_{M_h}$.
+     * @param y_coarse The base point \f$x \in \mathcal{S}_{M_H}\f$ on the coarse grid.
+     * @param v The tangent vector \f$v \in T_x \mathcal{S}_{M_H}\f$.
+     * @param dst The mapped tangent vector \f$\Drm p(x)[v] \in T_{p(x)} \mathcal{S}_{M_h}\f$.
      */
     void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const override
     {
@@ -157,7 +157,7 @@ private:
  * @brief Strategy for vector transport via ambient space transfer and orthogonal projection.
  * This class implements the `VectorTransportBase` interface using the standard projection
  * strategy. Tangent vectors are first transferred as standard Euclidean vectors in the
- * ambient space $\mathbb{R}^n$, and then forcefully projected onto the target tangent
+ * ambient space \f$\mathbb{R}^n\f$, and then forcefully projected onto the target tangent
  * space using the mass-metric orthogonal projector.
  *
  * @note Because the ambient interpolation transfers the vector directly to the target space
@@ -181,8 +181,8 @@ public:
     /**
      * @brief Prolongs a tangent vector using ambient interpolation and M-metric projection.
      * Computes:
-     * $$\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)$$
-     * where $I_H^h$ is the standard linear prolongation operator.
+     * \f[\mathcal{T}_{H \to h}(v) = P_{T_y \mathcal{S}_h} (I_H^h v)\f]
+     * where \f$I_H^h\f$ is the standard linear prolongation operator.
      */
     void vector_prolongation(const Vector<double>& x_fine,
                              [[maybe_unused]] const Vector<double>& y_coarse,
@@ -200,8 +200,8 @@ public:
     /**
      * @brief Restricts a tangent vector using ambient restriction and M-metric projection.
      * Computes:
-     * $$\mathcal{T}_{h \to H}(v) = P_{T_x \mathcal{S}_H} (I_h^H v)$$
-     * where $I_h^H$ is the standard linear restriction operator.
+     * \f[\mathcal{T}_{h \to H}(v) = P_{T_x \mathcal{S}_H} (I_h^H v)\f]
+     * where \f$I_h^H\f$ is the standard linear restriction operator.
      */
     void vector_restriction(const Vector<double>& y_coarse,
                             [[maybe_unused]] const Vector<double>& x_fine,
@@ -274,11 +274,11 @@ private:
 /**
  * @brief Strategy for vector transport via differentials.
  * This class implements the `VectorTransportBase` interface by computing the differential
- * of the manifold point transfer maps (restriction $r$ and prolongation $p$).
+ * of the manifold point transfer maps (restriction \f$r\f$ and prolongation \f$p\f$).
  *
  * The push-forward of a vector maps it to the tangent space of the
- * mapped point (e.g., $D p(x)[v] \in T_{p(x)} \mathcal{S}_h$).
- * Since the target point of the solver might differ (e.g., $y_h \neq p(x_H)$),
+ * mapped point (e.g., \f$D p(x)[v] \in T_{p(x)} \mathcal{S}_h\f$).
+ * Since the target point of the solver might differ (e.g., \f$y_h \neq p(x_H)\f$),
  * this class employs a two-step interface:
  * 1. Evaluate the differential.
  * 2. Apply a corrective orthogonal projection to move the vector to the target tangent space.
@@ -307,8 +307,8 @@ public:
      * @brief Prolongs a tangent vector by computing the differential of the prolongation map.
      * This two-step method computes the differential and then performs a corrective
      * vector transport to the fine target space:
-     * $$\hat{v} = D p(x_H)[v_H] \quad \in T_{p(x_H)} \mathcal{S}_h$$
-     * $$\mathcal{T}_{H \to h}(v_H) = P_{T_y \mathcal{S}_h} (\hat{v})$$
+     * \f[\hat{v} = D p(x_H)[v_H] \quad \in T_{p(x_H)} \mathcal{S}_h\f]
+     * \f[\mathcal{T}_{H \to h}(v_H) = P_{T_y \mathcal{S}_h} (\hat{v})\f]
      */
     void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
@@ -333,8 +333,8 @@ public:
      * @brief Restricts a tangent vector by computing the differential of the restriction map.
      * This two-step method computes the differential and then performs a corrective
      * vector transport to the coarse target space:
-     * $$\hat{v} = D r(y_h)[v_h] \quad \in T_{r(y_h)} \mathcal{S}_H$$
-     * $$\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})$$
+     * \f[\hat{v} = D r(y_h)[v_h] \quad \in T_{r(y_h)} \mathcal{S}_H\f]
+     * \f[\mathcal{T}_{h \to H}(v_h) = P_{T_x \mathcal{S}_H} (\hat{v})\f]
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
@@ -384,7 +384,7 @@ public:
     /**
      * @brief Prolongs a tangent vector by computing the differential of the prolongation map,
      * then transporting it to the fine target tangent space via F-orthogonal projection:
-     * $$\hat{v} = D p(x_H)[v_H] \in T_{p(x_H)} \mathcal{S}_h, \qquad \mathcal{T}_{H \to h}(v_H) = \Pi_x^F(\hat{v}).$$
+     * \f[\hat{v} = D p(x_H)[v_H] \in T_{p(x_H)} \mathcal{S}_h, \qquad \mathcal{T}_{H \to h}(v_H) = \Pi_x^F(\hat{v}).\f]
      */
     void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
@@ -406,7 +406,7 @@ public:
     /**
      * @brief Restricts a tangent vector by computing the differential of the restriction map,
      * then transporting it to the coarse tangent space via F-orthogonal projection:
-     * $$\hat{v} = D r(y_h)[v_h] \in T_{r(y_h)} \mathcal{S}_H, \qquad \mathcal{T}_{h \to H}(v_h) = \Pi_y^F(\hat{v}).$$
+     * \f[\hat{v} = D r(y_h)[v_h] \in T_{r(y_h)} \mathcal{S}_H, \qquad \mathcal{T}_{h \to H}(v_h) = \Pi_y^F(\hat{v}).\f]
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
@@ -451,7 +451,7 @@ public:
     {}
 
     /**
-     * @brief Version II Prolongation: P(v) = Pi_\phi ( I_H^h v )
+     * @brief Version II Prolongation: \f$ P(v) = \Pi_\phi (I_H^h v) \f$
      */
     void vector_prolongation(const Vector<double>& x_fine,
                              [[maybe_unused]] const Vector<double>& y_coarse,
@@ -470,8 +470,9 @@ public:
 
     /**
      * @brief Restricts a tangent vector using Version II or Version V.
-     * * Version II: R(v) = (I - \psi \psi^T M_H) M_H^{-1} (I_H^h)^T M_h v
-     * Version V:  R(v) = (1 / ||I_H^h \psi||_{M_h}) * Version II
+     *
+     * - Version II: \f$ R(v) = (I - \psi \psi^T M_H) M_H^{-1} (I_H^h)^T M_h v \f$
+     * - Version V: \f$ R(v) = \frac{1}{\|I_H^h \psi\|_{M_h}} R_{II}(v) \f$
      */
     void vector_restriction(const Vector<double>& y_coarse,
                             [[maybe_unused]] const Vector<double>& x_fine,
@@ -608,7 +609,7 @@ public:
 
     /**
      * @brief Version V Restriction:
-     * R(v) = (1 / ||I_H^h \psi||_{M_h}) * (I - \psi\psi^T M_H) M_H^{-1} (I_H^h)^T M_h (I - \Pi_{I_H^h \psi, M_h}) v
+     * \f[ R(v) = \frac{1}{\|I_H^h \psi\|_{M_h}} (I - \psi\psi^T M_H) M_H^{-1} (I_H^h)^T M_h (I - \Pi_{I_H^h \psi, M_h}) v \f]
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
@@ -690,7 +691,7 @@ public:
     /**
      * @brief Prolongs a tangent vector by computing the differential of the prolongation map,
      * then transporting it to the fine tangent space via F-orthogonal projection:
-     * $$\hat{v} = D p(x_H)[v_H] \in T_{p(x_H)} \mathcal{S}_h, \qquad \mathcal{T}_{H \to h}(v_H) = \Pi_x^F(\hat{v}).$$
+     * \f[\hat{v} = D p(x_H)[v_H] \in T_{p(x_H)} \mathcal{S}_h, \qquad \mathcal{T}_{H \to h}(v_H) = \Pi_x^F(\hat{v}).\f]
      */
     void vector_prolongation(const Vector<double>& x_fine, const Vector<double>& y_coarse,
                              const Vector<double>& v_coarse, Vector<double>& dst) const override
@@ -704,9 +705,10 @@ public:
     }
 
     /**
-     * @brief Restriction: $$R(v) = \frac{1}{\|I_H^h \psi\|_{M_h}} \Pi_\psi^F\big((I_H^h)^\top Q(v)\big),
+     * @brief Restriction by the adjoint of the prolongation differential, in the F-metric:
+     * \f[R(v) = \frac{1}{\|I_H^h \psi\|_{M_h}} \Pi_\psi^F\big((I_H^h)^\top Q(v)\big),
      * \quad Q(v) = v - \frac{\tilde\psi \cdot v}{\|\tilde\psi\|_{M_h}^2}\, M_h \tilde\psi, \quad
-     * \tilde\psi = I_H^h \psi.$$
+     * \tilde\psi = I_H^h \psi.\f]
      */
     void vector_restriction(const Vector<double>& y_coarse, [[maybe_unused]] const Vector<double>& x_fine,
                             const Vector<double>& v_fine, Vector<double>& dst) const override

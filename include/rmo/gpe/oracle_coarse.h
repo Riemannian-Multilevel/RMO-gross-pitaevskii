@@ -27,6 +27,7 @@ namespace detail
  * @param[in] phi The base point (fine grid restriction).
  * @param[in] w The restricted gradient/residual.
  * @param[in] M The mass matrix (coarse level).
+ * @param[in] energy The energy \f$ E(\zeta) \f$, evaluated by the caller.
  * @return The scalar value of the coarse model.
  */
 template <typename MatrixType>
