@@ -14,6 +14,13 @@
 namespace rmo
 {
 
+namespace gpe
+{
+// Forward declarations for with_system(); defined in rmo/gpe/gpe.h
+template <int dim> class GrossPitaevskiiSystem;
+template <int dim> class GrossPitaevskiiLumpedSystem;
+} // namespace gpe
+
 //! Take boundary points as strings "x,y,z" from the command-line
 //! @tparam dim
 //! @param s
@@ -49,6 +56,19 @@ decltype(auto) with_dimension(unsigned dim, F&& f)
         default:
             throw std::invalid_argument("dimension must be 1, 2 or 3");
     }
+}
+
+//! Select the Gross-Pitaevskii system type (compile-time) at runtime
+//! @tparam dim Problem dimension
+//! @param mass_lumping Selects gpe::GrossPitaevskiiLumpedSystem<dim> if true, gpe::GrossPitaevskiiSystem<dim> otherwise
+//! @param f Callable templated on the system type, e.g. [&]<typename System>() { ... }
+template <int dim, class F>
+decltype(auto) with_system(bool mass_lumping, F&& f)
+{
+    if (mass_lumping) {
+        return f.template operator()<gpe::GrossPitaevskiiLumpedSystem<dim>>();
+    }
+    return f.template operator()<gpe::GrossPitaevskiiSystem<dim>>();
 }
 
 //!
