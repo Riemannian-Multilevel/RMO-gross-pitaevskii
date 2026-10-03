@@ -40,13 +40,13 @@ static void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& p
 
     // 3. Compute the adaptive gradient
     Vector<double> g_adapt(n_dofs);
-    detail::coarse_frobenius_grad_energy_adaptive(M, A_inv, A, x, phi, w_proj, g_adapt);
+    kernels::coarse_frobenius_grad_energy_adaptive(M, A_inv, A, x, phi, w_proj, g_adapt);
 
     // 4. Verify it is a valid descent direction: Df(x)[-g_adapt] < 0
     Vector<double> neg_g_adapt(g_adapt);
     neg_g_adapt *= -1.0;
 
-    double slope = detail::coarse_frobenius_dir_deriv(x, phi, w_proj, neg_g_adapt, M, A);
+    double slope = kernels::coarse_frobenius_dir_deriv(x, phi, w_proj, neg_g_adapt, M, A);
 
     std::cerr << "Adaptive Gradient Slope: " << slope << "\n";
     if (slope >= 0.0) {
@@ -77,7 +77,7 @@ int main()
     constexpr unsigned n_levels = 6;
 
     try {
-        ModelBuilder<2> builder(potential::Square<2>(), options, n_levels);
+        ModelBuilder<GrossPitaevskiiSystem<2>> builder(potential::Square<2>(), options, n_levels);
         check_adaptive_descent_condition(builder.get_system(), options.beta, options_slv);
     }
     catch (std::exception& e) {

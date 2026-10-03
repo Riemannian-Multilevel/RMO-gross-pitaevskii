@@ -6,8 +6,10 @@
 #define SOLVER_MAX_TOL 1e-2
 
 #include "option_types.h"
-#include <vector>
+#include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
@@ -71,16 +73,19 @@ private:
  * @brief A lightweight alternative to dealii::LinearOperator.
  *
  * This class represents a linear combination of matrices, effectively computing
- * \f$ A = \sum c_i M_i \f$. It is optimized for cases where the matrices are
- * relatively small (n < 1000) or when avoiding the full overhead of
- * dealii::LinearOperator is desired.
+ * \f$ A = \sum c_i M_i \f$. The matrices may have different types. Matrices are stored by pointer, so
+ * they must outlive the operator, and they may be reassembled after it is created.
  *
- * @tparam MatrixType The type of the matrix (e.g., SparseMatrix or FullMatrix).
+ * Each matrix type must provide `vmult`, `Tvmult`, `m()`, `n()` and `diag_element(i)`.
+ *
  * @tparam VectorType The type of the vector (e.g., Vector or BlockVector).
+ * @tparam MatrixTypes The admissible matrix types (e.g., SparseMatrix); distinct.
  */
-template <typename MatrixType, typename VectorType>
+template <typename VectorType, typename... MatrixTypes>
 class LinearCombination
 {
+    static_assert(sizeof...(MatrixTypes) > 0, "LinearCombination requires at least one matrix type");
+
 public:
     /** @brief Default constructor. */
     LinearCombination() = default;
@@ -89,13 +94,18 @@ public:
      * @brief Adds a matrix component to the linear combination.
      * Adds a contribution such that the operator becomes \f$ A \leftarrow A + w \cdot M \f$.
      *
+     * Components with zero weight are skipped.
+     *
      * @param weight The scalar coefficient for this matrix.
-     * @param matrix A reference to the matrix to be added.
+     * @param matrix A reference to the matrix to be added; its type must be one of @p MatrixTypes.
      */
+    template <typename MatrixType>
+        requires (std::is_same_v<MatrixType, MatrixTypes> || ...)
     void add_component(double weight, const MatrixType &matrix)
     {
-        Assert(weight != 0, dealii::ExcMessage("weight must be non-zero"));
-
+        if (weight == 0.0) {
+            return;
+        }
         if (m_components.size()) {
             AssertDimension(matrix.n(), this->n());
             AssertDimension(matrix.m(), this->m());
@@ -137,7 +147,8 @@ public:
     global_dof_index m() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return m_components.back().second->m();
+        return std::visit([](const auto* matrix) -> global_dof_index { return matrix->m(); },
+                          m_components.back().second);
     }
 
     /**
@@ -147,7 +158,8 @@ public:
     global_dof_index n() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return m_components.back().second->n();
+        return std::visit([](const auto* matrix) -> global_dof_index { return matrix->n(); },
+                          m_components.back().second);
     }
 
     /**
@@ -175,24 +187,18 @@ public:
      */
     void vmult_add(VectorType &dst, const VectorType &src) const
     {
-        for (const auto &pair : m_components)
+        for (const auto& [weight, matrix] : m_components)
         {
-            const double weight = pair.first;
-            const auto* matrix = pair.second;
-
-            matrix->vmult(m_vector, src);
+            std::visit([&](const auto* M) { M->vmult(m_vector, src); }, matrix);
             dst.add(weight, m_vector);
         }
     }
 
     void Tvmult_add(VectorType &dst, const VectorType &src) const
     {
-        for (const auto &pair : m_components)
+        for (const auto& [weight, matrix] : m_components)
         {
-            const double weight = pair.first;
-            const auto* matrix = pair.second;
-
-            matrix->Tvmult(m_vector, src);
+            std::visit([&](const auto* M) { M->Tvmult(m_vector, src); }, matrix);
             dst.add(weight, m_vector);
         }
     }
@@ -202,20 +208,24 @@ public:
         Vector<double> diag(m());
         diag = 0.0;
 
-        for (const auto& pair : m_components) {
-            const double weight = pair.first;
-            const auto* matrix = pair.second;
-
-            for (unsigned row = 0; row < m(); ++row) {
-                diag[row] += weight*matrix->diag_element(row);
-            }
+        for (const auto& [weight, matrix] : m_components) {
+            std::visit([&, weight = weight](const auto* M) { add_diagonal(diag, weight, *M); }, matrix);
         }
         return diag;
     }
 
 private:
+    /** @brief Adds weight * diag(matrix) to @p diag. */
+    template <typename MatrixType>
+    static void add_diagonal(Vector<double>& diag, double weight, const MatrixType& matrix)
+    {
+        for (unsigned row = 0; row < diag.size(); ++row) {
+            diag[row] += weight*matrix.diag_element(row);
+        }
+    }
+
     /** @brief Collection of weights and matrix pointers. */
-    std::vector<std::pair<double, const MatrixType*>> m_components;
+    std::vector<std::pair<double, std::variant<const MatrixTypes*...>>> m_components;
 
     /**
      * @brief Temporary scratch vector to prevent frequent allocations.
@@ -535,7 +545,7 @@ private:
     mutable double m_tol = 0.0;
 };
 
-using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
+using OperatorType  = LinearCombination<Vector<double>, SparseMatrix<double>>;
 using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
 } // namespace rmo

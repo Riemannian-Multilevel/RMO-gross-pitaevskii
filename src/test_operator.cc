@@ -128,7 +128,9 @@ int main(int argc, char* argv[])
 {
     try {
         // Coarse: 1 refinement (3x3 DoFs).  Fine: 2 refinements (5x5 DoFs).
-        Triangulation<dim> tria_coarse, tria_fine;
+        // LinearTransferMG distributes level DoFs, which requires this mesh smoothing flag.
+        Triangulation<dim> tria_coarse(Triangulation<dim>::limit_level_difference_at_vertices);
+        Triangulation<dim> tria_fine(Triangulation<dim>::limit_level_difference_at_vertices);
         GridGenerator::hyper_cube(tria_coarse, -1.0, 1.0);
         GridGenerator::hyper_cube(tria_fine,   -1.0, 1.0);
         tria_coarse.refine_global(1);
