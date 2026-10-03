@@ -77,7 +77,7 @@ int main()
     constexpr unsigned n_levels = 6;
 
     try {
-        ModelBuilder<2> builder(potential::Square<2>(), options, n_levels);
+        ModelBuilder<GrossPitaevskiiSystem<2>> builder(potential::Square<2>(), options, n_levels);
         check_adaptive_descent_condition(builder.get_system(), options.beta, options_slv);
     }
     catch (std::exception& e) {

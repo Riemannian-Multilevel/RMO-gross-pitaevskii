@@ -14,16 +14,19 @@
 namespace rmo::gpe
 {
 
-template <int dim>
+template <typename System>
 class GrossPitaevskiiCoarseResidual
 {
 public:
+    using GPOracle = GrossPitaevskiiOracle<System>;
+    using Operator = typename GPOracle::Operator;
+
     // M, A: matrices for computing residual of (uncorrected) objective E_GP
     // M_tilt: matrix for computing residual of coarse correction term <w,L(z)>
     explicit GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model)
         : m_model(model)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<const GrossPitaevskiiOracle<dim>&>(model.coarse()))
+          , gp_coarse(dynamic_cast<const GPOracle&>(model.coarse()))
           , m_norm(gp_coarse.get_M())
     {
     }
@@ -38,8 +41,8 @@ protected:
     Vector<double> residual_vector(const Vector<double>& x) const
     {
         const auto& state = m_model.get_state();
-        const auto& M = gp_coarse.get_M();
-        const auto& A = gp_coarse.get_A();
+        const Operator& M = gp_coarse.get_M();
+        const Operator& A = gp_coarse.get_A();
 
         Vector<double> Mx(x.size());
         M.vmult(Mx, x);
@@ -70,9 +73,9 @@ protected:
 
 private:
     const CoarseOracleBase& m_model;
-    const GrossPitaevskiiOracle<dim>& gp_coarse;
+    const GPOracle& gp_coarse;
 
-    SpdNorm<OperatorType> m_norm; // M-norm
+    SpdNorm<Operator> m_norm; // M-norm
 };
 
 
@@ -92,10 +95,14 @@ private:
 // =========================================================================
 // Mass Coarse Family
 // =========================================================================
-template <int dim>
+template <typename System>
 class MassCoarseOracle : public OracleBase
 {
 public:
+    using GPOracle = GrossPitaevskiiOracle<System>;
+    using Operator = typename GPOracle::Operator;
+    using InverseM = typename GPOracle::InverseM;
+
     const char* id() const override { return "MC"; }
     static constexpr auto model_t = MetricKind::MASS; // coarse model evaluated in M-metric
     static constexpr auto metric_t = MetricKind::MASS; // gradient evaluated in M-metric
@@ -105,7 +112,7 @@ public:
           , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<GrossPitaevskiiOracle<dim>&>(model.coarse()))
+          , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
           , M_inv_coarse(gp_coarse.get_M_inv())
@@ -182,8 +189,8 @@ public:
         return gp_coarse.n_dofs();
     }
 
-    const auto& get_M() const { return M_coarse; }
-    const auto& get_A() const { return A_coarse; }
+    const Operator& get_M() const { return M_coarse; }
+    const Operator& get_A() const { return A_coarse; }
 
     [[nodiscard]] double norm(const Vector<double>& v) const override
     {
@@ -207,22 +214,26 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<dim> m_coarse_res;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     // TODO: dynamic_cast to const? (M, A const methods)
-    GrossPitaevskiiOracle<dim>& gp_coarse;
-    const OperatorType &M_coarse, &A_coarse;
-    InverseOpType& M_inv_coarse;
+    GPOracle& gp_coarse;
+    const Operator &M_coarse, &A_coarse;
+    InverseM& M_inv_coarse;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
-template <int dim>
+template <typename System>
 class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
+    using GPOracle = GrossPitaevskiiOracle<System>;
+    using Operator = typename GPOracle::Operator;
+    using InverseA = typename GPOracle::InverseA;
+
     const char* id() const override { return "MCA"; }
     static constexpr auto model_t = MetricKind::MASS; // coarse model evaluated in M-metric
     static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE; // gradient evaluated in A-metric
@@ -232,7 +243,7 @@ public:
           , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<GrossPitaevskiiOracle<dim>&>(model.coarse()))
+          , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
           , A_inv_coarse(gp_coarse.get_A_inv())
@@ -308,8 +319,8 @@ public:
         return gp_coarse.n_dofs();
     }
 
-    const auto& get_M() const { return M_coarse; }
-    const auto& get_A() const { return A_coarse; }
+    const Operator& get_M() const { return M_coarse; }
+    const Operator& get_A() const { return A_coarse; }
 
     [[nodiscard]] double norm(const Vector<double>& v) const override
     {
@@ -334,14 +345,14 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<dim> m_coarse_res;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
-    GrossPitaevskiiOracle<dim>& gp_coarse;
-    const OperatorType &M_coarse, &A_coarse;
-    InverseOpType& A_inv_coarse;
+    GPOracle& gp_coarse;
+    const Operator &M_coarse, &A_coarse;
+    InverseA& A_inv_coarse;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
@@ -349,10 +360,13 @@ private:
 // Frobenius Coarse Family
 // =========================================================================
 
-template <int dim>
+template <typename System>
 class FrobeniusCoarseOracle : public OracleBase
 {
 public:
+    using GPOracle = GrossPitaevskiiOracle<System>;
+    using Operator = typename GPOracle::Operator;
+
     const char* id() const override { return "FC"; }
     static constexpr auto model_t = MetricKind::FROBENIUS; // coarse model evaluated in F-metric
     static constexpr auto metric_t = MetricKind::FROBENIUS; // gradient evaluated in F-metric
@@ -361,7 +375,7 @@ public:
         : m_model(model)
           , m_coarse_res(model)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<GrossPitaevskiiOracle<dim>&>(model.coarse()))
+          , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
     {
@@ -419,8 +433,8 @@ public:
         return m_model.coarse().n_dofs();
     }
 
-    const auto& get_M() const { return M_coarse; }
-    const auto& get_A() const { return A_coarse; }
+    const Operator& get_M() const { return M_coarse; }
+    const Operator& get_A() const { return A_coarse; }
 
     [[nodiscard]] double norm(const Vector<double>& v) const override
     {
@@ -444,17 +458,21 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<dim> m_coarse_res;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
 
-    GrossPitaevskiiOracle<dim>& gp_coarse;
-    const OperatorType &M_coarse, &A_coarse;
+    GPOracle& gp_coarse;
+    const Operator &M_coarse, &A_coarse;
 };
 
 
-template <int dim>
+template <typename System>
 class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {
 public:
+    using GPOracle = GrossPitaevskiiOracle<System>;
+    using Operator = typename GPOracle::Operator;
+    using InverseA = typename GPOracle::InverseA;
+
     const char* id() const override { return "FCA"; }
     static constexpr auto model_t = MetricKind::FROBENIUS; // coarse model evaluated in F-metric
     static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE; // gradient evaluated in A-metric
@@ -464,7 +482,7 @@ public:
           , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<GrossPitaevskiiOracle<dim>&>(model.coarse()))
+          , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
           , A_inv_coarse(gp_coarse.get_A_inv())
@@ -540,8 +558,8 @@ public:
         return m_model.coarse().n_dofs();
     }
 
-    const auto& get_M() const { return M_coarse; }
-    const auto& get_A() const { return A_coarse; }
+    const Operator& get_M() const { return M_coarse; }
+    const Operator& get_A() const { return A_coarse; }
 
     [[nodiscard]] double norm(const Vector<double>& v) const override
     {
@@ -567,14 +585,14 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<dim> m_coarse_res;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
-    GrossPitaevskiiOracle<dim>& gp_coarse;
-    const OperatorType &M_coarse, &A_coarse;
-    InverseOpType& A_inv_coarse;
+    GPOracle& gp_coarse;
+    const Operator &M_coarse, &A_coarse;
+    InverseA& A_inv_coarse;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 } // namespace rmo::gpe

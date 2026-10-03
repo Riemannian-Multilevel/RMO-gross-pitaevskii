@@ -80,7 +80,7 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
 // Norm for the coarse condition on one level, chosen by CoarseModelOptions::ccond_t
 template <int dim>
 LevelNorm
-build_cond_norm(const GrossPitaevskiiFunctional<dim>& objective, MetricKind ccond_t)
+build_cond_norm(const GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>& objective, MetricKind ccond_t)
 {
     switch (ccond_t) {
         case MetricKind::MASS:
@@ -107,12 +107,12 @@ public:
                           GPE_Options options,
                           SolverOptions options_slv,
                           DescentOptions options_gd)
-        : builder(std::make_unique<ModelBuilder<dim>>(V, options, level))
+        : builder(std::make_unique<ModelBuilder<GrossPitaevskiiSystem<dim>>>(V, options, level))
         , options_slv(options_slv)
         , options_gd(options_gd)
     {
         // 1. Build Physics and Manifold for the single level
-        objective = std::make_shared<GrossPitaevskiiFunctional<dim>>(
+        objective = std::make_shared<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>>(
             builder->get_system(), options.beta, options_slv
         );
         manifold = std::make_shared<UnitMassSphere<OperatorType>>(
@@ -129,13 +129,13 @@ public:
 
         // 2. Instantiate the corresponding descent oracle
         if (metric_t == MetricKind::FROBENIUS) {
-            oracle = std::make_unique<FrobeniusOracle<dim>>(*objective, options_slv);
+            oracle = std::make_unique<FrobeniusOracle<GrossPitaevskiiSystem<dim>>>(*objective, options_slv);
         }
         else if (metric_t == MetricKind::MASS) {
-            oracle = std::make_unique<MassOracle<dim>>(*objective, options_slv);
+            oracle = std::make_unique<MassOracle<GrossPitaevskiiSystem<dim>>>(*objective, options_slv);
         }
         else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {
-            oracle = std::make_unique<EnergyOracle<dim>>(*objective, options_slv);
+            oracle = std::make_unique<EnergyOracle<GrossPitaevskiiSystem<dim>>>(*objective, options_slv);
         }
         else {
             std::abort();
@@ -152,8 +152,8 @@ public:
     const auto& get_package() { return builder->get_package(); }
 
 private:
-    std::unique_ptr<ModelBuilder<dim>>              builder;
-    std::shared_ptr<GrossPitaevskiiFunctional<dim>> objective;
+    std::unique_ptr<ModelBuilder<GrossPitaevskiiSystem<dim>>>              builder;
+    std::shared_ptr<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>> objective;
     std::shared_ptr<ManifoldBase>                   manifold;
 
     SolverOptions  options_slv;
@@ -201,14 +201,14 @@ public:
 
         // 1. Build Physics and Manifolds for all levels
         for (auto l: m_levels) {
-            builders_mg[l] = std::make_unique<ModelBuilder<dim>>(V, options, l);
+            builders_mg[l] = std::make_unique<ModelBuilder<GrossPitaevskiiSystem<dim>>>(V, options, l);
 
             options_descent_mg[l] = options_gd;
             options_solver_mg [l] = options_slv;
 
             // Use shared_ptr to safely store objects with reference members
             // (default copy assignment operator for MGLevelObject)
-            objective_mg[l] = std::make_shared<GrossPitaevskiiFunctional<dim>>(
+            objective_mg[l] = std::make_shared<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>>(
                 builders_mg[l]->get_system(), options.beta, options_solver_mg[l]
             );
             manifold_mg[l] = std::make_shared<UnitMassSphere<OperatorType>>(
@@ -258,7 +258,7 @@ public:
             cond_norm_mg[l] = build_cond_norm<dim>(*objective_mg[l], options_cm.ccond_t);
         }
 
-        fas_solver = std::make_unique<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>>(
+        fas_solver = std::make_unique<FullApproximationScheme<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>>>(
             manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
             options_descent_mg, options_solver_mg, options_fas, cond_norm_mg
         );
@@ -274,19 +274,19 @@ public:
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
         // Execute the cycle on the finest level
-        EnergyOracle<dim> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+        EnergyOracle<GrossPitaevskiiSystem<dim>> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
         if (metric_t == MetricKind::FROBENIUS) {
-            FrobeniusOracle<dim> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+            FrobeniusOracle<GrossPitaevskiiSystem<dim>> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
-            fas_solver->template cycle<FrobeniusOracle<dim>, FrobeniusCoarseOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive<dim>>(
+            fas_solver->template cycle<FrobeniusOracle<GrossPitaevskiiSystem<dim>>, FrobeniusCoarseOracle<GrossPitaevskiiSystem<dim>>, FrobeniusCoarseOracleEnergyAdaptive<GrossPitaevskiiSystem<dim>>>(
                 O_fine, T_fine, x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::MASS) {
-            MassOracle<dim> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+            MassOracle<GrossPitaevskiiSystem<dim>> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
-            fas_solver->template cycle<MassOracle<dim>, MassCoarseOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
+            fas_solver->template cycle<MassOracle<GrossPitaevskiiSystem<dim>>, MassCoarseOracle<GrossPitaevskiiSystem<dim>>, MassCoarseOracleEnergyAdaptive<GrossPitaevskiiSystem<dim>>>(
                 O_fine, T_fine, x0, m_levels.size() - 1, os
             );
         }
@@ -321,9 +321,9 @@ public:
 private:
     std::vector<unsigned> m_levels;
     unsigned min_level, max_level;
-    MGLevelObject<std::unique_ptr<ModelBuilder<dim>>> builders_mg;
+    MGLevelObject<std::unique_ptr<ModelBuilder<GrossPitaevskiiSystem<dim>>>> builders_mg;
 
-    MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>> objective_mg;
+    MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>>> objective_mg;
     MGLevelObject<LevelNorm> cond_norm_mg;
     MGLevelObject<std::shared_ptr<ManifoldBase>>                   manifold_mg;
     MGLevelObject<std::shared_ptr<LinearTransferBase>>             transfer_mg;
@@ -334,7 +334,7 @@ private:
 
     ConvergenceTableObserver                                       table_observer;
 
-    std::unique_ptr<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>> fas_solver;
+    std::unique_ptr<FullApproximationScheme<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>>> fas_solver;
 };
 
 

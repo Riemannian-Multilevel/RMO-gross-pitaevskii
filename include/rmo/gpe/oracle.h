@@ -12,17 +12,20 @@
 namespace rmo::gpe
 {
 
-template <int dim>
+template <typename System>
 class GrossPitaevskiiResidual
 {
 public:
-    explicit GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+
+    explicit GrossPitaevskiiResidual(const Functional& m_func)
         : m_func(m_func)
           , m_norm(m_func.get_M())
     {
     }
 
-    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func, OperatorType op)
+    GrossPitaevskiiResidual(const Functional& m_func, Operator op)
         : m_func(m_func)
           , m_norm(op)
     {
@@ -53,22 +56,28 @@ public:
     }
 
 private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
+    const Functional& m_func;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
 // Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
-template <int dim>
+// System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
+template <typename System>
 class GrossPitaevskiiOracle : public OracleBase
 {
 public:
-    static constexpr int dimension = dim;
+    static constexpr int dimension = System::dimension;
     static constexpr auto metric_t = MetricKind::NONE;
 
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+    using InverseM   = typename Functional::InverseM;
+    using InverseA   = typename Functional::InverseA;
+
     // TODO: move options to base class constructor? (used for all but Frobenius -> no-op)
-    explicit GrossPitaevskiiOracle(GrossPitaevskiiFunctional<dim>& func)
+    explicit GrossPitaevskiiOracle(Functional& func)
         : m_func(func)
           , m_res(func)
     {}
@@ -103,30 +112,35 @@ public:
     }
 
     // Shared accessors
-    const auto& get_M() const { return m_func.get_M(); }
-    const auto& get_A() const { return m_func.get_A(); }
-    const auto& get_A0() const { return m_func.get_A0(); }
+    const Operator& get_M() const { return m_func.get_M(); }
+    const Operator& get_A() const { return m_func.get_A(); }
+    const SparseMatrix<double>& get_A0() const { return m_func.get_A0(); }
 
     // Oracle getters must remain const so they can be called inside gradient(...) const
-    InverseOpType& get_M_inv() const { return m_func.get_M_inv(); }
-    InverseOpType& get_A_inv() const { return m_func.get_A_inv(); }
+    InverseM& get_M_inv() const { return m_func.get_M_inv(); }
+    InverseA& get_A_inv() const { return m_func.get_A_inv(); }
 
 protected:
-    GrossPitaevskiiFunctional<dim>& m_func;
+    Functional& m_func;
 
-    const GrossPitaevskiiResidual<dim> m_res;
+    const GrossPitaevskiiResidual<System> m_res;
 };
 
 
-template <int dim>
-class MassOracle : public GrossPitaevskiiOracle<dim>
+template <typename System>
+class MassOracle : public GrossPitaevskiiOracle<System>
 {
 public:
+    using Base       = GrossPitaevskiiOracle<System>;
+    using Functional = typename Base::Functional;
+    using Operator   = typename Base::Operator;
+    using InverseM   = typename Base::InverseM;
+
     const char* id() const override { return "M"; }
     static constexpr auto metric_t = MetricKind::MASS;
 
-    MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
-        : GrossPitaevskiiOracle<dim>(func)
+    MassOracle(Functional& func, SolverOptions options)
+        : Base(func)
           , options(options)
           , m_norm(this->get_M())
     {}
@@ -148,7 +162,7 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
-        auto& M_inv = this->get_M_inv();
+        InverseM& M_inv = this->get_M_inv();
 
         if (residual > 0)
         {
@@ -188,19 +202,24 @@ public:
 private:
     SolverOptions options;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
-template <int dim>
-class EnergyOracle : public GrossPitaevskiiOracle<dim>
+template <typename System>
+class EnergyOracle : public GrossPitaevskiiOracle<System>
 {
 public:
+    using Base       = GrossPitaevskiiOracle<System>;
+    using Functional = typename Base::Functional;
+    using Operator   = typename Base::Operator;
+    using InverseA   = typename Base::InverseA;
+
     const char* id() const override { return "A"; }
     static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;
 
-    EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
-        : GrossPitaevskiiOracle<dim>(func)
+    EnergyOracle(Functional& func, SolverOptions options)
+        : Base(func)
           , options(options)
           , m_norm(this->get_A())
     {}
@@ -225,7 +244,7 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
-        auto& A_inv = this->get_A_inv();
+        InverseA& A_inv = this->get_A_inv();
 
         if (residual > 0)
         {
@@ -265,19 +284,22 @@ public:
 private:
     SolverOptions options;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
-template <int dim>
-class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
+template <typename System>
+class FrobeniusOracle : public GrossPitaevskiiOracle<System>
 {
 public:
+    using Base       = GrossPitaevskiiOracle<System>;
+    using Functional = typename Base::Functional;
+
     const char* id() const override { return "F"; }
     static constexpr auto metric_t = MetricKind::FROBENIUS;
 
-    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions)
-        : GrossPitaevskiiOracle<dim>(func)
+    FrobeniusOracle(Functional& func, SolverOptions)
+        : Base(func)
     {}
 
     /**

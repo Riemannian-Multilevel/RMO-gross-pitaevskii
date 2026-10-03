@@ -97,15 +97,15 @@ bool run_check(GPE_Options options, SolverOptions options_slv, DescentOptions op
 {
     auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
     auto builder = std::visit([&](auto&& V) {
-        return ModelBuilder<dim>(V, options, level);
+        return ModelBuilder<GrossPitaevskiiSystem<dim>>(V, options, level);
     }, potential_v);
 
     auto& system = builder.get_system();
-    GrossPitaevskiiFunctional<dim> objective(system, options.beta, options_slv);
+    GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>> objective(system, options.beta, options_slv);
 
     // 1. Minimize E on the unit mass sphere
     UnitMassSphere<OperatorType> manifold(objective.get_M());
-    EnergyOracle<dim> oracle(objective, options_slv);
+    EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(objective, options_slv);
 
     Vector<double> x(system.n_dofs());
     x = 1.0;

@@ -453,12 +453,25 @@ private:
 };
 
 
-// Class that represents the smooth objective function E(x) in ambient Euclidean space
-template <int dim>
+/**
+ * @brief The smooth objective function E(x) in ambient Euclidean space.
+ *
+ * @tparam System GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem. For a lumped system,
+ * the inverse mass operator is applied exactly (DiagonalInverse).
+ */
+template <typename System>
 class GrossPitaevskiiFunctional
 {
 public:
-    GrossPitaevskiiFunctional(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
+    static constexpr int dimension = System::dimension;
+    static constexpr bool lumped   = is_diagonal_matrix_v<typename System::MassMatrix>;
+
+    using SystemType = System;
+    using Operator   = typename System::Operator;
+    using InverseA   = PreconditionInverse<Operator, SparseMatrix<double>>;
+    using InverseM   = std::conditional_t<lumped, DiagonalInverse, InverseA>;
+
+    GrossPitaevskiiFunctional(System& system, double beta, SolverOptions options)
         : system(system)
         , beta(beta)
         , M(system.get_operator_M())
@@ -469,8 +482,11 @@ public:
         , A_inv(A, options)
     {
         A_inv.update_static(system.get_A0());
-        M_inv.update_static(system.get_M());
-        M_inv.update_dynamic(M.diagonal());
+        // DiagonalInverse is exact and set up by its constructor
+        if constexpr (!lumped) {
+            M_inv.update_static(system.get_M());
+            M_inv.update_dynamic(M.diagonal());
+        }
     }
 
     // Assembly of the non-linear matrix for value() / directional_derivative()
@@ -517,22 +533,23 @@ public:
     unsigned n_dofs() const { return system.n_dofs(); }
     double get_beta() const { return beta; }
 
-    const auto& get_M() const { return M; }
-    const auto& get_A() const { return A; }
-    const auto& get_A0() const { return system.get_A0(); }
+    const Operator& get_M() const { return M; }
+    const Operator& get_A() const { return A; }
+    const SparseMatrix<double>& get_A0() const { return system.get_A0(); }
 
-    const InverseOpType& get_M_inv() const { return M_inv; }
-    InverseOpType& get_M_inv() { return M_inv; }
+    const InverseM& get_M_inv() const { return M_inv; }
+    InverseM& get_M_inv() { return M_inv; }
 
-    const InverseOpType& get_A_inv() const { return A_inv; }
-    InverseOpType& get_A_inv() { return A_inv; }
+    const InverseA& get_A_inv() const { return A_inv; }
+    InverseA& get_A_inv() { return A_inv; }
 
 
 private:
-    GrossPitaevskiiSystem<dim>& system;
+    System& system;
     double beta;
-    OperatorType M, A;
-    InverseOpType M_inv, A_inv;
+    Operator M, A;
+    InverseM M_inv;
+    InverseA A_inv;
 };
 
 } // namespace rmo::gpe
