@@ -6,9 +6,13 @@
 #define SOLVER_MAX_TOL 1e-2
 
 #include "option_types.h"
-#include <vector>
+#include "lac_traits.h"
+#include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
+#include <deal.II/lac/diagonal_matrix.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/sparse_ilu.h>
@@ -23,6 +27,7 @@ namespace rmo
 // TODO: use aliases for Trilinos, PETSc, ... matrices
 using dealii::Vector;
 using dealii::SparseMatrix;
+using dealii::DiagonalMatrix;
 using dealii::FullMatrix;
 using dealii::SparsityPattern;
 using dealii::DynamicSparsityPattern;
@@ -71,16 +76,21 @@ private:
  * @brief A lightweight alternative to dealii::LinearOperator.
  *
  * This class represents a linear combination of matrices, effectively computing
- * \f$ A = \sum c_i M_i \f$. It is optimized for cases where the matrices are
- * relatively small (n < 1000) or when avoiding the full overhead of
- * dealii::LinearOperator is desired.
+ * \f$ A = \sum c_i M_i \f$. The matrices may have different types, e.g. a sparse stiffness
+ * matrix combined with a diagonal (lumped) mass matrix. Matrices are stored by pointer, so
+ * they must outlive the operator, and they may be reassembled after it is created.
  *
- * @tparam MatrixType The type of the matrix (e.g., SparseMatrix or FullMatrix).
+ * Each matrix type must provide `vmult`, `Tvmult`, `m()` and `n()`, and for diagonal() either
+ * be a `DiagonalMatrix` or provide `diag_element(i)`.
+ *
  * @tparam VectorType The type of the vector (e.g., Vector or BlockVector).
+ * @tparam MatrixTypes The admissible matrix types (e.g., SparseMatrix, DiagonalMatrix); distinct.
  */
-template <typename MatrixType, typename VectorType>
+template <typename VectorType, typename... MatrixTypes>
 class LinearCombination
 {
+    static_assert(sizeof...(MatrixTypes) > 0, "LinearCombination requires at least one matrix type");
+
 public:
     /** @brief Default constructor. */
     LinearCombination() = default;
@@ -89,13 +99,18 @@ public:
      * @brief Adds a matrix component to the linear combination.
      * Adds a contribution such that the operator becomes \f$ A \leftarrow A + w \cdot M \f$.
      *
+     * Components with zero weight are skipped.
+     *
      * @param weight The scalar coefficient for this matrix.
-     * @param matrix A reference to the matrix to be added.
+     * @param matrix A reference to the matrix to be added; its type must be one of @p MatrixTypes.
      */
+    template <typename MatrixType>
+        requires (std::is_same_v<MatrixType, MatrixTypes> || ...)
     void add_component(double weight, const MatrixType &matrix)
     {
-        Assert(weight != 0, dealii::ExcMessage("weight must be non-zero"));
-
+        if (weight == 0.0) {
+            return;
+        }
         if (m_components.size()) {
             AssertDimension(matrix.n(), this->n());
             AssertDimension(matrix.m(), this->m());
@@ -137,7 +152,8 @@ public:
     global_dof_index m() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return m_components.back().second->m();
+        return std::visit([](const auto* matrix) -> global_dof_index { return matrix->m(); },
+                          m_components.back().second);
     }
 
     /**
@@ -147,7 +163,8 @@ public:
     global_dof_index n() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return m_components.back().second->n();
+        return std::visit([](const auto* matrix) -> global_dof_index { return matrix->n(); },
+                          m_components.back().second);
     }
 
     /**
@@ -175,24 +192,18 @@ public:
      */
     void vmult_add(VectorType &dst, const VectorType &src) const
     {
-        for (const auto &pair : m_components)
+        for (const auto& [weight, matrix] : m_components)
         {
-            const double weight = pair.first;
-            const auto* matrix = pair.second;
-
-            matrix->vmult(m_vector, src);
+            std::visit([&](const auto* M) { M->vmult(m_vector, src); }, matrix);
             dst.add(weight, m_vector);
         }
     }
 
     void Tvmult_add(VectorType &dst, const VectorType &src) const
     {
-        for (const auto &pair : m_components)
+        for (const auto& [weight, matrix] : m_components)
         {
-            const double weight = pair.first;
-            const auto* matrix = pair.second;
-
-            matrix->Tvmult(m_vector, src);
+            std::visit([&](const auto* M) { M->Tvmult(m_vector, src); }, matrix);
             dst.add(weight, m_vector);
         }
     }
@@ -202,20 +213,31 @@ public:
         Vector<double> diag(m());
         diag = 0.0;
 
-        for (const auto& pair : m_components) {
-            const double weight = pair.first;
-            const auto* matrix = pair.second;
-
-            for (unsigned row = 0; row < m(); ++row) {
-                diag[row] += weight*matrix->diag_element(row);
-            }
+        for (const auto& [weight, matrix] : m_components) {
+            std::visit([&, weight = weight](const auto* M) { add_diagonal(diag, weight, *M); }, matrix);
         }
         return diag;
     }
 
 private:
+    /** @brief Adds weight * diag(matrix) to @p diag. */
+    template <typename MatrixType>
+    static void add_diagonal(Vector<double>& diag, double weight, const MatrixType& matrix)
+    {
+        for (unsigned row = 0; row < diag.size(); ++row) {
+            diag[row] += weight*matrix.diag_element(row);
+        }
+    }
+
+    /** @brief Overload for diagonal matrices, which store their diagonal as a vector. */
+    template <typename DiagonalVectorType>
+    static void add_diagonal(Vector<double>& diag, double weight, const DiagonalMatrix<DiagonalVectorType>& matrix)
+    {
+        diag.add(weight, matrix.get_vector());
+    }
+
     /** @brief Collection of weights and matrix pointers. */
-    std::vector<std::pair<double, const MatrixType*>> m_components;
+    std::vector<std::pair<double, std::variant<const MatrixTypes*...>>> m_components;
 
     /**
      * @brief Temporary scratch vector to prevent frequent allocations.
@@ -535,7 +557,58 @@ private:
     mutable double m_tol = 0.0;
 };
 
-using OperatorType  = LinearCombination<SparseMatrix<double>, Vector<double>>;
+/**
+ * @brief Exact inverse of a diagonal operator, with the interface of PreconditionInverse.
+ *
+ * Used for lumped mass matrices: vmult() scales by the inverse diagonal, without solver
+ * iterations (control() reports zero steps), and set_tol() has no effect.
+ */
+class DiagonalInverse
+{
+public:
+    using VectorType = Vector<double>;
+
+    /**
+     * @brief Inverts the diagonal of @p op.
+     * @tparam OperatorType A diagonal operator providing `diagonal()`, e.g. a LinearCombination
+     * of `DiagonalMatrix` components.
+     * @param op The diagonal operator to be inverted.
+     */
+    template <typename OperatorType>
+    DiagonalInverse(const OperatorType& op, SolverOptions /*options*/)
+    {
+        update_dynamic(op.diagonal());
+        m_control.check(0, 0.0);  // record a converged solve with zero iterations
+    }
+
+    /** @brief Resets the operator to diag(@p diag); all entries must be non-zero. */
+    void update_dynamic(const VectorType& diag)
+    {
+        auto& inv_diag = m_inv.get_vector();
+        inv_diag.reinit(diag.size());
+        for (unsigned int i = 0; i < diag.size(); ++i) {
+            AssertThrow(diag[i] != 0.0, dealii::ExcMessage("diagonal operator is singular"));
+            inv_diag[i] = 1.0 / diag[i];
+        }
+    }
+
+    /** @brief Applies the inverse: dst = diag^{-1} src. */
+    void vmult(VectorType& dst, const VectorType& src) const { m_inv.vmult(dst, src); }
+
+    /** @brief Applies the transpose inverse, which equals the inverse. */
+    void Tvmult(VectorType& dst, const VectorType& src) const { m_inv.vmult(dst, src); }
+
+    /** @brief Solver statistics of the last application (no iterations). */
+    const SolverControl& control() const { return m_control; }
+
+    void set_tol(double /*tol*/) const {}
+
+private:
+    DiagonalMatrix<VectorType> m_inv;
+    SolverControl m_control;
+};
+
+using OperatorType  = LinearCombination<Vector<double>, SparseMatrix<double>>;
 using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
 } // namespace rmo

@@ -139,6 +139,7 @@ struct GPE_Options
     Ordering order;         // ordering for degrees of freedom
     BoundaryCondition bc;   // problem boundary conditions (dirichlet or neumann)
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
+    bool mass_lumping;      // lumped (diagonal) mass matrices, see GrossPitaevskiiLumpedSystem
     Potential potential;    // used potential V for matrix M_V
     std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
     bool export_solution;   // write incumbent solutions to disk

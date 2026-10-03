@@ -18,12 +18,15 @@ namespace rmo::gpe
  * assembled @ref GrossPitaevskiiSystem, and creates the @ref GrossPitaevskiiFunctional evaluators
  * (see get_eval()) used by the oracles, e.g. @ref GrossPitaevskiiOracle.
  *
- * @tparam dim The spatial dimension.
+ * @tparam System GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem.
  */
-template <int dim>
+template <typename System>
 class ModelBuilder
 {
 public:
+    static constexpr int dim = System::dimension;
+    using Functional = GrossPitaevskiiFunctional<System>;
+
     /**
      * @brief Constructor.
      * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
@@ -36,17 +39,10 @@ public:
     // discretization
         : package(options, n_levels)
     // linear system
-        , system(package.system(std::forward<Potential>(V)))
+        , system(package.template system<System>(std::forward<Potential>(V)))
     // problem parameters
         , options(options)
     {}
-
-    // Allow to change the potential without re-discretizing the domain.
-    template <typename Potential>
-    void reinit(Potential&& V)
-    {
-        system = package.system(std::forward<Potential>(V));
-    }
 
     void distribute(Vector<double>& x) const
     {
@@ -57,36 +53,35 @@ public:
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
     const dealii::DoFHandler<dim>& get_dofs() const { return package.get_dofs(); }
 
-    const GrossPitaevskiiSystem<dim>& get_system() const { return system; }
-    GrossPitaevskiiSystem<dim>& get_system() { return system; }
+    const System& get_system() const { return system; }
+    System& get_system() { return system; }
 
     /** @brief Computation of value and derivatives in ambient space.
      * Non-const so calls to GrossPitaevskiiSystem::update() can propagate
      */
-    auto get_eval(double beta, SolverOptions options_slv)
+    Functional get_eval(double beta, SolverOptions options_slv)
     {
-        return GrossPitaevskiiFunctional<dim>(system, beta, options_slv);
+        return Functional(system, beta, options_slv);
     }
 
-    auto get_eval(SolverOptions options_slv)
+    Functional get_eval(SolverOptions options_slv)
     {
-        return GrossPitaevskiiFunctional<dim>(system, options.beta, options_slv);
+        return Functional(system, options.beta, options_slv);
     }
 
     unsigned int n_dofs() const { return package.n_dofs(); }
 
-    // References to sparse matrix stored in GrossPitaevskiiSystem
+    // References to matrices stored in the system
     // (system.get_operator_* are factories for LinearCombination objects.)
-    const auto& get_M() const { return system.get_M(); }
-    const auto& get_A(double beta) const { return system.get_A(beta); }
-    const auto& get_A0() const { return system.get_A0(); }
+    const typename System::MassMatrix& get_M() const { return system.get_M(); }
+    const SparseMatrix<double>& get_A0() const { return system.get_A0(); }
 
 private:
     /** @brief Persistent discretization infrastructure. */
     GrossPitaevskiiPackage<dim> package;
 
     /** @brief Assembly and storage of matrices. */
-    GrossPitaevskiiSystem<dim> system;
+    System system;
 
     /** @brief Problem configuration options. */
     GPE_Options options;

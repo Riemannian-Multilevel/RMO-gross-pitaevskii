@@ -18,6 +18,49 @@ using namespace rmo::gpe;
 using namespace dealii;
 
 
+// Gradient descent on each level of --levels, for the system type selected by --mass-lumping
+template <typename System>
+void solve(const GPE_Options& options, const DescentOptions& options_gd, const SolverOptions& options_slv,
+           const MG_Options& options_mg)
+{
+    constexpr int dim = System::dimension;
+    auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
+
+    for (unsigned int level : options_mg.v_levels) {
+        // Set up the grid (Package) and finite element space
+        auto context = std::visit([&](auto&& arg) {
+            return ModelBuilder<System>(arg, options, level);
+        }, potential_v);
+
+        // Set starting value, sufficiently far from an optimal solution
+        Vector<double> x0(context.n_dofs());
+        x0 = 1.0;
+        context.distribute(x0);
+        // auto M_norm = SpdNorm(context.get_M());
+        // x0 /= M_norm(x0);
+
+        // Define objective in ambient space
+        auto gp = context.get_eval(options.beta, options_slv);
+        // Define manifold
+        auto manifold = UnitMassSphere<typename System::MassMatrix>(context.get_M());
+        // Define Riemannian metric
+        EnergyOracle<System> oracle(gp, options_slv);
+
+        // Termination criterion for gradient descent
+        GradientDescent solver(oracle, manifold, options_gd);
+        ConvergenceTableObserver conv_observer;
+        solver.set_observer(conv_observer);
+
+        Vector<double> x(x0);
+        solver.cycle(x, std::cout);
+
+        // Plot solution
+        std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
+        output_results(x, context.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
+    }
+}
+
+
 int main(int argc, char* argv[])
 {
     GPE_Options    options{};
@@ -51,41 +94,10 @@ int main(int argc, char* argv[])
         //       timer carried on across levels
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
-            constexpr int dim = T0::value;
-            auto potential_v= potential::get_potential<dim>(options.potential, options.potential_expr);
-
-            for (unsigned int level : options_mg.v_levels) {
-                // Set up the grid (Package) and finite element space
-                auto context = std::visit([&](auto&& arg) {
-                    return ModelBuilder<dim>(arg, options, level);
-                }, potential_v);
-
-                // Set starting value, sufficiently far from an optimal solution
-                Vector<double> x0(context.n_dofs());
-                x0 = 1.0;
-                context.distribute(x0);
-                // auto M_norm = SpdNorm(context.get_M());
-                // x0 /= M_norm(x0);
-
-                // Define objective in ambient space
-                auto gp = context.get_eval(options.beta, options_slv);
-                // Define manifold
-                auto manifold = UnitMassSphere<SparseMatrix<double>>(context.get_M());
-                // Define Riemannian metric
-                EnergyOracle<dim> oracle(gp, options_slv);
-
-                // Termination criterion for gradient descent
-                GradientDescent solver(oracle, manifold, options_gd);
-                ConvergenceTableObserver conv_observer;
-                solver.set_observer(conv_observer);
-
-                Vector<double> x(x0);
-                solver.cycle(x, std::cout);
-
-                // Plot solution
-                std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
-                output_results(x, context.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
-            }
+            with_system<T0::value>(options.mass_lumping, [&]<typename System>()
+            {
+                solve<System>(options, options_gd, options_slv, options_mg);
+            });
         });
     }
     catch (std::exception& e) {

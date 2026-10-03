@@ -27,7 +27,7 @@ public:
     const double stddev = 1.0;
 
     using MatrixType    = SparseMatrix<double>;
-    using OperatorType  = LinearCombination<MatrixType, Vector<double>>;
+    using OperatorType  = LinearCombination<Vector<double>, MatrixType>;
     using InverseOpType = PreconditionInverse<OperatorType, MatrixType>;
 
     GradientTestBase(GrossPitaevskiiSystem<dim>& system, double beta, SolverOptions options)
@@ -97,7 +97,7 @@ public:
 
 protected:
     GrossPitaevskiiSystem<dim> &m_system;
-    GrossPitaevskiiFunctional<dim> m_eval;
+    GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>> m_eval;
     double m_beta;
 };
 
@@ -136,7 +136,7 @@ public:
     [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> x_grad(x.size());
-        detail::grad_energy_adaptive(this->get_A_inv(), this->get_M(), x, x_grad);
+        kernels::grad_energy_adaptive(this->get_A_inv(), this->get_M(), x, x_grad);
 
         return x_grad;
     }
@@ -171,7 +171,7 @@ public:
     [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        detail::grad_mass(this->get_M_inv(), this->get_A(), this->get_M(), x, x_grad);
+        kernels::grad_mass(this->get_M_inv(), this->get_A(), this->get_M(), x, x_grad);
 
         return x_grad;
     }
@@ -206,7 +206,7 @@ public:
     [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const override
     {
         Vector<double> x_grad(x.size());
-        detail::grad_frobenius(this->get_A(), this->get_M(), x, x_grad);
+        kernels::grad_frobenius(this->get_A(), this->get_M(), x, x_grad);
 
         return x_grad;
     }
@@ -291,18 +291,18 @@ public:
     {
         const double energy = this->m_eval.value(x);
 
-        return detail::coarse_mass_value(x, this->m_phi, this->m_w, this->get_M(), energy);
+        return kernels::coarse_mass_value(x, this->m_phi, this->m_w, this->get_M(), energy);
     }
 
     [[nodiscard]] double directional_derivative(const Vector<double>& x, const Vector<double>& z) const final
     {
-        return detail::coarse_mass_dir_deriv(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
+        return kernels::coarse_mass_dir_deriv(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
     }
 
     [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> q_grad(x.size());
-        detail::coarse_mass_grad(this->get_M(), this->get_M_inv(), this->get_A(), x, this->m_phi, this->m_w, q_grad);
+        kernels::coarse_mass_grad(this->get_M(), this->get_M_inv(), this->get_A(), x, this->m_phi, this->m_w, q_grad);
 
         return q_grad;
     }
@@ -352,19 +352,19 @@ public:
     {
         const double energy = this->m_eval.value(x);
 
-        return detail::coarse_frobenius_value(x, this->m_phi, this->m_w, this->get_M(), energy);
+        return kernels::coarse_frobenius_value(x, this->m_phi, this->m_w, this->get_M(), energy);
     }
 
     [[nodiscard]] double directional_derivative(const dealii::Vector<double>& x, const dealii::Vector<double>& z) const override
     {
-        return detail::coarse_frobenius_dir_deriv(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
+        return kernels::coarse_frobenius_dir_deriv(x, this->m_phi, this->m_w, z, this->get_M(), this->get_A());
     }
 
     [[nodiscard]] Vector<double> gradient(const Vector<double>& x) const final
     {
         Vector<double> q_grad(x.size());
         // Pure F-metric gradient of the coarse model
-        detail::coarse_frobenius_grad(this->get_M(), this->get_A(),
+        kernels::coarse_frobenius_grad(this->get_M(), this->get_A(),
             x, this->m_phi, this->m_w, q_grad);
 
         return q_grad;
