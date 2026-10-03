@@ -23,7 +23,7 @@
 namespace rmo::gpe
 {
 
-/** @brief Shared part of the oracles of a @p System (GrossPitaevskiiSystem). */
+/** @brief Shared part of the oracles of a @p System (GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem). */
 template <typename System>
 class GrossPitaevskiiOracle : public OracleBase
 {
@@ -83,7 +83,7 @@ protected:
 };
 
 
-/** @brief Riemannian gradient in the M-metric: one solve with \f$ M \f$. */
+/** @brief Riemannian gradient in the M-metric: one solve with \f$ M \f$ (exact for a lumped system). */
 template <typename System>
 class MassOracle : public GrossPitaevskiiOracle<System>
 {

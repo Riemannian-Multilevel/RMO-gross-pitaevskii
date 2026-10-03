@@ -6,6 +6,7 @@
 #define SOLVER_MAX_TOL 1e-2
 
 #include "option_types.h"
+#include "lac_traits.h"
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -14,6 +15,7 @@
 
 #include <deal.II/base/observer_pointer.h>
 
+#include <deal.II/lac/diagonal_matrix.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/sparse_ilu.h>
@@ -30,7 +32,7 @@
  * All operators provide deal.II's `vmult(dst, src)` and `Tvmult(dst, src)`: LinearCombination (weighted sum
  * of matrices) and TransposeMatrix. The inverse operators apply \f$ A^{-1} \f$ through the same interface:
  * InverseMatrix (one Krylov solve per application), PreconditionInverse (solver and preconditioner selected
- * by SolverOptions).
+ * by SolverOptions) and DiagonalInverse (exact, for lumped mass matrices).
  *
  * Inner tolerance: `vmult(dst, rhs)` uses `SolverOptions::tol_inner` relative to the norm of rhs,
  * `vmult(dst, rhs, AbsTol{t})` the absolute tolerance t; both capped at SOLVER_MAX_TOL.
@@ -43,6 +45,7 @@ struct AbsTol { double value; };
 // TODO: use aliases for Trilinos, PETSc, ... matrices
 using dealii::Vector;
 using dealii::SparseMatrix;
+using dealii::DiagonalMatrix;
 using dealii::FullMatrix;
 using dealii::SparsityPattern;
 using dealii::DynamicSparsityPattern;
@@ -57,9 +60,10 @@ using dealii::SolverControl;
  * @brief Weighted sum of matrices \f$ A = \sum_i w_i M_i \f$, a lightweight alternative to
  * dealii::LinearOperator.
  *
- * The matrices may have different types.
+ * The matrices may have different types, e.g. a sparse stiffness and a diagonal (lumped) mass matrix.
  * They are stored by pointer: they must outlive the operator, and may be reassembled after it is created.
- * Each type provides `vmult`, `Tvmult`, `m()`, `n()` and `diag_element(i)`.
+ * Each type provides `vmult`, `Tvmult`, `m()`, `n()`, and for diagonal() `diag_element(i)` unless it is a
+ * `DiagonalMatrix`.
  *
  * @tparam VectorType Vector type of vmult() and Tvmult().
  * @tparam MatrixTypes Admissible matrix types, all distinct.
@@ -175,6 +179,13 @@ private:
         for (unsigned row = 0; row < diag.size(); ++row) {
             diag[row] += weight*matrix.diag_element(row);
         }
+    }
+
+    /** @brief Overload for diagonal matrices, which store their diagonal as a vector. */
+    template <typename DiagonalVectorType>
+    static void add_diagonal(Vector<double>& diag, double weight, const DiagonalMatrix<DiagonalVectorType>& matrix)
+    {
+        diag.add(weight, matrix.get_vector());
     }
 
     //! Observer of a component; debug builds report use of a destroyed component
@@ -476,6 +487,56 @@ private:
 
     // Stores the state of the most recent solve_with() call
     mutable SolverControl m_control;
+};
+
+/**
+ * @brief Exact inverse of a diagonal operator, with the interface of PreconditionInverse.
+ *
+ * For lumped mass matrices: vmult() scales by the inverse diagonal, control() reports zero iterations,
+ * and the tolerance has no effect.
+ */
+class DiagonalInverse
+{
+public:
+    using VectorType = Vector<double>;
+
+    /**
+     * @brief Inverts `op.diagonal()`, e.g. of a LinearCombination of `DiagonalMatrix` components.
+     * The unused SolverOptions keep the constructor signature of PreconditionInverse.
+     */
+    template <typename OperatorType>
+    DiagonalInverse(const OperatorType& op, SolverOptions /*options*/)
+    {
+        update_dynamic(op.diagonal());
+        m_control.check(0, 0.0);  // record a converged solve with zero iterations
+    }
+
+    /** @brief Resets the operator to diag(@p diag); all entries must be non-zero. */
+    void update_dynamic(const VectorType& diag)
+    {
+        auto& inv_diag = m_inv.get_vector();
+        inv_diag.reinit(diag.size());
+        for (unsigned int i = 0; i < diag.size(); ++i) {
+            AssertThrow(diag[i] != 0.0, dealii::ExcMessage("diagonal operator is singular"));
+            inv_diag[i] = 1.0 / diag[i];
+        }
+    }
+
+    /** @brief Applies the inverse: dst = diag^{-1} src. */
+    void vmult(VectorType& dst, const VectorType& src) const { m_inv.vmult(dst, src); }
+
+    /** @brief As above; the tolerance has no effect, the inverse is exact. */
+    void vmult(VectorType& dst, const VectorType& src, const AbsTol /*tol*/) const { m_inv.vmult(dst, src); }
+
+    /** @brief Applies the transpose inverse, which equals the inverse. */
+    void Tvmult(VectorType& dst, const VectorType& src) const { m_inv.vmult(dst, src); }
+
+    /** @brief Zero iterations, as for a converged solve. */
+    const SolverControl& control() const { return m_control; }
+
+private:
+    DiagonalMatrix<VectorType> m_inv;
+    SolverControl m_control;
 };
 
 //! An inverse with a fixed tolerance, for code that calls `vmult(dst, rhs)` (the kernels). Holds a reference.

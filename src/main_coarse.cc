@@ -376,7 +376,7 @@ struct ProgramOptions
 };
 
 
-// Single- or multilevel experiment
+// Single- or multilevel experiment, for the system type selected by --mass-lumping
 template <typename System>
 static void run_experiment(const ProgramOptions& opts)
 {
@@ -474,7 +474,10 @@ int main(int argc, char* argv[])
 
         with_dimension(opts.gpe.dimension, [&]<typename T0>(T0)
         {
-            run_experiment<GrossPitaevskiiSystem<T0::value>>(opts);
+            with_system<T0::value>(opts.gpe.mass_lumping, [&]<typename System>()
+            {
+                run_experiment<System>(opts);
+            });
         });
     }
     catch (std::exception& e) {

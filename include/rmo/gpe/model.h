@@ -51,8 +51,8 @@ private:
 
 
 /**
- * @brief Owns the GrossPitaevskiiPackage and the assembled @p System (GrossPitaevskiiSystem) of one level, and
- * creates GrossPitaevskiiFunctional objects for it.
+ * @brief Owns the GrossPitaevskiiPackage and the assembled @p System (GrossPitaevskiiSystem or
+ * GrossPitaevskiiLumpedSystem) of one level, and creates GrossPitaevskiiFunctional objects for it.
  */
 template <typename System>
 class ModelBuilder

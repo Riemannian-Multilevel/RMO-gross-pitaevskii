@@ -17,6 +17,7 @@
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_simplex_p_bubbles.h>  // for higher degree simplex elements with mass lumping
 
+#include <algorithm>
 #include <memory>
 #include <numbers>
 #include <string>
@@ -31,7 +32,7 @@
  *
  * - potentials \f$ V \f$ (namespace potential);
  * - the matrices \f$ A_0 = S + M_V \f$, \f$ M \f$ and the non-linear term \f$ M_{\phi\phi}(x) \f$, consistent
- *   (GrossPitaevskiiSystem);
+ *   (GrossPitaevskiiSystem) or lumped (GrossPitaevskiiLumpedSystem);
  * - mesh, element, mapping, quadrature and DoFs (GrossPitaevskiiPackage);
  * - the energy, its Euclidean gradient \f$ A(x) x \f$ with \f$ A(x) = A_0 + \beta M_{\phi\phi}(x) \f$, and the
  *   inverse operators of \f$ M \f$ and \f$ A(x) \f$ (GrossPitaevskiiFunctional).
@@ -175,7 +176,8 @@ get_potential(Potential potential_t, const std::string& expr = "") {
  * @brief Storage of \f$ A_0 \f$, \f$ M \f$ and \f$ M_{\phi\phi} \f$, and LinearCombination operators of them;
  * derived classes assemble the matrices and implement `assemble_nonlinear_term(x)`.
  *
- * @tparam MassMatrixType Storage of \f$ M \f$ and \f$ M_{\phi\phi} \f$, e.g. `SparseMatrix<double>`.
+ * @tparam MassMatrixType Storage of \f$ M \f$ and \f$ M_{\phi\phi} \f$: `SparseMatrix<double>` (consistent) or
+ * `DiagonalMatrix<Vector<double>>` (lumped).
  */
 template <int dim, typename MassMatrixType>
 class GrossPitaevskiiSystemBase
@@ -298,6 +300,66 @@ private:
 
 
 /**
+ * @brief Gross-Pitaevskii system with lumped (diagonal) mass and nonlinear matrices.
+ *
+ * Same interface as GrossPitaevskiiSystem, with \f$ M \f$ and \f$ M_{\phi\phi} \f$ stored as
+ * `DiagonalMatrix`: \f$ M_L \f$ holds the row sums of \f$ M \f$, and the zeroth-order terms are evaluated
+ * at the support points \f$ a_i \f$, \f$ (M_{V,L})_{ii} = V(a_i) (M_L)_{ii} \f$ in \f$ A_0 = S + M_{V,L} \f$
+ * and \f$ (M_{\phi\phi})_{ii} = x_i^2 (M_L)_{ii} \f$. The row sums must be positive (checked; e.g. not
+ * `FE_SimplexP(2)`), and the constraints free of hanging nodes.
+ *
+ * @tparam dim The spatial dimension of the problem.
+ */
+template <int dim>
+class GrossPitaevskiiLumpedSystem : public GrossPitaevskiiSystemBase<dim, DiagonalMatrix<Vector<double>>>
+{
+    using Base = GrossPitaevskiiSystemBase<dim, DiagonalMatrix<Vector<double>>>;
+
+public:
+    /**
+     * @brief Assembles \f$ M_L \f$ and \f$ A_0 = S + M_{V,L} \f$ with quadrature @p quad, condensed with the
+     * constraints @p cstr.
+     * @throws dealii::ExcMessage if the row sums of the mass matrix are not positive.
+     */
+    template <typename Potential>
+    GrossPitaevskiiLumpedSystem(const dealii::DoFHandler<dim>& dofs,
+                                const dealii::Quadrature<dim>& quad,
+                                const dealii::Mapping<dim>& map,
+                                const dealii::AffineConstraints<double>& cstr,
+                                Potential&& V)
+        : Base(dofs, cstr)
+    {
+        this->M.get_vector().reinit(dofs.n_dofs());
+        fe::assemble_mass_lumped(this->M, dofs, quad, map, cstr);
+
+        // Exactly zero row sums (e.g. FE_SimplexP(2)) are only zero up to rounding
+        const auto& m = this->M.get_vector();
+        AssertThrow(*std::ranges::min_element(m) > 1e-12 * m.linfty_norm(),
+                    dealii::ExcMessage("element not lumpable (non-positive row sums of the mass matrix)"));
+
+        fe::assemble_A0_lumped(this->A0, V, dofs, quad, map, cstr);
+
+        this->Mpp.get_vector().reinit(dofs.n_dofs());
+    }
+
+    /**
+     * @brief Updates \f$ (M_{\phi\phi})_{ii} = x_i^2 \, (M_L)_{ii} \f$ for the state @p x.
+     *
+     * Equals fe::assemble_mass_phiphi_lumped() on unconstrained rows, without a cell loop.
+     */
+    void assemble_nonlinear_term(const Vector<double>& x)
+    {
+        AssertDimension(x.size(), this->n_dofs());
+        const auto& m = this->M.get_vector();
+        auto& mpp     = this->Mpp.get_vector();
+
+        for (unsigned int i = 0; i < x.size(); ++i) {
+            mpp[i] = x[i] * x[i] * m[i];
+        }
+    }
+};
+
+/**
  * @brief Mesh, finite element, mapping, quadrature and DoFs of a problem, and factory of its systems.
  *
  * Quadrilateral meshes use `FE_Q(p)` with `MappingQ1` and `QGauss(p + 1)`; simplex meshes use `FE_SimplexP(1)`,
@@ -350,7 +412,7 @@ public:
         space.setup_constraints(options.bc);
     }
 
-    /** @brief Assembles a system (GrossPitaevskiiSystem) for the potential @p V. */
+    /** @brief Assembles a system (GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem) for the potential @p V. */
     // TODO: turn this into a free function
     template <typename System = GrossPitaevskiiSystem<dim>, typename Potential>
     System system(Potential&& V) const
@@ -389,7 +451,7 @@ private:
 
 /**
  * @brief Energy \f$ E(x) \f$ in ambient space, its Euclidean gradient \f$ A(x) x \f$, and the inverse operators of
- * \f$ M \f$ and \f$ A(x) \f$.
+ * \f$ M \f$ and \f$ A(x) \f$ (for a lumped system, \f$ M^{-1} \f$ is exact).
  *
  * update() reassembles \f$ M_{\phi\phi} \f$ of the system; all other members refer to the state of the last update.
  */
@@ -398,11 +460,12 @@ class GrossPitaevskiiFunctional
 {
 public:
     static constexpr int dimension = System::dimension;
+    static constexpr bool lumped   = is_diagonal_matrix_v<typename System::MassMatrix>;
 
     using SystemType = System;
     using Operator   = typename System::Operator;
     using InverseA   = PreconditionInverse<Operator, SparseMatrix<double>>;
-    using InverseM   = InverseA;
+    using InverseM   = std::conditional_t<lumped, DiagonalInverse, InverseA>;
 
     GrossPitaevskiiFunctional(System& system, double beta, SolverOptions options)
         : system(system)
@@ -415,8 +478,11 @@ public:
         , A_inv(A, options)
     {
         A_inv.update_static(system.get_A0());
-        M_inv.update_static(system.get_M());
-        M_inv.update_dynamic(M.diagonal());
+        // DiagonalInverse is exact and set up by its constructor
+        if constexpr (!lumped) {
+            M_inv.update_static(system.get_M());
+            M_inv.update_dynamic(M.diagonal());
+        }
     }
 
     /** @brief Reassembles \f$ M_{\phi\phi}(x) \f$ and the Jacobi preconditioner of \f$ A(x) \f$. */
@@ -493,12 +559,29 @@ void assemble_mass(GlobalMatrix& system_matrix, const gpe::GrossPitaevskiiPackag
         context.get_mapping(), context.get_constraints(), level);
 }
 
+template <int dim, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
+void assemble_mass_lumped(GlobalMatrix& system_matrix, const gpe::GrossPitaevskiiPackage<dim>& context,
+                          unsigned int level = invalid_unsigned_int)
+{
+    assemble_mass_lumped(system_matrix, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
 template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
 void assemble_mass_weighted(GlobalMatrix& system_matrix, Function&& V,
                             const gpe::GrossPitaevskiiPackage<dim>& context,
                             unsigned int level = invalid_unsigned_int)
 {
     assemble_mass_weighted(system_matrix, V, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename Function, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
+void assemble_mass_weighted_lumped(GlobalMatrix& system_matrix, Function&& V,
+                                   const gpe::GrossPitaevskiiPackage<dim>& context,
+                                   unsigned int level = invalid_unsigned_int)
+{
+    assemble_mass_weighted_lumped(system_matrix, V, context.get_dofs(), context.get_quadrature(),
         context.get_mapping(), context.get_constraints(), level);
 }
 
@@ -516,6 +599,15 @@ void assemble_A0(GlobalMatrix& system_matrix, Function&& V,
                  unsigned int level = invalid_unsigned_int)
 {
     assemble_A0(system_matrix, V, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
+void assemble_A0_lumped(GlobalMatrix& system_matrix, Function&& V,
+                        const gpe::GrossPitaevskiiPackage<dim>& context,
+                        unsigned int level = invalid_unsigned_int)
+{
+    assemble_A0_lumped(system_matrix, V, context.get_dofs(), context.get_quadrature(),
         context.get_mapping(), context.get_constraints(), level);
 }
 

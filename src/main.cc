@@ -31,7 +31,7 @@ struct ProgramOptions
 };
 
 
-// Gradient descent on each level of --levels
+// Gradient descent on each level of --levels, for the system type selected by --mass-lumping
 template <typename System>
 static void solve(const ProgramOptions& opts)
 {
@@ -109,7 +109,10 @@ int main(int argc, char* argv[])
         //       timer carried on across levels
         with_dimension(opts.gpe.dimension, [&]<typename T0>(T0)
         {
-            solve<GrossPitaevskiiSystem<T0::value>>(opts);
+            with_system<T0::value>(opts.gpe.mass_lumping, [&]<typename System>()
+            {
+                solve<System>(opts);
+            });
         });
     }
     catch (std::exception& e) {

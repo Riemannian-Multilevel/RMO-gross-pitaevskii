@@ -239,7 +239,7 @@ namespace gpe
 {
 
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta, order, bc, mesh_kind, initial, initial_arg, seed));
+    (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping, initial, initial_arg, seed));
 BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
 BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, COSINE, RANDOM);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
@@ -271,6 +271,9 @@ inline po::options_description gpe_cli_options() {
         ("potential-expr", po::value<std::string>()->default_value(""),
             "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
             "implies --potential expression")
+        ("mass-lumping", po::value<bool>()->default_value(false)->implicit_value(true),
+            "use lumped (diagonal) mass matrices; requires a lumpable element "
+            "(quadrilateral, or simplex with degree <= 2)")
         ("initial", po::value<std::string>()->default_value("constant"),
             "initial value (constant|cosine|random)")
         ("initial-arg", po::value<std::string>()->default_value(""),
@@ -295,6 +298,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.initial   = string_to_enum<InitialValue>(initial_str);
 
     options.potential_expr = vm["potential-expr"].as<std::string>();
+    options.mass_lumping   = vm["mass-lumping"].as<bool>();
 
     options.seed = vm["seed"].as<unsigned>();
 

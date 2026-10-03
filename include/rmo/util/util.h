@@ -20,6 +20,13 @@
 namespace rmo
 {
 
+namespace gpe
+{
+// Forward declarations for with_system(); defined in rmo/gpe/gpe.h
+template <int dim> class GrossPitaevskiiSystem;
+template <int dim> class GrossPitaevskiiLumpedSystem;
+} // namespace gpe
+
 //! Point from a string of @p sep separated coordinates, e.g. "x,y,z" from the command line.
 template <int dim>
 dealii::Point<dim> str_to_point(const std::string& s, const char sep=',') {
@@ -47,6 +54,17 @@ decltype(auto) with_dimension(unsigned dim, F&& f)
         default:
             throw std::invalid_argument("dimension must be 1, 2 or 3");
     }
+}
+
+//! Calls `f.template operator()<System>()` with the system type selected at runtime: GrossPitaevskiiLumpedSystem
+//! if @p mass_lumping is set, GrossPitaevskiiSystem otherwise; e.g. `f = [&]<typename System>() { ... }`.
+template <int dim, class F>
+decltype(auto) with_system(bool mass_lumping, F&& f)
+{
+    if (mass_lumping) {
+        return f.template operator()<gpe::GrossPitaevskiiLumpedSystem<dim>>();
+    }
+    return f.template operator()<gpe::GrossPitaevskiiSystem<dim>>();
 }
 
 //! Upper-case copy of @p s.
