@@ -24,8 +24,8 @@ using namespace rmo::gpe;
 
 template <int dim>
 static void
-prolongate_between_meshes(const ModelBuilder<dim>& coarse, const Vector<double>& x_coarse,
-                          const ModelBuilder<dim>& fine, Vector<double>& y0_fine)
+prolongate_between_meshes(const ModelBuilder<GrossPitaevskiiSystem<dim>>& coarse, const Vector<double>& x_coarse,
+                          const ModelBuilder<GrossPitaevskiiSystem<dim>>& fine, Vector<double>& y0_fine)
 {
     const fe::LinearTransfer<dim> transfer(coarse.get_package().get_dofs(),
                                            fine.get_package().get_dofs(),
@@ -97,13 +97,13 @@ int main(int argc, char* argv[])
             }
 
             // 1) Setup + assemble each refinement using ModelBuilder
-            MGLevelObject<std::unique_ptr<ModelBuilder<dim>>> builder(ref_min, ref_max);
+            MGLevelObject<std::unique_ptr<ModelBuilder<GrossPitaevskiiSystem<dim>>>> builder(ref_min, ref_max);
             for (unsigned int ref = ref_min; ref <= ref_max; ++ref)
             {
                 std::cout << "---- ASSEMBLY REF " << ref << " ----\n";
                 TimerOutput::Scope t(timer, "Assembly - ref " + std::to_string(ref));
                 builder[ref] = std::visit([&](auto&& V) {
-                    return std::make_unique<ModelBuilder<dim>>(V, options, ref);
+                    return std::make_unique<ModelBuilder<GrossPitaevskiiSystem<dim>>>(V, options, ref);
                 }, potential_v);
             }
 
@@ -142,7 +142,7 @@ int main(int argc, char* argv[])
                         // New Architecture Pipeline
                         auto gp_func = builder[ref]->get_eval(options.beta, options_slv_level[ref]);
                         UnitMassSphere<OperatorType> manifold(gp_func.get_M());
-                        EnergyOracle<dim> oracle(gp_func, options_slv_level[ref]);
+                        EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp_func, options_slv_level[ref]);
 
                         GradientDescent solver(oracle, manifold, options_gd_level[ref]);
                         ConvergenceTableObserver conv_observer;
@@ -173,7 +173,7 @@ int main(int argc, char* argv[])
 
                 auto gp_func = builder[ref_max]->get_eval(options.beta, options_slv_level[ref_max]);
                 UnitMassSphere<OperatorType> manifold(gp_func.get_M());
-                EnergyOracle<dim> oracle(gp_func, options_slv);
+                EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp_func, options_slv);
 
                 GradientDescent solver(oracle, manifold, options_gd);
                 ConvergenceTableObserver conv_observer;

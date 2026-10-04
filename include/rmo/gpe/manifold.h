@@ -96,15 +96,15 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
 // TODO: use x as output vector as with other functions
 /**
  * @brief Computes the differentiated retraction by normalization.
- * * Evaluates the differential of the retraction map at $v$ in the direction $w$:
- * $$ \mathrm{D} R_\phi(v)[w] = \frac{1}{\|\phi+v\|_M} \left( I - \frac{(\phi+v)(\phi+v)^\top M}{\|\phi+v\|_M^2} \right) w $$
+ * Evaluates the differential of the retraction map at \f$v\f$ in the direction \f$w\f$:
+ * \f[ \mathrm{D} R_\phi(v)[w] = \frac{1}{\|\phi+v\|_M} \left( I - \frac{(\phi+v)(\phi+v)^\top M}{\|\phi+v\|_M^2} \right) w \f]
  *
- * @note Because $w \in T_\phi \mathcal{M}$, we have $\phi^\top M w = 0$.
- * Thus, the numerator $(\phi+v)^\top M w$ simplifies exactly to $v^\top M w$.
+ * @note Because \f$w \in T_\phi \mathcal{M}\f$, we have \f$\phi^\top M w = 0\f$.
+ * Thus, the numerator \f$(\phi+v)^\top M w\f$ simplifies exactly to \f$v^\top M w\f$.
  *
  * @tparam MatrixType A matrix class type providing a `vmult` method.
  * @param[in] M Mass matrix defining the metric.
- * @param[in] x Base point $\phi$ on the manifold.
+ * @param[in] x Base point \f$\phi\f$ on the manifold.
  * @param[in] v Tangent vector (argument of the retraction).
  * @param[in] w Direction of differentiation.
  * @param[out] dst Resulting vector.
@@ -365,7 +365,7 @@ public:
 
     /**
      * @brief Retracts a tangent vector back to the unit-mass manifold.
-     * $$ R_x(z) = \frac{x + z}{\|x + z\|_M} $$
+     * \f[ R_x(z) = \frac{x + z}{\|x + z\|_M} \f]
      */
     void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
     {

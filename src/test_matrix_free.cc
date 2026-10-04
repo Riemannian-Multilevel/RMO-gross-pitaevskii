@@ -134,7 +134,7 @@ int main(int argc, char* argv[])
 
         for (unsigned level = min_level; level <= max_level; level++) {
             dealii::Timer timer;
-            ModelBuilder<dim> model(potential::Square<dim>(), options, level);
+            ModelBuilder<GrossPitaevskiiSystem<dim>> model(potential::Square<dim>(), options, level);
 
             auto& system = model.get_system();
             const auto& eval = model.get_eval(options.beta, SolverOptions{});

@@ -7,6 +7,7 @@
 
 #include <rmo/lac.h>
 #include <rmo/gpe/gpe.h>
+#include <rmo/gpe/oracle.h>  // kernels::grad_mass, grad_energy_adaptive, grad_frobenius
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/transport.h>
 
@@ -40,15 +41,20 @@ protected:
 };
 
 
-template <int dim>
+// System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
+template <typename System>
 class GrossPitaevskiiIteration : public IterationBase
 {
 public:
-    static constexpr int dimension = dim;
+    static constexpr int dimension = System::dimension;
 
-    GrossPitaevskiiIteration(GrossPitaevskiiFunctional<dim> &func,
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using InverseM   = typename Functional::InverseM;
+    using InverseA   = typename Functional::InverseA;
+
+    GrossPitaevskiiIteration(Functional &func,
                              std::shared_ptr<const Vector<double>> x_ptr)
-        : IterationBase(x_ptr), m_func(func)
+        : IterationBase(x_ptr), m_func(func), m_res(func)
     {
         AssertDimension(x_ptr->size(), m_func.n_dofs());
 
@@ -63,6 +69,11 @@ public:
     double directional_derivative(const Vector<double> &z) const override
     {
         return m_func.directional_derivative(*(this->x_ptr), z);
+    }
+
+    double residual() const override
+    {
+        return m_res.residual(*(this->x_ptr));
     }
 
     GradInfo gradient(Vector<double>& dst) const override
@@ -80,32 +91,39 @@ public:
 
 
 protected:
-    GrossPitaevskiiFunctional<dim> &m_func;
+    Functional &m_func;
+
+    const GrossPitaevskiiResidual<System> m_res;
 };
 
 
-template <int dim>
-class MassIteration : public GrossPitaevskiiIteration<dim>
+template <typename System>
+class MassIteration : public GrossPitaevskiiIteration<System>
 {
 public:
-    MassIteration(GrossPitaevskiiFunctional<dim> &func,
+    using Base       = GrossPitaevskiiIteration<System>;
+    using Functional = typename Base::Functional;
+    using InverseM   = typename Base::InverseM;
+    using Base::gradient;  // keep gradient(dst), which computes the residual
+
+    MassIteration(Functional &func,
                   std::shared_ptr<const Vector<double>> x_ptr,
                   SolverOptions options)
-        : GrossPitaevskiiIteration<dim>(func, x_ptr), m_options(options)
+        : Base(func, x_ptr), m_options(options)
     {}
 
     GradInfo gradient(Vector<double>& output, double residual) const override
     {
         dealii::Timer timer;
         GradInfo info{};
-        auto& M_inv = this->m_func.get_M_inv();
+        InverseM& M_inv = this->m_func.get_M_inv();
 
         if (residual > 0) {
             M_inv.set_tol(residual * m_options.tol_inner_res);
         }
 
         timer.start();
-        ellipsoid::mass::gradient(M_inv, this->m_func.get_A(), this->m_func.get_M(), *(this->x_ptr), output);
+        kernels::grad_mass(M_inv, this->m_func.get_A(), this->m_func.get_M(), *(this->x_ptr), output);
 
         info.num_iter     = M_inv.control().last_step();
         info.tolerance    = M_inv.control().tolerance();
@@ -120,14 +138,19 @@ private:
 };
 
 
-template <int dim>
-class EnergyIteration : public GrossPitaevskiiIteration<dim>
+template <typename System>
+class EnergyIteration : public GrossPitaevskiiIteration<System>
 {
 public:
-    EnergyIteration(GrossPitaevskiiFunctional<dim> &func,
+    using Base       = GrossPitaevskiiIteration<System>;
+    using Functional = typename Base::Functional;
+    using InverseA   = typename Base::InverseA;
+    using Base::gradient;  // keep gradient(dst), which computes the residual
+
+    EnergyIteration(Functional &func,
                     std::shared_ptr<const Vector<double>> x_ptr,
                     SolverOptions options)
-        : GrossPitaevskiiIteration<dim>(func, x_ptr), m_options(options)
+        : Base(func, x_ptr), m_options(options)
     {}
 
 
@@ -135,14 +158,14 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
-        auto& A_inv = this->m_func.get_A_inv();
+        InverseA& A_inv = this->m_func.get_A_inv();
 
         if (residual > 0) {
             A_inv.set_tol(residual * m_options.tol_inner_res);
         }
 
         timer.start();
-        ellipsoid::energy::gradient(A_inv, this->m_func.get_M(), *(this->x_ptr), output);
+        kernels::grad_energy_adaptive(A_inv, this->m_func.get_M(), *(this->x_ptr), output);
 
         info.num_iter     = A_inv.control().last_step();
         info.tolerance    = A_inv.control().tolerance();
@@ -157,14 +180,17 @@ private:
 };
 
 
-template <int dim>
-class FrobeniusIteration : public GrossPitaevskiiIteration<dim>
+template <typename System>
+class FrobeniusIteration : public GrossPitaevskiiIteration<System>
 {
 public:
-    FrobeniusIteration(GrossPitaevskiiFunctional<dim> &func,
+    using Base       = GrossPitaevskiiIteration<System>;
+    using Functional = typename Base::Functional;
+
+    FrobeniusIteration(Functional &func,
                        std::shared_ptr<const Vector<double>> x_ptr,
                        SolverOptions = {})
-        : GrossPitaevskiiIteration<dim>(func, x_ptr)
+        : Base(func, x_ptr)
     {}
 
     // override from base, no matrix inversions (tolerance) needed
@@ -179,7 +205,7 @@ public:
         GradInfo info{};
 
         timer.start();
-        ellipsoid::frobenius::gradient(this->m_func.get_A(), this->m_func.get_M(), *(this->x_ptr), output);
+        kernels::grad_frobenius(this->m_func.get_A(), this->m_func.get_M(), *(this->x_ptr), output);
         timer.stop();
 
         // F-gradient evaluation does not involve a linear solver.

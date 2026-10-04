@@ -21,10 +21,10 @@ using namespace rmo::gpe;
 // -------------------------------------------------------------------------
 // Transfer Setup Helper
 // -------------------------------------------------------------------------
-template <int dim>
+template <int dim, typename Operator, typename InverseM>
 auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_f,
                      const AffineConstraints<double>& constr_c, const AffineConstraints<double>& constr_f,
-                     const OperatorType& M_c, const OperatorType& M_f, const InverseOpType& M_inv_c,
+                     const Operator& M_c, const Operator& M_f, const InverseM& M_inv_c,
                      const CoarseModelOptions& options_cm)
 {
     std::shared_ptr<LinearTransferBase> transfer;
@@ -32,7 +32,7 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
     std::shared_ptr<VectorTransportBase> vector_transport;
 
     if (options_cm.interpol_t == Interpolate::MASS) {
-        transfer = std::make_shared<MassTransfer<dim,fe::LinearTransferMG<dim>,OperatorType,InverseOpType>>(
+        transfer = std::make_shared<MassTransfer<dim,fe::LinearTransferMG<dim>,Operator,InverseM>>(
             dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
     }
     else if (options_cm.interpol_t == Interpolate::NONE) {
@@ -42,32 +42,32 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
         std::abort();
     }
 
-    point_transfer = std::make_shared<ManifoldTransfer<OperatorType>>(*transfer, M_c, M_f);
+    point_transfer = std::make_shared<ManifoldTransfer<Operator>>(*transfer, M_c, M_f);
 
     // TODO: include other operators
     if (options_cm.transport_t == Transport::FROBENIUS) {
-        vector_transport = std::make_shared<FrobeniusProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
+        vector_transport = std::make_shared<FrobeniusProjectionTransport<Operator>>(*transfer, M_c, M_f);
     }
     else if (options_cm.transport_t == Transport::MASS) {
-        vector_transport = std::make_shared<MassProjectionTransport<OperatorType>>(*transfer, M_c, M_f);
+        vector_transport = std::make_shared<MassProjectionTransport<Operator>>(*transfer, M_c, M_f);
     }
     else if (options_cm.transport_t == Transport::DIFFERENTIAL) {
-        vector_transport = std::make_shared<DifferentialTransport<OperatorType>>(*point_transfer, M_c, M_f);
+        vector_transport = std::make_shared<DifferentialTransport<Operator>>(*point_transfer, M_c, M_f);
     }
     else if (options_cm.transport_t == Transport::ADJOINT_RESTRICTION) {
-        vector_transport = std::make_shared<AdjointRestrictionTransport<OperatorType, InverseOpType>>(*transfer, M_c, M_f, M_inv_c);
+        vector_transport = std::make_shared<AdjointRestrictionTransport<Operator, InverseM>>(*transfer, M_c, M_f, M_inv_c);
     }
     else if (options_cm.transport_t == Transport::ADJOINT_DIFFERENTIAL) {
-        vector_transport = std::make_shared<AdjointDifferentialTransport<OperatorType, InverseOpType>>(*transfer, *point_transfer, M_c, M_f, M_inv_c);
+        vector_transport = std::make_shared<AdjointDifferentialTransport<Operator, InverseM>>(*transfer, *point_transfer, M_c, M_f, M_inv_c);
     }
     else if (options_cm.transport_t == Transport::ADJOINT_RESTRICTION_FROBENIUS) {
-        vector_transport = std::make_shared<FrobeniusAdjointRestrictionTransport<OperatorType>>(*transfer, M_c, M_f);
+        vector_transport = std::make_shared<FrobeniusAdjointRestrictionTransport<Operator>>(*transfer, M_c, M_f);
     }
     else if (options_cm.transport_t == Transport::ADJOINT_DIFFERENTIAL_FROBENIUS) {
-        vector_transport = std::make_shared<FrobeniusAdjointDifferentialTransport<OperatorType>>(*transfer, *point_transfer, M_c, M_f);
+        vector_transport = std::make_shared<FrobeniusAdjointDifferentialTransport<Operator>>(*transfer, *point_transfer, M_c, M_f);
     }
     else if (options_cm.transport_t == Transport::DIFFERENTIAL_FROBENIUS) {
-        vector_transport = std::make_shared<FrobeniusDifferentialTransport<OperatorType>>(*point_transfer, M_c, M_f);
+        vector_transport = std::make_shared<FrobeniusDifferentialTransport<Operator>>(*point_transfer, M_c, M_f);
     }
     else {
         std::abort();
@@ -78,15 +78,17 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
 
 
 // Norm for the coarse condition on one level, chosen by CoarseModelOptions::ccond_t
-template <int dim>
+template <typename System>
 LevelNorm
-build_cond_norm(const GrossPitaevskiiFunctional<dim>& objective, MetricKind ccond_t)
+build_cond_norm(const GrossPitaevskiiFunctional<System>& objective, MetricKind ccond_t)
 {
+    using Operator = typename GrossPitaevskiiFunctional<System>::Operator;
+
     switch (ccond_t) {
         case MetricKind::MASS:
-            return SpdNorm<OperatorType>(objective.get_M());
+            return SpdNorm<Operator>(objective.get_M());
         case MetricKind::ENERGY_ADAPTIVE:  // A(x) at the state the level functional was last updated to
-            return SpdNorm<OperatorType>(objective.get_A());
+            return SpdNorm<Operator>(objective.get_A());
         case MetricKind::FROBENIUS:
             return [](const Vector<double>& v) { return v.l2_norm(); };
         case MetricKind::NONE:             // use the metric of the coarse model (oracle norm)
@@ -98,24 +100,28 @@ build_cond_norm(const GrossPitaevskiiFunctional<dim>& objective, MetricKind ccon
 
 
 // Reference problem using Riemannian gradient descent
-template <int dim>
+template <typename System>
 class SingleLevelExperiment
 {
 public:
+    static constexpr int dim = System::dimension;
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+
     template <typename Potential>
     SingleLevelExperiment(Potential&& V, unsigned level,
                           GPE_Options options,
                           SolverOptions options_slv,
                           DescentOptions options_gd)
-        : builder(std::make_unique<ModelBuilder<dim>>(V, options, level))
+        : builder(std::make_unique<ModelBuilder<System>>(V, options, level))
         , options_slv(options_slv)
         , options_gd(options_gd)
     {
         // 1. Build Physics and Manifold for the single level
-        objective = std::make_shared<GrossPitaevskiiFunctional<dim>>(
+        objective = std::make_shared<Functional>(
             builder->get_system(), options.beta, options_slv
         );
-        manifold = std::make_shared<UnitMassSphere<OperatorType>>(
+        manifold = std::make_shared<UnitMassSphere<Operator>>(
             objective->get_M()
         );
     }
@@ -129,13 +135,13 @@ public:
 
         // 2. Instantiate the corresponding descent oracle
         if (metric_t == MetricKind::FROBENIUS) {
-            oracle = std::make_unique<FrobeniusOracle<dim>>(*objective, options_slv);
+            oracle = std::make_unique<FrobeniusOracle<System>>(*objective, options_slv);
         }
         else if (metric_t == MetricKind::MASS) {
-            oracle = std::make_unique<MassOracle<dim>>(*objective, options_slv);
+            oracle = std::make_unique<MassOracle<System>>(*objective, options_slv);
         }
         else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {
-            oracle = std::make_unique<EnergyOracle<dim>>(*objective, options_slv);
+            oracle = std::make_unique<EnergyOracle<System>>(*objective, options_slv);
         }
         else {
             std::abort();
@@ -148,12 +154,12 @@ public:
     }
 
     const auto& history() const { return solver->history(); }
-    const auto& get_M() const { return builder->get_system().get_M(); }
+    const typename System::MassMatrix& get_M() const { return builder->get_system().get_M(); }
     const auto& get_package() { return builder->get_package(); }
 
 private:
-    std::unique_ptr<ModelBuilder<dim>>              builder;
-    std::shared_ptr<GrossPitaevskiiFunctional<dim>> objective;
+    std::unique_ptr<ModelBuilder<System>>      builder;
+    std::shared_ptr<Functional>                     objective;
     std::shared_ptr<ManifoldBase>                   manifold;
 
     SolverOptions  options_slv;
@@ -164,10 +170,15 @@ private:
 };
 
 
-template <int dim>
+template <typename System>
 class MultiLevelExperiment
 {
 public:
+    static constexpr int dim = System::dimension;
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+    using InverseM   = typename Functional::InverseM;
+
     template <typename Potential>
     MultiLevelExperiment(Potential&& V, const std::vector<unsigned> &levels,
                          GPE_Options options, FAS_Options options_fas, CoarseModelOptions options_cm,
@@ -201,17 +212,17 @@ public:
 
         // 1. Build Physics and Manifolds for all levels
         for (auto l: m_levels) {
-            builders_mg[l] = std::make_unique<ModelBuilder<dim>>(V, options, l);
+            builders_mg[l] = std::make_unique<ModelBuilder<System>>(V, options, l);
 
             options_descent_mg[l] = options_gd;
             options_solver_mg [l] = options_slv;
 
             // Use shared_ptr to safely store objects with reference members
             // (default copy assignment operator for MGLevelObject)
-            objective_mg[l] = std::make_shared<GrossPitaevskiiFunctional<dim>>(
+            objective_mg[l] = std::make_shared<Functional>(
                 builders_mg[l]->get_system(), options.beta, options_solver_mg[l]
             );
-            manifold_mg[l] = std::make_shared<UnitMassSphere<OperatorType>>(
+            manifold_mg[l] = std::make_shared<UnitMassSphere<Operator>>(
                 objective_mg[l]->get_M()
             );
         }
@@ -238,12 +249,12 @@ public:
 
             const auto& dofs_c= builders_mg[l_c]->get_package().get_dofs();
             const auto& constr_c = builders_mg[l_c]->get_package().get_constraints();
-            const auto& M_c= objective_mg[l_c]->get_M();
-            InverseOpType& M_inv_c = objective_mg[l_c]->get_M_inv();
+            const Operator& M_c = objective_mg[l_c]->get_M();
+            InverseM& M_inv_c = objective_mg[l_c]->get_M_inv();
 
             const auto& dofs_f = builders_mg[l]->get_package().get_dofs();
             const auto& constr_f = builders_mg[l]->get_package().get_constraints();
-            const auto& M_f = objective_mg[l]->get_M();
+            const Operator& M_f = objective_mg[l]->get_M();
 
             auto [t, pt, vt] = build_transfers(
                 dofs_c, dofs_f, constr_c, constr_f, M_c, M_f, M_inv_c, options_cm);
@@ -255,10 +266,10 @@ public:
 
         // 4. Norm for the coarse condition on each level
         for (auto l: m_levels) {
-            cond_norm_mg[l] = build_cond_norm<dim>(*objective_mg[l], options_cm.ccond_t);
+            cond_norm_mg[l] = build_cond_norm(*objective_mg[l], options_cm.ccond_t);
         }
 
-        fas_solver = std::make_unique<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>>(
+        fas_solver = std::make_unique<FullApproximationScheme<Functional>>(
             manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
             options_descent_mg, options_solver_mg, options_fas, cond_norm_mg
         );
@@ -274,19 +285,21 @@ public:
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
         // Execute the cycle on the finest level
-        EnergyOracle<dim> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+        EnergyOracle<System> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
         if (metric_t == MetricKind::FROBENIUS) {
-            FrobeniusOracle<dim> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+            FrobeniusOracle<System> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
-            fas_solver->template cycle<FrobeniusOracle<dim>, FrobeniusCoarseOracle<dim>, FrobeniusCoarseOracleEnergyAdaptive<dim>>(
+            fas_solver->template cycle<FrobeniusOracle<System>, FrobeniusCoarseOracle<System>,
+                                       FrobeniusCoarseOracleEnergyAdaptive<System>>(
                 O_fine, T_fine, x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::MASS) {
-            MassOracle<dim> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
+            MassOracle<System> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
-            fas_solver->template cycle<MassOracle<dim>, MassCoarseOracle<dim>, MassCoarseOracleEnergyAdaptive<dim>>(
+            fas_solver->template cycle<MassOracle<System>, MassCoarseOracle<System>,
+                                       MassCoarseOracleEnergyAdaptive<System>>(
                 O_fine, T_fine, x0, m_levels.size() - 1, os
             );
         }
@@ -313,17 +326,17 @@ public:
     }
 
     const auto& history() const { return fas_solver->history(); }
-    const auto& get_M(int level) const { return builders_mg[level]->get_system().get_M(); }
-    const auto& get_M() const { return builders_mg[max_level]->get_system().get_M(); }
+    const typename System::MassMatrix& get_M(int level) const { return builders_mg[level]->get_system().get_M(); }
+    const typename System::MassMatrix& get_M() const { return builders_mg[max_level]->get_system().get_M(); }
     const auto& get_package(int level) { return builders_mg[level]->get_package(); }
     const auto& get_package() { return builders_mg[max_level]->get_package(); }
 
 private:
     std::vector<unsigned> m_levels;
     unsigned min_level, max_level;
-    MGLevelObject<std::unique_ptr<ModelBuilder<dim>>> builders_mg;
+    MGLevelObject<std::unique_ptr<ModelBuilder<System>>> builders_mg;
 
-    MGLevelObject<std::shared_ptr<GrossPitaevskiiFunctional<dim>>> objective_mg;
+    MGLevelObject<std::shared_ptr<Functional>> objective_mg;
     MGLevelObject<LevelNorm> cond_norm_mg;
     MGLevelObject<std::shared_ptr<ManifoldBase>>                   manifold_mg;
     MGLevelObject<std::shared_ptr<LinearTransferBase>>             transfer_mg;
@@ -334,13 +347,92 @@ private:
 
     ConvergenceTableObserver                                       table_observer;
 
-    std::unique_ptr<FullApproximationScheme<GrossPitaevskiiFunctional<dim>>> fas_solver;
+    std::unique_ptr<FullApproximationScheme<Functional>> fas_solver;
 };
 
 
 // -------------------------------------------------------------------------
 // Main
 // -------------------------------------------------------------------------
+// Single- or multilevel experiment, for the system type selected by --mass-lumping
+template <typename System>
+void run_experiment(const GPE_Options& options, const DescentOptions& options_gd, const SolverOptions& options_slv,
+                    const MG_Options& options_mg, const FAS_Options& options_fas, const CoarseModelOptions& options_cm)
+{
+    constexpr int dim = System::dimension;
+    const unsigned n_levels = options_mg.n_levels;
+    auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
+
+    if (options_cm.metric_t == MetricKind::NONE || options_mg.v_levels.size() == 1) {
+        // Run standard single-level Riemannian gradient descent on the finest level
+        auto exp = std::visit([&](auto&& arg) {
+            return SingleLevelExperiment<System>(arg, n_levels, options, options_slv, options_gd);
+        }, potential_v);
+
+        Vector<double> x0(exp.n_dofs());
+        x0 = 1.0;
+        exp.distribute(x0);
+
+        // Starting value on the sphere
+        ellipsoid::retract_by_norm(exp.get_M(), x0);
+
+        exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
+
+        if (options.export_solution) {
+            // Serialize incumbent solutions: support point coordinates are
+            // written once (shared by every iterate on this level), then one
+            // raw solution vector per iterate. Post-process with plot_solution.py
+            // instead of writing one SVG per cell, which does not scale to
+            // large DoF counts.
+            const auto& hist = exp.history();
+            std::string coords_filename = fmt::format("solution_{}d_sl_b{}_lvl{}_coords.bin",
+                dim, options.beta, options_mg.v_levels.size());
+            write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
+
+            unsigned iter = 0;
+            for (const auto& x : hist) {
+                std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
+                    dim, options.beta, options_mg.v_levels.size(), iter++);
+
+                write_solution(x, filename);
+            }
+        }
+    }
+    else {
+        auto exp = std::visit([&](auto&& arg) {
+            return MultiLevelExperiment<System>(arg, options_mg.v_levels, options, options_fas, options_cm, options_slv, options_gd);
+        }, potential_v);
+
+        Vector<double> x0(exp.n_dofs());
+        x0 = 1.0;
+        exp.distribute(x0);
+
+        // Starting value on the sphere
+        ellipsoid::retract_by_norm(exp.get_M(), x0);
+
+        exp.run(x0, options_cm.metric_t, std::cout);
+        exp.log(std::cerr);
+
+        if (options.export_solution) {
+            // Serialize incumbent solutions (see comment in the single-level branch above)
+            const auto& hist = exp.history();
+            std::string coords_filename = fmt::format("solution_{}d_ml_b{}_lvl{}_coords.bin",
+                dim, options.beta, options_mg.v_levels.size());
+            write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
+
+            unsigned iter = 0;
+            // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
+            for (const auto& x : hist) {
+                std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
+                    dim, options.beta, options_mg.v_levels.size(), iter++);
+
+                write_solution(x, filename);
+            }
+        }
+    }
+}
+
+
 int main(int argc, char* argv[])
 {
     GPE_Options    options    {};
@@ -378,77 +470,10 @@ int main(int argc, char* argv[])
 
         with_dimension(options.dimension, [&]<typename T0>(T0)
         {
-            constexpr int dim = T0::value;
-            const unsigned n_levels  = options_mg.n_levels;
-            auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
-
-            if (options_cm.metric_t == MetricKind::NONE || options_mg.v_levels.size() == 1) {
-                // Run standard single-level Riemannian gradient descent on the finest level
-                auto exp = std::visit([&](auto&& arg) {
-                    return SingleLevelExperiment<dim>(arg, n_levels, options, options_slv, options_gd);
-                }, potential_v);
-
-                Vector<double> x0(exp.n_dofs());
-                x0 = 1.0;
-                exp.distribute(x0);
-
-                // Starting value on the sphere
-                ellipsoid::retract_by_norm(exp.get_M(), x0);
-
-                exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
-
-                if (options.export_solution) {
-                    // Serialize incumbent solutions: support point coordinates are
-                    // written once (shared by every iterate on this level), then one
-                    // raw solution vector per iterate. Post-process with plot_solution.py
-                    // instead of writing one SVG per cell, which does not scale to
-                    // large DoF counts.
-                    const auto& hist = exp.history();
-                    std::string coords_filename = fmt::format("solution_{}d_sl_b{}_lvl{}_coords.bin",
-                        dim, options.beta, options_mg.v_levels.size());
-                    write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
-
-                    unsigned iter = 0;
-                    for (const auto& x : hist) {
-                        std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
-                            dim, options.beta, options_mg.v_levels.size(), iter++);
-
-                        write_solution(x, filename);
-                    }
-                }
-            }
-            else {
-                auto exp = std::visit([&](auto&& arg) {
-                    return MultiLevelExperiment<dim>(arg, options_mg.v_levels, options, options_fas, options_cm, options_slv, options_gd);
-                }, potential_v);
-
-                Vector<double> x0(exp.n_dofs());
-                x0 = 1.0;
-                exp.distribute(x0);
-
-                // Starting value on the sphere
-                ellipsoid::retract_by_norm(exp.get_M(), x0);
-
-                exp.run(x0, options_cm.metric_t, std::cout);
-                exp.log(std::cerr);
-
-                if (options.export_solution) {
-                    // Serialize incumbent solutions (see comment in the single-level branch above)
-                    const auto& hist = exp.history();
-                    std::string coords_filename = fmt::format("solution_{}d_ml_b{}_lvl{}_coords.bin",
-                        dim, options.beta, options_mg.v_levels.size());
-                    write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
-
-                    unsigned iter = 0;
-                    // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
-                    for (const auto& x : hist) {
-                        std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
-                            dim, options.beta, options_mg.v_levels.size(), iter++);
-
-                        write_solution(x, filename);
-                    }
-                }
-            }
+            with_system<T0::value>(options.mass_lumping, [&]<typename System>()
+            {
+                run_experiment<System>(options, options_gd, options_slv, options_mg, options_fas, options_cm);
+            });
         });
     }
     catch (std::exception& e) {
