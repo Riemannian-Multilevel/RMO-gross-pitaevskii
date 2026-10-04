@@ -89,7 +89,7 @@ public:
 
     /**
      * @brief Prolongates a vector from the coarse mesh to the fine mesh.
-     * Evaluates $v_{fine} = I_H^h \cdot v_{coarse}$.
+     * Evaluates \f$v_{fine} = I_H^h \cdot v_{coarse}\f$.
      */
     void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
@@ -121,7 +121,7 @@ public:
     }
 
     /**
-     * @brief Transpose of the prolongation, $(I_H^h)^T$ (multigrid residual
+     * @brief Transpose of the prolongation, \f$(I_H^h)^T\f$ (multigrid residual
      * restriction). Exact adjoint of to_fine_mesh() w.r.t. the Euclidean
      * pairing by construction.
      */

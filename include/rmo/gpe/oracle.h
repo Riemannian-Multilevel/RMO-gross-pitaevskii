@@ -2,6 +2,7 @@
 #define RMO_GPE_ORACLE_H
 
 #include <rmo/gpe/gpe.h>
+#include <rmo/gpe/kernels.h>
 #include <rmo/gpe/metric.h>
 
 #include <rmo/ropt/oracle_base.h>
@@ -11,102 +12,20 @@
 namespace rmo::gpe
 {
 
-namespace detail
-{
-
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
- * restricted to the sphere $S^{n-1}$ with an energy-adaptive metric $A_\phi$. The mathematical
- * formulation for the Riemannian gradient is:
- * $$ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi $$
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param A_inv The inverse linear operator ($A_\phi^{-1}$).
- * @param M The mass matrix ($M$).
- * @param x The current state vector ($\phi$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
-template <typename MatrixType, typename InverseMatrixType>
-void grad_energy_adaptive(const InverseMatrixType& A_inv, const MatrixType& M,
-                          const Vector<double>& x, Vector<double>& output)
-{
-    // \Pi_x(x): R^n -> T_x S^{n-1}
-    metric::energy::project_onto_tangent_space(A_inv, x, M, output);
-}
-
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional $E^{GP}(\phi)$
- * restricted to the sphere $S^{n-1}$ with a mass metric $M$. The mathematical
- * formulation for the Riemannian gradient is:
- * $$ \nabla_M E^{GP}(\phi) = M^{-1}\big(A_\phi\,\phi - (\phi^\top A_\phi\,\phi)M\phi\big) $$
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param Minv The inverse mass operator ($M^{-1}$).
- * @param A The state-dependent total linear operator ($A_\phi$).
- * @param M The mass matrix ($M$).
- * @param x The current state vector ($\phi$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
-template <typename MatrixType, typename InverseMatrixType>
-void grad_mass(const InverseMatrixType& Minv, const MatrixType& A, const MatrixType& M,
-               const Vector<double>& x, Vector<double>& output)
-{
-    Vector<double> Ax(x.size());
-    A.vmult(Ax, x);
-
-    Vector<double> Mx(x.size());
-    M.vmult(Mx, x);
-
-    Ax.add(-(x * Ax), Mx);
-    Minv.vmult(output, Ax);
-}
-
-
-/**
- * @brief Computes the Riemannian gradient in the F-metric.
- * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
-*/
-template <typename MatrixType>
-void grad_frobenius(const MatrixType& A, const MatrixType& M,
-                    const Vector<double>& x, Vector<double>& output)
-{
-    const unsigned int n_dofs = x.size();
-
-    Vector<double> Ax(n_dofs);
-    A.vmult(Ax, x);
-
-    Vector<double> Mx(n_dofs);
-    M.vmult(Mx, x);
-
-    const double Mx_sq = Mx * Mx; // x^T M^2 x
-    const double num = Mx * Ax; // x^T M A x
-
-    output = Ax;
-    output.add(-num / Mx_sq, Mx);
-}
-
-} // namespace detail
-
-
-template <int dim>
+template <typename System>
 class GrossPitaevskiiResidual
 {
 public:
-    explicit GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func)
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+
+    explicit GrossPitaevskiiResidual(const Functional& m_func)
         : m_func(m_func)
           , m_norm(m_func.get_M())
     {
     }
 
-    GrossPitaevskiiResidual(const GrossPitaevskiiFunctional<dim>& m_func, OperatorType op)
+    GrossPitaevskiiResidual(const Functional& m_func, Operator op)
         : m_func(m_func)
           , m_norm(op)
     {
@@ -137,22 +56,28 @@ public:
     }
 
 private:
-    const GrossPitaevskiiFunctional<dim>& m_func;
+    const Functional& m_func;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
 // Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
-template <int dim>
+// System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
+template <typename System>
 class GrossPitaevskiiOracle : public OracleBase
 {
 public:
-    static constexpr int dimension = dim;
+    static constexpr int dimension = System::dimension;
     static constexpr auto metric_t = MetricKind::NONE;
 
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+    using InverseM   = typename Functional::InverseM;
+    using InverseA   = typename Functional::InverseA;
+
     // TODO: move options to base class constructor? (used for all but Frobenius -> no-op)
-    explicit GrossPitaevskiiOracle(GrossPitaevskiiFunctional<dim>& func)
+    explicit GrossPitaevskiiOracle(Functional& func)
         : m_func(func)
           , m_res(func)
     {}
@@ -187,30 +112,35 @@ public:
     }
 
     // Shared accessors
-    const auto& get_M() const { return m_func.get_M(); }
-    const auto& get_A() const { return m_func.get_A(); }
-    const auto& get_A0() const { return m_func.get_A0(); }
+    const Operator& get_M() const { return m_func.get_M(); }
+    const Operator& get_A() const { return m_func.get_A(); }
+    const SparseMatrix<double>& get_A0() const { return m_func.get_A0(); }
 
     // Oracle getters must remain const so they can be called inside gradient(...) const
-    InverseOpType& get_M_inv() const { return m_func.get_M_inv(); }
-    InverseOpType& get_A_inv() const { return m_func.get_A_inv(); }
+    InverseM& get_M_inv() const { return m_func.get_M_inv(); }
+    InverseA& get_A_inv() const { return m_func.get_A_inv(); }
 
 protected:
-    GrossPitaevskiiFunctional<dim>& m_func;
+    Functional& m_func;
 
-    const GrossPitaevskiiResidual<dim> m_res;
+    const GrossPitaevskiiResidual<System> m_res;
 };
 
 
-template <int dim>
-class MassOracle : public GrossPitaevskiiOracle<dim>
+template <typename System>
+class MassOracle : public GrossPitaevskiiOracle<System>
 {
 public:
+    using Base       = GrossPitaevskiiOracle<System>;
+    using Functional = typename Base::Functional;
+    using Operator   = typename Base::Operator;
+    using InverseM   = typename Base::InverseM;
+
     const char* id() const override { return "M"; }
     static constexpr auto metric_t = MetricKind::MASS;
 
-    MassOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
-        : GrossPitaevskiiOracle<dim>(func)
+    MassOracle(Functional& func, SolverOptions options)
+        : Base(func)
           , options(options)
           , m_norm(this->get_M())
     {}
@@ -232,7 +162,7 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
-        auto& M_inv = this->get_M_inv();
+        InverseM& M_inv = this->get_M_inv();
 
         if (residual > 0)
         {
@@ -240,7 +170,7 @@ public:
         }
 
         timer.start();
-        detail::grad_mass(M_inv, this->get_A(), this->get_M(), x, output);
+        kernels::grad_mass(M_inv, this->get_A(), this->get_M(), x, output);
 
         info.num_iter = M_inv.control().last_step();
         info.tolerance = M_inv.control().tolerance();
@@ -272,26 +202,31 @@ public:
 private:
     SolverOptions options;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
-template <int dim>
-class EnergyOracle : public GrossPitaevskiiOracle<dim>
+template <typename System>
+class EnergyOracle : public GrossPitaevskiiOracle<System>
 {
 public:
+    using Base       = GrossPitaevskiiOracle<System>;
+    using Functional = typename Base::Functional;
+    using Operator   = typename Base::Operator;
+    using InverseA   = typename Base::InverseA;
+
     const char* id() const override { return "A"; }
     static constexpr auto metric_t = MetricKind::ENERGY_ADAPTIVE;
 
-    EnergyOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions options)
-        : GrossPitaevskiiOracle<dim>(func)
+    EnergyOracle(Functional& func, SolverOptions options)
+        : Base(func)
           , options(options)
           , m_norm(this->get_A())
     {}
 
     /**
      * @brief Computes the Riemannian gradient in the A-metric.
-     * Solves the inner linear system $ A^{-1} \nabla E $ using the PreconditionInverse wrapper.
+     * Solves the inner linear system \f$ A^{-1} \nabla E \f$ using the PreconditionInverse wrapper.
      */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
@@ -309,7 +244,7 @@ public:
     {
         dealii::Timer timer;
         GradInfo info{};
-        auto& A_inv = this->get_A_inv();
+        InverseA& A_inv = this->get_A_inv();
 
         if (residual > 0)
         {
@@ -317,7 +252,7 @@ public:
         }
 
         timer.start();
-        detail::grad_energy_adaptive(A_inv, this->get_M(), x, output);
+        kernels::grad_energy_adaptive(A_inv, this->get_M(), x, output);
 
         info.num_iter = A_inv.control().last_step();
         info.tolerance = A_inv.control().tolerance();
@@ -349,24 +284,27 @@ public:
 private:
     SolverOptions options;
 
-    SpdNorm<OperatorType> m_norm;
+    SpdNorm<Operator> m_norm;
 };
 
 
-template <int dim>
-class FrobeniusOracle : public GrossPitaevskiiOracle<dim>
+template <typename System>
+class FrobeniusOracle : public GrossPitaevskiiOracle<System>
 {
 public:
+    using Base       = GrossPitaevskiiOracle<System>;
+    using Functional = typename Base::Functional;
+
     const char* id() const override { return "F"; }
     static constexpr auto metric_t = MetricKind::FROBENIUS;
 
-    FrobeniusOracle(GrossPitaevskiiFunctional<dim>& func, SolverOptions)
-        : GrossPitaevskiiOracle<dim>(func)
+    FrobeniusOracle(Functional& func, SolverOptions)
+        : Base(func)
     {}
 
     /**
      * @brief Computes the Riemannian gradient in the F-metric.
-     * \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi
+     * \f[ \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi \f]
      */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
@@ -374,7 +312,7 @@ public:
         GradInfo info{};
 
         timer.start();
-        detail::grad_frobenius(this->get_A(), this->get_M(), x, output);
+        kernels::grad_frobenius(this->get_A(), this->get_M(), x, output);
         timer.stop();
 
         // F-gradient evaluation does not involve a linear solver.

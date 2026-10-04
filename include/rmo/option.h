@@ -204,7 +204,7 @@ namespace gpe
 {
 
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta, order, bc, mesh_kind));
+    (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping));
 BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE, EXPRESSION);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
     (metric_t, transport_t, interpol_t));
@@ -237,7 +237,10 @@ inline po::options_description gpe_cli_options() {
             "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
             "implies --potential expression")
         ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
-            "export incumbent solutions in binary format");
+            "export incumbent solutions in binary format")
+        ("mass-lumping", po::value<bool>()->default_value(false)->implicit_value(true),
+            "use lumped (diagonal) mass matrices; requires a lumpable element "
+            "(quadrilateral, or simplex with degree <= 2)");
     return d;
 }
 
@@ -252,6 +255,7 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
     options.potential = string_to_enum<Potential>(potential_str);
     options.potential_expr = vm["potential-expr"].as<std::string>();
+    options.mass_lumping   = vm["mass-lumping"].as<bool>();
 
     // A supplied expression selects the parsed potential; asking for it without one is an error
     if (!options.potential_expr.empty()) {

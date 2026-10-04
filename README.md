@@ -6,7 +6,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 # Installation
 
 The following section explains how to install the deal.ii finite element library for macOS, Ubuntu and Windows.
-After completing these instructions, the [#CMake](CMake) section explains how to build the `gpe` programs.
+After completing these instructions, the [CMake](#cmake) section explains how to build the `gpe` programs.
 
 
 ## macOS
@@ -56,7 +56,7 @@ For more information, see the [deal.ii Wiki](https://github.com/dealii/dealii/wi
 
 ## Windows
 
-Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the instructions for [#Ubuntu](Ubuntu).
+Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the instructions for [Ubuntu](#ubuntu).
 
 
 # CMake
