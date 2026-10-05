@@ -18,18 +18,28 @@ using namespace rmo::gpe;
 using namespace dealii;
 
 
+// Option groups of this program
+struct ProgramOptions
+{
+    GPE_Options    gpe;
+    DescentOptions descent;
+    SolverOptions  solver;
+    MG_Options     mg;
+    OutputOptions  output;
+};
+
+
 // Gradient descent on each level of --levels, for the system type selected by --mass-lumping
 template <typename System>
-void solve(const GPE_Options& options, const DescentOptions& options_gd, const SolverOptions& options_slv,
-           const MG_Options& options_mg)
+void solve(const ProgramOptions& opts)
 {
     constexpr int dim = System::dimension;
-    auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
+    auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
 
-    for (unsigned int level : options_mg.v_levels) {
+    for (unsigned int level : opts.mg.v_levels) {
         // Set up the grid (Package) and finite element space
         auto context = std::visit([&](auto&& arg) {
-            return ModelBuilder<System>(arg, options, level);
+            return ModelBuilder<System>(arg, opts.gpe, level);
         }, potential_v);
 
         // Set starting value, sufficiently far from an optimal solution
@@ -40,33 +50,32 @@ void solve(const GPE_Options& options, const DescentOptions& options_gd, const S
         // x0 /= M_norm(x0);
 
         // Define objective in ambient space
-        auto gp = context.get_eval(options.beta, options_slv);
+        auto gp = context.get_eval(opts.gpe.beta, opts.solver);
         // Define manifold
         auto manifold = UnitMassSphere<typename System::MassMatrix>(context.get_M());
         // Define Riemannian metric
-        EnergyOracle<System> oracle(gp, options_slv);
+        EnergyOracle<System> oracle(gp, opts.solver);
 
         // Termination criterion for gradient descent
-        GradientDescent solver(oracle, manifold, options_gd);
+        GradientDescent solver(oracle, manifold, opts.descent);
         ConvergenceTableObserver conv_observer;
         solver.set_observer(conv_observer);
 
         Vector<double> x(x0);
         solver.cycle(x, std::cout);
 
-        // Plot solution
-        std::string filename = fmt::format("solution_{}d_lvl{}.vtk", dim, level);
-        output_results(x, context.get_package().get_dofs(), DataOutBase::OutputFormat::vtk, filename);
+        if (opts.output.output_vtk) {
+            const std::string name = opts.output.vtk_filename.empty() ? fmt::format("solution_{}d", dim) : opts.output.vtk_filename;
+            output_vtk(solver.history(), context.get_package().get_dofs(), fmt::format("{}_lvl{}", name, level),
+                       opts.output.output_every);
+        }
     }
 }
 
 
 int main(int argc, char* argv[])
 {
-    GPE_Options    options{};
-    DescentOptions options_gd{};
-    SolverOptions  options_slv{};
-    MG_Options     options_mg{};
+    ProgramOptions opts{};
 
     // TODO: add configuration file (cf. boost tutorial)
     try {
@@ -76,6 +85,7 @@ int main(int argc, char* argv[])
         all.add(descent_cli_options());
         all.add(mg_cli_options());
         all.add(inner_cli_options());
+        all.add(output_cli_options());
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, all), vm);
@@ -85,18 +95,19 @@ int main(int argc, char* argv[])
             std::cout << all << "\n";
             return 0;
         }
-        apply_gpe_options(vm, options);
-        apply_descent_options(vm, options_gd);
-        apply_mg_options(vm, options_mg);
-        apply_inner_options(vm, options_slv);
+        apply_gpe_options(vm, opts.gpe);
+        apply_descent_options(vm, opts.descent);
+        apply_mg_options(vm, opts.mg);
+        apply_inner_options(vm, opts.solver);
+        apply_output_options(vm, opts.output);
 
         // TODO: use multiresolution if multilevel=true
         //       timer carried on across levels
-        with_dimension(options.dimension, [&]<typename T0>(T0)
+        with_dimension(opts.gpe.dimension, [&]<typename T0>(T0)
         {
-            with_system<T0::value>(options.mass_lumping, [&]<typename System>()
+            with_system<T0::value>(opts.gpe.mass_lumping, [&]<typename System>()
             {
-                solve<System>(options, options_gd, options_slv, options_mg);
+                solve<System>(opts);
             });
         });
     }

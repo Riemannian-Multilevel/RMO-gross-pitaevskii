@@ -11,6 +11,7 @@
 
 #include <rmo/option.h>
 #include <rmo/util/serialize.h>
+#include <rmo/util/util.h>
 
 #include <fmt/format.h>
 
@@ -354,19 +355,44 @@ private:
 // -------------------------------------------------------------------------
 // Main
 // -------------------------------------------------------------------------
+// Writes <basename>_coords.bin and one <basename>_iter<k>.bin per iterate (see plot_solution.py)
+template <int dim, typename History>
+void output_bin(const History& history, const GrossPitaevskiiPackage<dim>& package, const std::string& basename)
+{
+    write_support_points(package.get_dofs(), package.get_mapping(), basename + "_coords.bin");
+
+    unsigned iter = 0;
+    for (const auto& x : history) {
+        write_solution(x, fmt::format("{}_iter{}.bin", basename, iter++));
+    }
+}
+
+
+// Option groups of this program
+struct ProgramOptions
+{
+    GPE_Options        gpe;
+    DescentOptions     descent;
+    SolverOptions      solver;
+    MG_Options         mg;
+    FAS_Options        fas;
+    CoarseModelOptions coarse_model;
+    OutputOptions      output;
+};
+
+
 // Single- or multilevel experiment, for the system type selected by --mass-lumping
 template <typename System>
-void run_experiment(const GPE_Options& options, const DescentOptions& options_gd, const SolverOptions& options_slv,
-                    const MG_Options& options_mg, const FAS_Options& options_fas, const CoarseModelOptions& options_cm)
+void run_experiment(const ProgramOptions& opts)
 {
     constexpr int dim = System::dimension;
-    const unsigned n_levels = options_mg.n_levels;
-    auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
+    const unsigned n_levels = opts.mg.n_levels;
+    auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
 
-    if (options_cm.metric_t == MetricKind::NONE || options_mg.v_levels.size() == 1) {
+    if (opts.coarse_model.metric_t == MetricKind::NONE || opts.mg.v_levels.size() == 1) {
         // Run standard single-level Riemannian gradient descent on the finest level
         auto exp = std::visit([&](auto&& arg) {
-            return SingleLevelExperiment<System>(arg, n_levels, options, options_slv, options_gd);
+            return SingleLevelExperiment<System>(arg, n_levels, opts.gpe, opts.solver, opts.descent);
         }, potential_v);
 
         Vector<double> x0(exp.n_dofs());
@@ -378,29 +404,21 @@ void run_experiment(const GPE_Options& options, const DescentOptions& options_gd
 
         exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
 
-        if (options.export_solution) {
-            // Serialize incumbent solutions: support point coordinates are
-            // written once (shared by every iterate on this level), then one
-            // raw solution vector per iterate. Post-process with plot_solution.py
-            // instead of writing one SVG per cell, which does not scale to
-            // large DoF counts.
-            const auto& hist = exp.history();
-            std::string coords_filename = fmt::format("solution_{}d_sl_b{}_lvl{}_coords.bin",
-                dim, options.beta, options_mg.v_levels.size());
-            write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
-
-            unsigned iter = 0;
-            for (const auto& x : hist) {
-                std::string filename = fmt::format("solution_{}d_sl_b{}_lvl{}_iter{}.bin",
-                    dim, options.beta, options_mg.v_levels.size(), iter++);
-
-                write_solution(x, filename);
-            }
+        if (opts.output.output_bin) {
+            const std::string basename = opts.output.bin_filename.empty()
+                ? fmt::format("solution_{}d_sl_b{}_lvl{}", dim, opts.gpe.beta, opts.mg.v_levels.size())
+                : opts.output.bin_filename;
+            output_bin(exp.history(), exp.get_package(), basename);
+        }
+        if (opts.output.output_vtk) {
+            const std::string name = opts.output.vtk_filename.empty() ? fmt::format("solution_{}d_sl", dim) : opts.output.vtk_filename;
+            output_vtk(exp.history(), exp.get_package().get_dofs(), fmt::format("{}_lvl{}", name, n_levels),
+                       opts.output.output_every);
         }
     }
     else {
         auto exp = std::visit([&](auto&& arg) {
-            return MultiLevelExperiment<System>(arg, options_mg.v_levels, options, options_fas, options_cm, options_slv, options_gd);
+            return MultiLevelExperiment<System>(arg, opts.mg.v_levels, opts.gpe, opts.fas, opts.coarse_model, opts.solver, opts.descent);
         }, potential_v);
 
         Vector<double> x0(exp.n_dofs());
@@ -410,24 +428,20 @@ void run_experiment(const GPE_Options& options, const DescentOptions& options_gd
         // Starting value on the sphere
         ellipsoid::retract_by_norm(exp.get_M(), x0);
 
-        exp.run(x0, options_cm.metric_t, std::cout);
+        exp.run(x0, opts.coarse_model.metric_t, std::cout);
         exp.log(std::cerr);
 
-        if (options.export_solution) {
-            // Serialize incumbent solutions (see comment in the single-level branch above)
-            const auto& hist = exp.history();
-            std::string coords_filename = fmt::format("solution_{}d_ml_b{}_lvl{}_coords.bin",
-                dim, options.beta, options_mg.v_levels.size());
-            write_support_points(exp.get_package().get_dofs(), exp.get_package().get_mapping(), coords_filename);
-
-            unsigned iter = 0;
-            // TODO: Additional ML parameters in the file name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
-            for (const auto& x : hist) {
-                std::string filename = fmt::format("solution_{}d_ml_b{}_lvl{}_iter{}.bin",
-                    dim, options.beta, options_mg.v_levels.size(), iter++);
-
-                write_solution(x, filename);
-            }
+        if (opts.output.output_bin) {
+            // TODO: Additional ML parameters in the default name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
+            const std::string basename = opts.output.bin_filename.empty()
+                ? fmt::format("solution_{}d_ml_b{}_lvl{}", dim, opts.gpe.beta, opts.mg.v_levels.size())
+                : opts.output.bin_filename;
+            output_bin(exp.history(), exp.get_package(), basename);
+        }
+        if (opts.output.output_vtk) {
+            const std::string name = opts.output.vtk_filename.empty() ? fmt::format("solution_{}d_ml", dim) : opts.output.vtk_filename;
+            output_vtk(exp.history(), exp.get_package().get_dofs(), fmt::format("{}_lvl{}", name, exp.n_level_max()),
+                       opts.output.output_every);
         }
     }
 }
@@ -435,12 +449,7 @@ void run_experiment(const GPE_Options& options, const DescentOptions& options_gd
 
 int main(int argc, char* argv[])
 {
-    GPE_Options    options    {};
-    DescentOptions options_gd {};
-    SolverOptions  options_slv{};
-    MG_Options     options_mg {};
-    FAS_Options    options_fas{};
-    CoarseModelOptions options_cm{};
+    ProgramOptions opts{};
 
     try {
         po::options_description all("Allowed options");
@@ -451,6 +460,7 @@ int main(int argc, char* argv[])
         all.add(inner_cli_options());
         all.add(fas_cli_options());
         all.add(coarse_model_cli_options());
+        all.add(output_cli_options());
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, all), vm);
@@ -461,18 +471,19 @@ int main(int argc, char* argv[])
             return 0;
         }
 
-        apply_gpe_options(vm, options);
-        apply_descent_options(vm, options_gd);
-        apply_mg_options(vm, options_mg);
-        apply_inner_options(vm, options_slv);
-        apply_fas_options(vm, options_fas);
-        apply_coarse_model_options(vm, options_cm);
+        apply_gpe_options(vm, opts.gpe);
+        apply_descent_options(vm, opts.descent);
+        apply_mg_options(vm, opts.mg);
+        apply_inner_options(vm, opts.solver);
+        apply_fas_options(vm, opts.fas);
+        apply_coarse_model_options(vm, opts.coarse_model);
+        apply_output_options(vm, opts.output);
 
-        with_dimension(options.dimension, [&]<typename T0>(T0)
+        with_dimension(opts.gpe.dimension, [&]<typename T0>(T0)
         {
-            with_system<T0::value>(options.mass_lumping, [&]<typename System>()
+            with_system<T0::value>(opts.gpe.mass_lumping, [&]<typename System>()
             {
-                run_experiment<System>(options, options_gd, options_slv, options_mg, options_fas, options_cm);
+                run_experiment<System>(opts);
             });
         });
     }
