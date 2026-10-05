@@ -6,8 +6,13 @@
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/mg_level_object.h>
 
+#include <boost/describe.hpp>
+#include <boost/mp11.hpp>
+
 #include <ostream>
+#include <set>
 #include <string>
+#include <type_traits>
 
 namespace rmo
 {
@@ -20,7 +25,10 @@ struct ConvergenceTable : dealii::ConvergenceTable {
 
 
 //! Records the iteration history in one table per level, written when that level's cycle finishes.
-class ConvergenceTableObserver : public IterationObserver
+//! InfoType: described with BOOST_DESCRIBE_STRUCT (one column per described member) and has a member
+//! `level`; an optional member `extra` (pairs of name and double) adds further columns.
+template <typename InfoType>
+class ConvergenceTableObserver : public IterationObserver<InfoType>
 {
 public:
     explicit ConvergenceTableObserver(unsigned min_level = 0, unsigned max_level = 0)
@@ -30,31 +38,36 @@ public:
 
     void begin_level(unsigned level) override { conv_table_mg[level].clear(); }
 
-    void add(const CycleInfo& info) override
+    void add(const InfoType& info) override
     {
         auto& table = conv_table_mg[info.level];
 
         // Added first so they precede the common columns
-        if (info.coarse_cond) {
-            table.add_value("grad_norm",       info.grad_norm);
-            table.add_value("grad_restr_norm", info.grad_restr_norm);
+        if constexpr (requires { info.extra; }) {
+            for (const auto& [name, value] : info.extra) {
+                add_float(table, name, value);
+            }
         }
-        table.add_value("iter",     info.iter);
-        table.add_value("level",    info.level);
-        table.add_value("coarse",   info.coarse ? "*" : " ");
-        table.add_value("lac_iter", info.lac_iter);
-        table.add_value("residual", info.residual);
-        table.add_value("energy",   info.energy);
-        table.add_value("step",     info.step_size);
-        table.add_value("elapsed",  info.elapsed);
+        boost::mp11::mp_for_each<boost::describe::describe_members<InfoType, boost::describe::mod_public>>([&](auto D) {
+            auto value = info.*D.pointer;
+
+            if constexpr (std::is_same_v<decltype(value), bool>) {
+                table.add_value(D.name, value ? "*" : " ");
+            }
+            else if constexpr (std::is_floating_point_v<decltype(value)>) {
+                add_float(table, D.name, value);
+            }
+            else {
+                table.add_value(D.name, value);
+            }
+        });
     }
 
     void end_level(unsigned level, std::ostream& os) override
     {
         auto& table = conv_table_mg[level];
 
-        // grad_* are absent on the coarsest level and in single-level descent
-        for (const char* col : {"residual", "step", "elapsed", "grad_norm", "grad_restr_norm"}) {
+        for (const auto& col : m_float_columns) {
             if (table.has_column(col)) {
                 table.set_precision(col, 4);
                 table.set_scientific(col, true);
@@ -71,7 +84,14 @@ public:
     const ConvergenceTable& get_table(unsigned level) const { return conv_table_mg[level]; }
 
 private:
+    void add_float(ConvergenceTable& table, const std::string& name, double value)
+    {
+        table.add_value(name, value);
+        m_float_columns.insert(name);
+    }
+
     dealii::MGLevelObject<ConvergenceTable> conv_table_mg;
+    std::set<std::string> m_float_columns;  ///< Columns written in scientific notation
 };
 
 } // namespace rmo

@@ -58,7 +58,7 @@ void solve(const ProgramOptions& opts)
 
         // Termination criterion for gradient descent
         GradientDescent solver(oracle, manifold, opts.descent);
-        ConvergenceTableObserver conv_observer;
+        ConvergenceTableObserver<CycleInfo> conv_observer;
         solver.set_observer(conv_observer);
 
         Vector<double> x(x0);

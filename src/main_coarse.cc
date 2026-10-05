@@ -166,7 +166,7 @@ private:
     SolverOptions  options_slv;
     DescentOptions options_gd;
 
-    ConvergenceTableObserver conv_observer;
+    ConvergenceTableObserver<CycleInfo> conv_observer;
     std::unique_ptr<GradientDescent> solver;
 };
 
@@ -346,7 +346,7 @@ private:
     MGLevelObject<DescentOptions>                                  options_descent_mg;
     MGLevelObject<SolverOptions>                                   options_solver_mg;
 
-    ConvergenceTableObserver                                       table_observer;
+    ConvergenceTableObserver<CycleInfo>                            table_observer;
 
     std::unique_ptr<FullApproximationScheme<Functional>> fas_solver;
 };
