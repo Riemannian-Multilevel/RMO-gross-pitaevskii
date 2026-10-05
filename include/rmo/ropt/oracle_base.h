@@ -3,6 +3,7 @@
 
 #include <rmo/lac.h>
 #include <rmo/option_types.h>
+#include <rmo/ropt/metric.h>
 
 #include <concepts>
 
@@ -30,14 +31,9 @@ public:
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;  // method for setting tolerance
 
-    // TODO: move this to a separate interface?
-    //       (-> class Metric - arguments may differ from evaluation point)
-    [[nodiscard]] virtual double norm(const Vector<double>&) const = 0;  // for (coarse) condition evaluation - metric-dependent
-    [[nodiscard]] virtual double inner(const Vector<double>&, const Vector<double>&) const = 0;
+    //! Metric of the Riemannian gradient
+    [[nodiscard]] virtual const MetricBase& metric() const = 0;
 
-    // TODO: improve name
-    virtual void apply_metric(const Vector<double>&, Vector<double>&) const = 0;
-    [[nodiscard]] virtual MetricKind get_metric() const { return MetricKind::NONE; }
     [[nodiscard]] virtual unsigned n_dofs() const = 0;
 
     // TODO: move this to a separate interface?
