@@ -1,18 +1,6 @@
 //
-// Tests for mass lumping in the Gross-Pitaevskii discretization.
-//
-// 1. Nodal quadrature (fe::make_nodal_quadrature): weights for FE_Q, P1 and P2-bubble elements,
-//    rejection of FE_SimplexP(2).
-// 2. Lumped matrices (fe/assemble.h): row sums of the consistent mass matrix, positivity,
-//    independence of the quadrature rule, structure of A0 = S + M_{V,L}.
-// 3. GrossPitaevskiiLumpedSystem: nonlinear term, mixed sparse/diagonal operators
-//    (LinearCombination), and consistency of energy and gradient (finite differences).
-// 4. Convergence: the lumped and consistent energies of a smooth function differ by O(h^2).
-// 5. Zero-weight components of LinearCombination are skipped.
-// 6. GrossPitaevskiiFunctional on the lumped system: exact M^{-1}, value, gradient, A^{-1}.
-// 7. Oracles and iterations on the lumped system: tangent gradients, oracle == iteration.
-//
-// Each check prints PASS/FAIL; the exit code is the number of failed checks (capped at 1).
+// Tests for mass lumping, from the nodal quadrature up to the oracles on GrossPitaevskiiLumpedSystem
+// (sections 1-7 below). Each check prints PASS/FAIL; the exit code is 1 if any check fails.
 //
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/iteration.h>
@@ -93,11 +81,11 @@ std::vector<double> sorted_weights(const Quadrature<dim>& q, double ref_volume)
 }
 
 // ---------------------------------------------------------------------------------------------
-// 1. Nodal quadrature
+// 1. Nodal quadrature: weights and lumpability
 // ---------------------------------------------------------------------------------------------
 void test_nodal_quadrature()
 {
-    // FE_Q(p): the nodal rule is the Gauss-Lobatto rule (matched point by point)
+    // The point ordering may differ, so points are matched by position
     for (unsigned p = 1; p <= 3; ++p) {
         const FE_Q<dim> fe(p);
         const auto nodal = fe::make_nodal_quadrature(fe);
@@ -118,14 +106,12 @@ void test_nodal_quadrature()
               std::to_string(p + 1) + ")", "max weight diff " + fmt_double(err));
     }
 
-    // FE_SimplexP(1): vertex weights |K|/(d+1)
     {
         const auto w = sorted_weights(fe::make_nodal_quadrature(FE_SimplexP<dim>(1)), 0.5);
         const bool ok = w.size() == 3 && std::ranges::all_of(w, [](double x) { return std::abs(x - 1.0/3) < 1e-14; });
         check(ok, "nodal quadrature FE_SimplexP(1): weights |K|/3");
     }
 
-    // FE_SimplexP_Bubbles(2): |K| * (1/20 vertices, 2/15 edge midpoints, 9/20 centroid)
     {
         const auto w = sorted_weights(fe::make_nodal_quadrature(FE_SimplexP_Bubbles<dim>(2)), 0.5);
         const std::vector<double> expected = {1./20, 1./20, 1./20, 2./15, 2./15, 2./15, 9./20};
@@ -136,7 +122,7 @@ void test_nodal_quadrature()
         check(ok, "nodal quadrature FE_SimplexP_Bubbles(2): weights |K|(1/20, 2/15, 9/20)");
     }
 
-    // FE_SimplexP(2) is not lumpable (zero vertex weights)
+    // Not lumpable: the vertex weights of FE_SimplexP(2) are zero
     {
         bool thrown = false;
         try {
@@ -150,14 +136,14 @@ void test_nodal_quadrature()
 }
 
 // ---------------------------------------------------------------------------------------------
-// 2./3. Lumped matrices and GrossPitaevskiiLumpedSystem, for one element/mesh configuration
+// 2. Lumped matrices and GrossPitaevskiiLumpedSystem, for one element/mesh configuration
 // ---------------------------------------------------------------------------------------------
 void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
 {
     const std::string name = config_name(mesh, degree);
     const potential::Square<dim> V;
 
-    // Neumann: no constraints, so that all rows can be compared
+    // Neumann boundary: no constrained rows, so every row can be compared
     GrossPitaevskiiPackage<dim> package(make_options(mesh, degree, BoundaryCondition::NEUMANN), n_levels);
     const auto& dofs        = package.get_dofs();
     const auto& mapping     = package.get_mapping();
@@ -173,7 +159,6 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
     auto lumped     = package.system<GrossPitaevskiiLumpedSystem<dim>>(V);
     const auto& M_L = lumped.get_M().get_vector();
 
-    // Row sums of the consistent mass matrix
     {
         const auto& M = consistent.get_M();
         double err = 0.0;
@@ -187,7 +172,6 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
         check(err < 1e-12, name + ": M_L equals the row sums of M", "max rel. diff " + fmt_double(err));
     }
 
-    // Positivity and total mass |Omega| = (2R)^dim
     {
         const double R = 4.0;
         const double total = M_L.mean_value() * n;
@@ -196,7 +180,6 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
               "sum " + std::to_string(total));
     }
 
-    // Gauss and nodal rules give the same lumped mass matrix
     {
         DiagonalMatrix<Vector<double>> M_gauss;
         M_gauss.get_vector().reinit(n);
@@ -208,7 +191,7 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
               "max diff " + fmt_double(diff.linfty_norm()));
     }
 
-    // A0 = S + M_{V,L}: off-diagonal part equals S, diagonal part equals the lumped potential term
+    // Off-diagonal entries must equal S, diagonal entries S + M_{V,L}
     {
         const auto& A0 = lumped.get_A0();
         SparseMatrix<double> S(A0.get_sparsity_pattern());
@@ -235,7 +218,6 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
               "off-diag " + fmt_double(err_offdiag) + ", diag " + fmt_double(err_diag));
     }
 
-    // Nonlinear term equals the cell-loop assembly
     Vector<double> u(n);
     for (unsigned i = 0; i < n; ++i) {
         u[i] = std::sin(0.37 * i) + 0.2;
@@ -252,7 +234,7 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
               name + ": Mpp equals fe::assemble_mass_phiphi_lumped", "max diff " + fmt_double(diff.linfty_norm()));
     }
 
-    // Mixed operator A = A0 + beta Mpp (SparseMatrix + DiagonalMatrix)
+    // A = A0 + beta Mpp mixes a SparseMatrix and a DiagonalMatrix
     {
         const double beta = 100.0;
         const auto A = lumped.get_operator_A(beta);
@@ -290,7 +272,7 @@ void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
 }
 
 // ---------------------------------------------------------------------------------------------
-// 3. Energy and gradient consistency: grad E(x) = A0 x + beta Mpp(x) x
+// 3. Lumped energy and gradient: grad E(x) = A0 x + beta Mpp(x) x
 // ---------------------------------------------------------------------------------------------
 void test_gradient_consistency(MeshKind mesh, int degree, unsigned n_levels)
 {
@@ -328,15 +310,15 @@ void test_gradient_consistency(MeshKind mesh, int degree, unsigned n_levels)
         xm.add(-h, d);
         errors.push_back(std::abs((energy(xp) - energy(xm)) / (2*h) - gd) / std::abs(gd));
     }
-    // Central differences: error O(h^2), i.e. a factor ~100 per decade of h. An inconsistent
-    // gradient leaves an O(1) error that does not decrease with h.
+    // Central differences: the error drops ~100x per decade of h; an inconsistent gradient leaves
+    // an error that does not decrease
     const double ratio = errors[0] / errors[1];
     check(errors[1] < 1e-5 && ratio > 50, name + ": gradient of the lumped energy (finite differences)",
           "rel. error " + fmt_double(errors[1]) + ", ratio " + fmt_double(ratio));
 }
 
 // ---------------------------------------------------------------------------------------------
-// 4. Lumped vs consistent energy of a smooth function: O(h^2)
+// 4. Lumped vs consistent energy of a smooth function: difference O(h^2)
 // ---------------------------------------------------------------------------------------------
 void test_energy_convergence(MeshKind mesh, int degree, unsigned min_level, unsigned max_level)
 {
@@ -344,7 +326,7 @@ void test_energy_convergence(MeshKind mesh, int degree, unsigned min_level, unsi
     const double beta = 100.0, R = 4.0;
     const potential::Square<dim> V;
 
-    // u(x) = prod_d cos(pi x_d / (2R)), zero on the boundary of [-R, R]^dim
+    // u(x) = prod_d cos(pi x_d / (2R)) satisfies the Dirichlet condition on [-R, R]^dim
     class Scaled : public Function<dim>
     {
     public:
@@ -389,7 +371,7 @@ void test_energy_convergence(MeshKind mesh, int degree, unsigned min_level, unsi
 }
 
 // ---------------------------------------------------------------------------------------------
-// 5. Zero-weight components are skipped: A(beta = 0) = A0
+// 5. Zero-weight components of LinearCombination are skipped: A(beta = 0) = A0
 // ---------------------------------------------------------------------------------------------
 template <typename System>
 void check_zero_weight(System& system, const std::string& name)
@@ -448,7 +430,6 @@ void test_lumped_functional(MeshKind mesh, int degree, unsigned n_levels)
     package.distribute(d);
     func.update(x);
 
-    // M^{-1} is exact and takes no iterations
     {
         Vector<double> Mx(n), y(n);
         func.get_M().vmult(Mx, x);
@@ -458,7 +439,7 @@ void test_lumped_functional(MeshKind mesh, int degree, unsigned n_levels)
               name + ": M_inv is the exact inverse of M_L", "max diff " + fmt_double(y.linfty_norm()));
     }
 
-    // value(x) = 1/2 x^T A0 x + beta/4 sum_i (M_L)_ii x_i^4
+    // Lumped energy: 1/2 x^T A0 x + beta/4 sum_i (M_L)_ii x_i^4
     {
         Vector<double> A0x(n);
         system.get_A0().vmult(A0x, x);
@@ -471,7 +452,6 @@ void test_lumped_functional(MeshKind mesh, int degree, unsigned n_levels)
               "rel. diff " + fmt_double(std::abs(val - ref) / std::abs(ref)));
     }
 
-    // gradient(x) against central differences of value()
     {
         Vector<double> g(n);
         func.gradient(x, g);
@@ -494,7 +474,6 @@ void test_lumped_functional(MeshKind mesh, int degree, unsigned n_levels)
               "rel. error " + fmt_double(errors[1]) + ", ratio " + fmt_double(ratio));
     }
 
-    // A^{-1} solves with the mixed sparse/diagonal operator
     {
         Vector<double> b(n), y(n), Ay(n);
         func.get_A().vmult(b, x);
@@ -516,10 +495,15 @@ void check_oracle(const std::string& name, typename Oracle::Functional& func, co
 {
     Oracle oracle(func, options);
     oracle.update(x);
-    Vector<double> g(x.size()), g_iter(x.size()), Mg(x.size());
+    Vector<double> g(x.size()), g_iter(x.size()), Mg(x.size()), Mx(x.size());
     const GradInfo info = oracle.gradient(x, g);
 
-    // Riemannian gradients are tangent to the mass sphere: x^T M g = 0 (x normalized)
+    // x was normalized with system.get_M(); the oracle's M must be the same lumped matrix
+    oracle.get_M().vmult(Mx, x);
+    const double mass = x * Mx;
+    check(std::abs(mass - 1.0) < 1e-12, name + ": x is on the mass sphere (x^T M x = 1)",
+          "x^T M x - 1 = " + fmt_double(mass - 1.0));
+
     oracle.get_M().vmult(Mg, g);
     const double tangent = std::abs(x * Mg) / g.l2_norm();
     check(tangent < 1e-8, name + ": gradient is tangent (x^T M g = 0)", "|x^T M g| / |g| = " + fmt_double(tangent));
@@ -528,7 +512,6 @@ void check_oracle(const std::string& name, typename Oracle::Functional& func, co
         check(info.num_iter == 0, name + ": exact M^{-1}, no solver iterations");
     }
 
-    // The iteration interface computes the same gradient
     Iteration iteration(func, std::make_shared<const Vector<double>>(x), options);
     iteration.gradient(g_iter);
     g_iter -= g;
@@ -553,7 +536,7 @@ void test_lumped_oracles(MeshKind mesh, int degree, unsigned n_levels)
     options.precond       = Precondition::DIAGONAL;
     GrossPitaevskiiFunctional<System> func(system, 100.0, options);
 
-    // Point on the mass sphere x^T M_L x = 1
+    // On the mass sphere x^T M x = 1, as the tangent check assumes
     Vector<double> x(n), Mx(n);
     for (unsigned i = 0; i < n; ++i) {
         x[i] = std::sin(0.37 * i) + 1.2;
