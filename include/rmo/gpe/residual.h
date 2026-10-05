@@ -6,8 +6,8 @@
 #include <rmo/gpe/manifold.h>
 
 #include <rmo/ropt/metric.h>
-#include <rmo/ropt/oracle_coarse_base.h>
-#include <rmo/ropt/residual_base.h>
+#include <rmo/ropt/oracle_coarse.h>
+#include <rmo/ropt/residual.h>
 
 /**
  * @file

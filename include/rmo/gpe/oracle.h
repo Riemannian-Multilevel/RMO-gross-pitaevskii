@@ -6,7 +6,7 @@
 #include <rmo/gpe/metric.h>
 #include <rmo/gpe/residual.h>
 
-#include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/oracle.h>
 
 #include <deal.II/base/timer.h>
 

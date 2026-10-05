@@ -10,7 +10,7 @@
 #include <rmo/gpe/manifold.h>
 #include <rmo/gpe/metric.h>
 
-#include <rmo/ropt/oracle_coarse_base.h>
+#include <rmo/ropt/oracle_coarse.h>
 
 namespace rmo::gpe
 {

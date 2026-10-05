@@ -15,8 +15,8 @@
 #include <deal.II/numerics/data_postprocessor.h>
 
 #include <rmo/ropt/observer.h>
-#include <rmo/ropt/oracle_base.h>
-#include <rmo/ropt/residual_base.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/residual.h>
 #include <rmo/ropt/descent.h>
 
 
