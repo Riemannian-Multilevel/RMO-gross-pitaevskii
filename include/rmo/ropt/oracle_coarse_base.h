@@ -88,6 +88,7 @@ public:
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_coarse.id() << "-coarse gradient\n";
 #endif
         // Set tolerance for coarse gradient defining the coarse model
+        // TODO: model_tol is multiplied by options.tol_inner_res inside OracleBase::gradient() implementations
         if (model_tol > 0.0) {
             T_coarse.gradient(m_state.y, m_state.y_grad, model_tol);
         } else {
