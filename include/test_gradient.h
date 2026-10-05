@@ -6,6 +6,7 @@
 
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/manifold.h>
+#include <rmo/gpe/metric.h>
 #include <rmo/gpe/oracle.h>
 #include <rmo/gpe/oracle_coarse.h>
 
@@ -92,7 +93,10 @@ public:
     [[nodiscard]] virtual double value(const Vector<double>&) const = 0;
     [[nodiscard]] virtual double directional_derivative(const Vector<double>& x, const Vector<double>& z) const = 0;
     [[nodiscard]] virtual Vector<double> gradient(const Vector<double>&) const = 0;
-    [[nodiscard]] virtual double inner(const Vector<double>&, const Vector<double>&) const = 0;
+
+    //! Metric of gradient(); metric and gradient must correspond, <grad f(x), v>_x = Df(x)[v]
+    [[nodiscard]] virtual const MetricBase& metric() const = 0;
+    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const { return metric().inner(y, z); }
 
 
 protected:
@@ -141,14 +145,7 @@ public:
         return x_grad;
     }
 
-    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const final
-    {
-        AssertDimension(y.size(), z.size());
-        Vector<double> Az(z.size());
-        this->get_A().vmult(Az, z);
-
-        return y*Az;
-    }
+    [[nodiscard]] const MetricBase& metric() const final { return m_metric; }
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const final
     {
@@ -159,6 +156,9 @@ public:
     {
         metric::energy::random_tangent_vector(this->get_A_inv(), x, this->get_M(), v);
     }
+
+private:
+    const OperatorMetric<typename GradientTestBase<dim>::OperatorType> m_metric{this->get_A(), MetricKind::ENERGY_ADAPTIVE};
 };
 
 
@@ -176,14 +176,7 @@ public:
         return x_grad;
     }
 
-    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        AssertDimension(y.size(), z.size());
-        Vector<double> Mz(z.size());
-        this->get_M().vmult(Mz, z);
-
-        return y*Mz;
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
     void to_tangent_space(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const override
     {
@@ -194,6 +187,9 @@ public:
     {
         metric::mass::random_tangent_vector(x, this->get_M(), v);
     }
+
+private:
+    const OperatorMetric<typename GradientTestBase<dim>::OperatorType> m_metric{this->get_M(), MetricKind::MASS};
 };
 
 
@@ -211,12 +207,7 @@ public:
         return x_grad;
     }
 
-    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        // The Frobenius metric is exactly the standard Euclidean L2 inner product
-        AssertDimension(y.size(), z.size());
-        return y * z;
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const override
     {
@@ -227,6 +218,9 @@ public:
     {
         metric::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
+
+private:
+    const EuclideanMetric m_metric;
 };
 
 struct CheckGradInfo
@@ -307,15 +301,7 @@ public:
         return q_grad;
     }
 
-    // Metric and gradient should correspond for testing identities <grad_x f(x), v>_x = Df(x)[v]
-    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const final
-    {
-        AssertDimension(y.size(), z.size());
-        Vector<double> Mz(z.size());
-        this->get_M().vmult(Mz, z);
-
-        return y*Mz;
-    }
+    [[nodiscard]] const MetricBase& metric() const final { return m_metric; }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
     {
@@ -339,6 +325,9 @@ public:
     {
         metric::mass::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
+
+private:
+    const OperatorMetric<typename GradientTestBase<dim>::OperatorType> m_metric{this->get_M(), MetricKind::MASS};
 };
 
 
@@ -370,11 +359,7 @@ public:
         return q_grad;
     }
 
-    [[nodiscard]] double inner(const Vector<double>& y, const Vector<double>& z) const final
-    {
-        AssertDimension(y.size(), z.size());
-        return y * z; // F-metric inner product
-    }
+    [[nodiscard]] const MetricBase& metric() const final { return m_metric; }
 
     void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
     {
@@ -399,6 +384,9 @@ public:
     {
         metric::frobenius::project_onto_tangent_space(x, this->get_M(), v, v_proj);
     }
+
+private:
+    const EuclideanMetric m_metric;
 };
 
 }
