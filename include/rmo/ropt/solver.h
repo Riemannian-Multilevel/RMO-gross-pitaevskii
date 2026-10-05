@@ -15,7 +15,8 @@
 #include <deal.II/numerics/data_postprocessor.h>
 
 #include <rmo/ropt/observer.h>
-#include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/residual.h>
 #include <rmo/ropt/descent.h>
 
 
@@ -97,11 +98,13 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
 }
 
 
+// Evaluates and reports the residual (of R) and the energy (of O) at the iterate y
 template <typename Oracle>
 std::pair<double,double>
-cycle_eval(const Oracle& O, const Vector<double>& y, IterationObserver<CycleInfo>* observer, CycleInfo info)
+cycle_eval(const Oracle& O, const ResidualBase& R, const Vector<double>& y, IterationObserver<CycleInfo>* observer,
+           CycleInfo info)
 {
-    const double residual = O.residual(y);
+    const double residual = R.residual(y);
     const double energy   = O.value(y);
     const auto min_element = std::ranges::min_element(y);
 
@@ -120,11 +123,18 @@ class GradientDescent : public SolverBase
 {
 public:
     // O_fine: oracle used for computing gradient descent steps on the fine level
-    GradientDescent(OracleBase& O_fine, const ManifoldBase& manifold, DescentOptions options_gd)
+    // R_fine: residual of the fine problem (stopping criterion; its value is passed to O_fine.gradient()),
+    //         usually O_fine.get_residual()
+    GradientDescent(OracleBase& O_fine, const ResidualBase& R_fine, const ManifoldBase& manifold,
+                    DescentOptions options_gd)
         : O_fine(O_fine)
+        , R_fine(R_fine)
         , manifold(manifold)
         , options_gd(options_gd)
-    {}
+    {
+        // A residual of another problem (e.g. another level) has another dimension
+        AssertDimension(R_fine.n_dofs(), O_fine.n_dofs());
+    }
 
     void cycle(Vector<double>& x) override
     {
@@ -144,7 +154,8 @@ public:
         info.coarse = false;
         info.iter   = 0;
 
-        auto [residual, _] = cycle_eval(O_fine, x, m_observer, info);
+        // Residual at x, passed to the next gradient (inner tolerance)
+        double residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
         x_hist.clear();
         x_hist.emplace_back(x);
 
@@ -158,7 +169,7 @@ public:
 #ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
 #endif
-            auto info_grad = O_fine.gradient(x, x_grad);
+            auto info_grad = O_fine.gradient(x, x_grad, residual);
             dk  = x_grad;
             dk *= -1.0;
 
@@ -172,7 +183,7 @@ public:
             info.lac_iter  = info_grad.num_iter;
             info.level     = 0;
 
-            auto [residual, _] = cycle_eval(O_fine, x, m_observer, info);
+            residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
             x_hist.emplace_back(x);
 
             if (residual < options_gd.tol_residual) {
@@ -204,6 +215,7 @@ private:
     dealii::Timer timer;
 
     OracleBase& O_fine;
+    const ResidualBase& R_fine;
     const ManifoldBase& manifold;
     DescentOptions options_gd;
 

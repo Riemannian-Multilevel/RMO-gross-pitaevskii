@@ -132,7 +132,7 @@ public:
 
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
-        std::unique_ptr<OracleBase> oracle;
+        std::unique_ptr<GrossPitaevskiiOracle<System>> oracle;
 
         // 2. Instantiate the corresponding descent oracle
         if (metric_t == MetricKind::FROBENIUS) {
@@ -149,7 +149,7 @@ public:
         }
 
         // 3. Execute the single-level gradient descent cycle
-        solver = std::make_unique<GradientDescent>(*oracle, *manifold, options_gd);
+        solver = std::make_unique<GradientDescent>(*oracle, oracle->get_residual(), *manifold, options_gd);
         solver->set_observer(conv_observer);
         solver->cycle(x0, os);
     }
@@ -292,16 +292,16 @@ public:
             FrobeniusOracle<System> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
             fas_solver->template cycle<FrobeniusOracle<System>, FrobeniusCoarseOracle<System>,
-                                       FrobeniusCoarseOracleEnergyAdaptive<System>>(
-                O_fine, T_fine, x0, m_levels.size() - 1, os
+                                       FrobeniusCoarseOracleEnergyAdaptive<System>, GrossPitaevskiiCoarseResidual<System>>(
+                O_fine, T_fine, O_fine.get_residual(), x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::MASS) {
             MassOracle<System> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
             fas_solver->template cycle<MassOracle<System>, MassCoarseOracle<System>,
-                                       MassCoarseOracleEnergyAdaptive<System>>(
-                O_fine, T_fine, x0, m_levels.size() - 1, os
+                                       MassCoarseOracleEnergyAdaptive<System>, GrossPitaevskiiCoarseResidual<System>>(
+                O_fine, T_fine, O_fine.get_residual(), x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {

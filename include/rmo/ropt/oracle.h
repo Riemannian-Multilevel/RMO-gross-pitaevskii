@@ -1,5 +1,5 @@
-#ifndef RMO_ROPT_ORACLE_BASE_H
-#define RMO_ROPT_ORACLE_BASE_H
+#ifndef RMO_ROPT_ORACLE_H
+#define RMO_ROPT_ORACLE_H
 
 #include <rmo/lac.h>
 #include <rmo/option_types.h>
@@ -29,16 +29,13 @@ public:
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
-    virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;  // method for setting tolerance
+    // Riemannian gradient, given the residual at x: oracles with inner solvers use it for the tolerance, others ignore it
+    virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;
 
     //! Metric of the Riemannian gradient
     [[nodiscard]] virtual const MetricBase& metric() const = 0;
 
     [[nodiscard]] virtual unsigned n_dofs() const = 0;
-
-    // TODO: move this to a separate interface?
-    //       (-> class Residual or GrossPitaevskiiFunctional - matches evaluation point)
-    [[nodiscard]] virtual double residual(const Vector<double>&) const = 0;
 };
 
 
@@ -50,4 +47,4 @@ concept TiltOracle = std::derived_from<T, OracleBase>
 
 } // namespace rmo
 
-#endif //RMO_ROPT_ORACLE_BASE_H
+#endif //RMO_ROPT_ORACLE_H
