@@ -4,6 +4,7 @@
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/kernels.h>
 #include <rmo/gpe/metric.h>
+#include <rmo/gpe/residual.h>
 
 #include <rmo/ropt/oracle_base.h>
 
@@ -11,56 +12,6 @@
 
 namespace rmo::gpe
 {
-
-template <typename System>
-class GrossPitaevskiiResidual
-{
-public:
-    using Functional = GrossPitaevskiiFunctional<System>;
-    using Operator   = typename Functional::Operator;
-
-    explicit GrossPitaevskiiResidual(const Functional& m_func)
-        : m_func(m_func)
-          , m_norm(m_func.get_M())
-    {
-    }
-
-    GrossPitaevskiiResidual(const Functional& m_func, Operator op)
-        : m_func(m_func)
-          , m_norm(op)
-    {
-    }
-
-    Vector<double> residual_vector(const Vector<double>& x) const
-    {
-        Vector<double> Mx(x.size());
-        m_func.get_M().vmult(Mx, x);
-
-        const double mass = x * Mx; // should be ~ 1 (energy constraint)
-        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
-
-        Vector<double> Ax(x.size()); // A x
-        m_func.get_A().vmult(Ax, x);
-
-        const double lambda = x * Ax / mass; // Rayleigh quotient (x'Ax / x'Mx)
-
-        Vector<double> r(Ax);
-        r.add(-lambda, Mx); // r = A x - lambda M x
-
-        return r;
-    }
-
-    [[nodiscard]] double residual(const Vector<double>& x) const
-    {
-        return m_norm(residual_vector(x));
-    }
-
-private:
-    const Functional& m_func;
-
-    SpdNorm<Operator> m_norm;
-};
-
 
 // Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
 // System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
