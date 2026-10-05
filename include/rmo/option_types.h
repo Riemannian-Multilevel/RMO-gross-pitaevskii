@@ -112,7 +112,7 @@ struct OutputOptions
     std::string bin_filename;     // base name of binary files (empty: default name)
     bool output_vtk;              // write solutions in VTK format
     std::string vtk_filename;     // base name of VTK files (empty: default name)
-    unsigned output_every;        // also write every k-th iterate to VTK (0: final solution only)
+    unsigned output_every;        // also write every k-th and the final iterate as a VTK series (0: final iterate only)
 };
 
 // Fields for gradient computation with inner solver

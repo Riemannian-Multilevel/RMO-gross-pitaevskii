@@ -163,7 +163,8 @@ Output options:
                                         optionally with base name
                                         (--output-vtk=<name>)
   --output-every arg (=0)               with --output-vtk, also write every
-                                        k-th iterate (0: final solution only)
+                                        k-th and the final iterate as a series
+                                        (0: final iterate only)
 ```
 
 To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
