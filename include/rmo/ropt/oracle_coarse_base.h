@@ -2,6 +2,7 @@
 #define RMO_ROPT_ORACLE_COARSE_BASE_H
 
 #include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/residual_base.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/transport.h>
 
@@ -101,6 +102,7 @@ public:
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_fine.id() << "-fine gradient\n";
 #endif
         // Set tolerance for fine gradient defining the coarse model
+        // TODO: model_tol is multiplied by options.tol_inner_res inside OracleBase::gradient() implementations
         if (model_tol > 0.0) {
             T_fine.gradient(m_state.x, m_state.x_grad, model_tol);
         } else {
@@ -159,6 +161,12 @@ protected:
 template <typename T>
 concept CoarseOracle = std::derived_from<T, OracleBase>
                     && std::constructible_from<T, CoarseOracleBase&, SolverOptions>;
+
+// Contract for the residual of a coarse model, built by FullApproximationScheme::cycle() from the coarse
+// model and the functional of the coarse level
+template <typename T, typename Functional>
+concept CoarseResidual = std::derived_from<T, ResidualBase>
+                      && std::constructible_from<T, const CoarseOracleBase&, const Functional&>;
 
 } // namespace rmo
 

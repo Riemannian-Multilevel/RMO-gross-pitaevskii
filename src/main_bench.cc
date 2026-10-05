@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
                         UnitMassSphere<OperatorType> manifold(gp_func.get_M());
                         EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp_func, options_slv_level[ref]);
 
-                        GradientDescent solver(oracle, manifold, options_gd_level[ref]);
+                        GradientDescent solver(oracle, oracle.get_residual(), manifold, options_gd_level[ref]);
                         ConvergenceTableObserver<CycleInfo> conv_observer;
                         solver.set_observer(conv_observer);
 
@@ -175,7 +175,7 @@ int main(int argc, char* argv[])
                 UnitMassSphere<OperatorType> manifold(gp_func.get_M());
                 EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp_func, options_slv);
 
-                GradientDescent solver(oracle, manifold, options_gd);
+                GradientDescent solver(oracle, oracle.get_residual(), manifold, options_gd);
                 ConvergenceTableObserver<CycleInfo> conv_observer;
                 solver.set_observer(conv_observer);
                 solver.cycle(y0_fine, file);  // cycle() updates the iterate in place

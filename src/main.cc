@@ -56,7 +56,7 @@ void solve(const ProgramOptions& opts)
         EnergyOracle<System> oracle(gp, opts.solver);
 
         // Termination criterion for gradient descent
-        GradientDescent solver(oracle, manifold, opts.descent);
+        GradientDescent solver(oracle, oracle.get_residual(), manifold, opts.descent);
         ConvergenceTableObserver<CycleInfo> conv_observer;
         solver.set_observer(conv_observer);
 
