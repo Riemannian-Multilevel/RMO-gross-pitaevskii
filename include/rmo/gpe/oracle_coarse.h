@@ -6,6 +6,7 @@
 #define RMO_GPE_ORACLE_COARSE_H
 
 #include <rmo/gpe/oracle.h>
+#include <rmo/gpe/residual.h>
 #include <rmo/gpe/manifold.h>
 #include <rmo/gpe/metric.h>
 
@@ -13,71 +14,6 @@
 
 namespace rmo::gpe
 {
-
-template <typename System>
-class GrossPitaevskiiCoarseResidual
-{
-public:
-    using GPOracle = GrossPitaevskiiOracle<System>;
-    using Operator = typename GPOracle::Operator;
-
-    // M, A: matrices for computing residual of (uncorrected) objective E_GP
-    // M_tilt: matrix for computing residual of coarse correction term <w,L(z)>
-    explicit GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model)
-        : m_model(model)
-          // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<const GPOracle&>(model.coarse()))
-          , m_norm(gp_coarse.get_M())
-    {
-    }
-
-    [[nodiscard]] double residual(const Vector<double>& x) const
-    {
-        // This is fixed for different coarse models
-        return m_norm(residual_vector(x));
-    }
-
-protected:
-    Vector<double> residual_vector(const Vector<double>& x) const
-    {
-        const auto& state = m_model.get_state();
-        const Operator& M = gp_coarse.get_M();
-        const Operator& A = gp_coarse.get_A();
-
-        Vector<double> Mx(x.size());
-        M.vmult(Mx, x);
-
-        const double mass = x * Mx;
-        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
-
-        // 1. Compute the pullback of the tilt (u)
-        Vector<double> u(x.size());
-        ellipsoid::retract_inv_diff_by_norm_adjoint(M, state.y, x, state.w, u);
-
-        // This varies for different coarse models
-        Vector<double> grad_tilt(x.size());
-        m_model.metric().apply(u, grad_tilt);
-
-        // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
-        Vector<double> Ax(x.size());
-        A.vmult(Ax, x);
-        const double lambda = (x * Ax - x * grad_tilt) / mass;
-
-        // 3. Form the modified residual vector: r = (Ax - Mu) - lambda_tilde * Mx
-        Vector<double> r(Ax);
-        r.add(-1.0, grad_tilt);
-        r.add(-lambda, Mx);
-
-        return r;
-    }
-
-private:
-    const CoarseOracleBase& m_model;
-    const GPOracle& gp_coarse;
-
-    SpdNorm<Operator> m_norm; // M-norm
-};
-
 
 // O_coarse: oracle for evaluating \grad E_c(y) in correction term w = \grad E_c(y) - R \grad E_f(x)
 //           assumed to be consistent with metric in oracle for evaluating <w, .>_y
@@ -109,12 +45,12 @@ public:
 
     MassCoarseOracle(CoarseOracleBase& model, SolverOptions options)
         : m_model(model)
-          , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, M_coarse, A_coarse)
           , M_inv_coarse(gp_coarse.get_M_inv())
           , m_metric(M_coarse, metric_t)
     {
@@ -199,12 +135,12 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     // TODO: dynamic_cast to const? (M, A const methods)
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     InverseM& M_inv_coarse;
 
     OperatorMetric<Operator> m_metric;
@@ -225,12 +161,12 @@ public:
 
     MassCoarseOracleEnergyAdaptive(CoarseOracleBase& model, SolverOptions options)
         : m_model(model)
-          , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, M_coarse, A_coarse)
           , A_inv_coarse(gp_coarse.get_A_inv())
           , m_metric(A_coarse, metric_t)
     {
@@ -313,11 +249,11 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     InverseA& A_inv_coarse;
 
     OperatorMetric<Operator> m_metric;
@@ -341,11 +277,11 @@ public:
 
     FrobeniusCoarseOracle(CoarseOracleBase& model, SolverOptions)
         : m_model(model)
-          , m_coarse_res(model)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, M_coarse, A_coarse)
     {
         AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
@@ -411,10 +347,10 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
 
     EuclideanMetric m_metric;
 };
@@ -434,12 +370,12 @@ public:
 
     FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase& model, SolverOptions options)
         : m_model(model)
-          , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, M_coarse, A_coarse)
           , A_inv_coarse(gp_coarse.get_A_inv())
           , m_metric(A_coarse, metric_t)
     {
@@ -523,11 +459,11 @@ private:
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     InverseA& A_inv_coarse;
 
     OperatorMetric<Operator> m_metric;
