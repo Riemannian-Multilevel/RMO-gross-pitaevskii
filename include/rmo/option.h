@@ -21,6 +21,8 @@ BOOST_DESCRIBE_STRUCT(SolverOptions, (),
     (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (n_levels, v_levels));
+BOOST_DESCRIBE_STRUCT(OutputOptions, (),
+    (output_bin, bin_filename, output_vtk, vtk_filename, output_every));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
     (kappa, eps, coarse_every));
 
@@ -198,6 +200,33 @@ inline po::options_description fas_cli_options()
     return d;
 }
 
+// ---------- OutputOptions ----------
+inline po::options_description output_cli_options()
+{
+    po::options_description d("Output options");
+    d.add_options()
+        ("output-bin", po::value<std::string>()->implicit_value(""),
+            "write all iterates in binary format, optionally with base name (--output-bin=<name>)")
+        ("output-vtk", po::value<std::string>()->implicit_value(""),
+            "write the solution in VTK format, optionally with base name (--output-vtk=<name>)")
+        ("output-every", po::value<unsigned>()->default_value(0),
+            "with --output-vtk, also write every k-th iterate (0: final solution only)");
+    return d;
+}
+
+inline void apply_output_options(const po::variables_map& vm, OutputOptions& options_out)
+{
+    options_out.output_bin = vm.contains("output-bin");
+    if (options_out.output_bin) {
+        options_out.bin_filename = vm["output-bin"].as<std::string>();
+    }
+    options_out.output_vtk = vm.contains("output-vtk");
+    if (options_out.output_vtk) {
+        options_out.vtk_filename = vm["output-vtk"].as<std::string>();
+    }
+    options_out.output_every = vm["output-every"].as<unsigned>();
+}
+
 
 // ---------- Gross-Pitaevskii problem ----------
 namespace gpe
@@ -236,8 +265,6 @@ inline po::options_description gpe_cli_options() {
         ("potential-expr", po::value<std::string>()->default_value(""),
             "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
             "implies --potential expression")
-        ("export-solution", po::value<bool>()->default_value(false)->implicit_value(true),
-            "export incumbent solutions in binary format")
         ("mass-lumping", po::value<bool>()->default_value(false)->implicit_value(true),
             "use lumped (diagonal) mass matrices; requires a lumpable element "
             "(quadrilateral, or simplex with degree <= 2)");
@@ -268,7 +295,6 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
-    options.export_solution = vm["export-solution"].as<bool>();
 }
 
 

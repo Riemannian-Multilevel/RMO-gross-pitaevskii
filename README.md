@@ -107,8 +107,6 @@ General problem options:
   --mesh arg (=quadrilateral)           type of mesh elements used
                                         (quadrilateral|simplex)
   --potential arg (=square)             used potential (square|optical_lattice)
-  --export-solution [=arg(=1)] (=0)     export incumbent solutions in binary
-                                        format
 
 RGD options:
   --max-iter arg (=25)                  maximum number of iterations
@@ -156,6 +154,16 @@ FAS options:
                                         ial_frobenius|differential_frobenius)
   --interpolate arg (=none)             galerkin condition on linear
                                         interpolation (none|mass)
+
+Output options:
+  --output-bin [=arg(=)]                write all iterates in binary format,
+                                        optionally with base name
+                                        (--output-bin=<name>)
+  --output-vtk [=arg(=)]                write the solution in VTK format,
+                                        optionally with base name
+                                        (--output-vtk=<name>)
+  --output-every arg (=0)               with --output-vtk, also write every
+                                        k-th iterate (0: final solution only)
 ```
 
 To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
