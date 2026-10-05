@@ -145,7 +145,7 @@ int main(int argc, char* argv[])
                         EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp_func, options_slv_level[ref]);
 
                         GradientDescent solver(oracle, manifold, options_gd_level[ref]);
-                        ConvergenceTableObserver conv_observer;
+                        ConvergenceTableObserver<CycleInfo> conv_observer;
                         solver.set_observer(conv_observer);
 
                         x[ref] = y0[ref];  // cycle() updates the iterate in place
@@ -176,7 +176,7 @@ int main(int argc, char* argv[])
                 EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(gp_func, options_slv);
 
                 GradientDescent solver(oracle, manifold, options_gd);
-                ConvergenceTableObserver conv_observer;
+                ConvergenceTableObserver<CycleInfo> conv_observer;
                 solver.set_observer(conv_observer);
                 solver.cycle(y0_fine, file);  // cycle() updates the iterate in place
             }

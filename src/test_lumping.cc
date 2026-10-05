@@ -71,7 +71,6 @@ GPE_Options make_options(MeshKind mesh, int degree, BoundaryCondition bc)
     options.bc              = bc;
     options.mesh_kind       = mesh;
     options.potential       = Potential::SQUARE;
-    options.export_solution = false;
     return options;
 }
 
