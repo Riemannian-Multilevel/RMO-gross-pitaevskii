@@ -113,7 +113,7 @@ bool run_check(GPE_Options options, SolverOptions options_slv, DescentOptions op
     ellipsoid::retract_by_norm(objective.get_M(), x);
 
     GradientDescent solver(oracle, manifold, options_gd);
-    ConvergenceTableObserver conv_observer;
+    ConvergenceTableObserver<CycleInfo> conv_observer;
     solver.set_observer(conv_observer);
     solver.cycle(x, std::cout);
 

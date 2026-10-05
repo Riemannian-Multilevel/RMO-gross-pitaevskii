@@ -105,6 +105,16 @@ struct FAS_Options
     bool coarse_energy_adaptive;  // solve coarse model with energy-adaptive gradient descent
 };
 
+// Output of solutions, independent of the problem
+struct OutputOptions
+{
+    bool output_bin;              // write all iterates in binary format
+    std::string bin_filename;     // base name of binary files (empty: default name)
+    bool output_vtk;              // write solutions in VTK format
+    std::string vtk_filename;     // base name of VTK files (empty: default name)
+    unsigned output_every;        // also write every k-th iterate to VTK (0: final solution only)
+};
+
 // Fields for gradient computation with inner solver
 // TODO: move to descent.h?
 struct GradInfo
@@ -141,7 +151,6 @@ struct GPE_Options
     MeshKind mesh_kind;     // subdivide the grid into simplices or quadrilaterals
     Potential potential;    // used potential V for matrix M_V
     std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
-    bool export_solution;   // write incumbent solutions to disk
 };
 
 enum class Transport
