@@ -134,6 +134,8 @@ namespace gpe
 // TODO: support more complicated potentials
 enum class Potential
 {
+    ZERO,
+    CONSTANT,
     SQUARE,
     OPTICAL_LATTICE,
     EXPRESSION      // muparser expression, see GPE_Options::potential_expr
