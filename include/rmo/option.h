@@ -210,7 +210,7 @@ inline po::options_description output_cli_options()
         ("output-vtk", po::value<std::string>()->implicit_value(""),
             "write the solution in VTK format, optionally with base name (--output-vtk=<name>)")
         ("output-every", po::value<unsigned>()->default_value(0),
-            "with --output-vtk, also write every k-th iterate (0: final solution only)");
+            "with --output-vtk, also write every k-th and the final iterate as a series (0: final iterate only)");
     return d;
 }
 
