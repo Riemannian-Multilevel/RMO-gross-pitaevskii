@@ -91,21 +91,26 @@ void output_results(const dealii::Vector<double>& solution, const dealii::DoFHan
     data_out.write(output, format);
 }
 
-//! Writes the final iterate to <basename>.vtk and, if @p every > 0, every k-th iterate to
-//! <basename>_iter<i>.vtk (read as a time series by ParaView).
+//! Writes the final iterate to <basename>.vtk and, if @p every > 0, also every k-th and the final
+//! iterate to <basename>_iter<i>.vtk, which ParaView reads as one time series.
 template <int dim>
 void output_vtk(const std::vector<dealii::Vector<double>>& history, const dealii::DoFHandler<dim>& dof_handler,
                 const std::string& basename, unsigned every)
 {
     AssertThrow(!history.empty(), dealii::ExcMessage("no iterates to write"));
 
-    if (every > 0) {
-        for (unsigned i = 0; i < history.size(); i += every) {
+    output_results(history.back(), dof_handler, dealii::DataOutBase::vtk, basename + ".vtk");
+    if (every == 0) {
+        return;
+    }
+
+    const std::size_t last = history.size() - 1;
+    for (std::size_t i = 0; i <= last; ++i) {
+        if (i == last || i % every == 0) {
             output_results(history[i], dof_handler, dealii::DataOutBase::vtk,
                            basename + "_iter" + std::to_string(i) + ".vtk");
         }
     }
-    output_results(history.back(), dof_handler, dealii::DataOutBase::vtk, basename + ".vtk");
 }
 
 //!
