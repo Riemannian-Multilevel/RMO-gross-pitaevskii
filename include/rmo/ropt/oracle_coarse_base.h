@@ -58,7 +58,7 @@ public:
     // Coarse parameter initialization
         , m_state(n_fine, n_coarse)
     {
-        AssertThrow(T_fine.get_metric() == T_coarse.get_metric(),
+        AssertThrow(T_fine.metric().kind() == T_coarse.metric().kind(),
             dealii::ExcInternalError("non-corresponding metrics for coarse and fine oracle types"));
     }
 
@@ -120,18 +120,8 @@ public:
         m_state.w.add(-1.0, m_state.x_grad_restr);
     }
 
-    double norm(const Vector<double> &x) const
-    {
-        return T_coarse.norm(x);
-    }
-    double metric(const Vector<double> &x, const Vector<double> &z) const
-    {
-        return T_coarse.inner(x, z);
-    }
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const
-    {
-        return T_coarse.apply_metric(src, dst);
-    }
+    //! Metric of the coarse model, i.e. of the coarse tilt oracle
+    const MetricBase& metric() const { return T_coarse.metric(); }
 
     void set_timer(const dealii::Timer& timer_new) const { timer = timer_new; }
     const CoarseState& get_state() const { return m_state; }

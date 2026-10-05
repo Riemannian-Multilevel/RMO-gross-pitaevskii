@@ -142,7 +142,7 @@ public:
     MassOracle(Functional& func, SolverOptions options)
         : Base(func)
           , options(options)
-          , m_norm(this->get_M())
+          , m_metric(func.get_M(), metric_t)
     {}
 
     /* @brief Computes the Riemannian gradient in the M-metric. */
@@ -180,29 +180,14 @@ public:
         return info;
     }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        this->get_M().vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
     SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -221,7 +206,7 @@ public:
     EnergyOracle(Functional& func, SolverOptions options)
         : Base(func)
           , options(options)
-          , m_norm(this->get_A())
+          , m_metric(func.get_A(), metric_t)
     {}
 
     /**
@@ -262,29 +247,14 @@ public:
         return info;
     }
 
-    [[nodiscard]] double norm(const Vector<double>& x) const override
-    {
-        return m_norm(x);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        this->get_A().vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
     SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -325,22 +295,10 @@ public:
         return gradient(x, output); // no-op
     }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return std::sqrt(v * v);
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return x * z;
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        dst = src;
-    }
+private:
+    EuclideanMetric m_metric;
 };
 
 } // namespace rmo::gpe
