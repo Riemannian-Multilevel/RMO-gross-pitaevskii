@@ -5,21 +5,47 @@
 #ifndef RMO_ROPT_SOLVER_H
 #define RMO_ROPT_SOLVER_H
 
+#include <boost/describe.hpp>
+
+#include <iosfwd>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <deal.II/numerics/data_postprocessor.h>
 
-#include <rmo/lac.h>
 #include <rmo/ropt/observer.h>
 #include <rmo/ropt/oracle_base.h>
 #include <rmo/ropt/descent.h>
 
-#include <rmo/util/util.h>
 
 namespace rmo
 {
 
+//! One evaluated iterate of a (multilevel) descent method. The described fields are reported by
+//! every solver; optional values go into `extra`.
+struct CycleInfo
+{
+    unsigned iter      = 0;
+    unsigned level     = 0;
+    bool     coarse    = false;  // step came from a coarse correction
+    unsigned lac_iter  = 0;
+    double   residual  = 0.0;
+    double   energy    = 0.0;
+    double   step      = 0.0;
+    double   min_value = 0.0;
+    double   elapsed   = 0.0;
+
+    //! Optional values, reported as additional columns (e.g. coarse condition norms)
+    std::vector<std::pair<std::string, double>> extra;
+};
+
+BOOST_DESCRIBE_STRUCT(CycleInfo, (),
+    (iter, level, coarse, lac_iter, residual, energy, step, min_value, elapsed));
 
 
-class SolverBase : public ObservableSolver
+
+class SolverBase : public ObservableSolver<CycleInfo>
 {
 public:
     virtual ~SolverBase() = default;
@@ -67,20 +93,21 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         O_fine.update(x);
     }
 
-    return {.step_size = step_size, .elapsed = timer.cpu_time()};
+    return {.step = step_size, .elapsed = timer.cpu_time()};
 }
 
 
 template <typename Oracle>
 std::pair<double,double>
-cycle_eval(const Oracle& O, const Vector<double>& y,
-           IterationObserver* observer, CycleInfo info)
+cycle_eval(const Oracle& O, const Vector<double>& y, IterationObserver<CycleInfo>* observer, CycleInfo info)
 {
     const double residual = O.residual(y);
     const double energy   = O.value(y);
+    const auto min_element = std::ranges::min_element(y);
 
-    info.residual = residual;
-    info.energy   = energy;
+    info.residual  = residual;
+    info.energy    = energy;
+    info.min_value = *min_element;
 
     if (observer != nullptr) {
         observer->add(info);
@@ -155,7 +182,7 @@ public:
             }
 
             // Avoid a stalling line search where the solution x does not change
-            if (options_gd.line_search && info.step_size == 0.0) {
+            if (options_gd.line_search && info.step == 0.0) {
                 std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
                 break;
             }

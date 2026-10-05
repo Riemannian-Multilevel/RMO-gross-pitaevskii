@@ -32,7 +32,7 @@ using LevelNorm = std::function<double(const Vector<double>&)>;
 // Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
 // (the FullApproximationScheme constructor is not templated)
 template <typename Functional>
-class FullApproximationScheme : public ObservableSolver
+class FullApproximationScheme : public ObservableSolver<CycleInfo>
 {
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
@@ -124,7 +124,7 @@ public:
             info.coarse    = false;
             info.lac_iter  = 0;
             info.level     = level;
-            info.step_size = 0.0;   // no step taken yet
+            info.step      = 0.0;   // no step taken yet
             info.elapsed   = timer.cpu_time();
 
             cycle_eval(O_level, x, m_observer, info);
@@ -153,7 +153,7 @@ public:
                 cycle_eval(O_level, x, m_observer, info);
 
                 // Avoid a stalling line search where the solution x does not change
-                if (options_descent_mg[level].line_search && info.step_size == 0.0) {
+                if (options_descent_mg[level].line_search && info.step == 0.0) {
                     std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
                     break;
                 }
@@ -196,10 +196,10 @@ public:
         info.coarse    = false;
         info.lac_iter  = 0;
         info.level     = level;
-        info.step_size = 0.0;   // no step taken yet
+        info.step      = 0.0;   // no step taken yet
         info.elapsed   = timer.cpu_time();
 
-        info.coarse_cond = true;  // this level has a coarser one: report the condition norms
+        info.extra = {{"grad_norm", 0.0}, {"grad_restr_norm", 0.0}};  // this level has a coarser one: report the condition norms
 
         auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
@@ -280,9 +280,7 @@ public:
                     info.coarse    = true;
                     info.lac_iter  = 0;
                     info.level     = level;
-                    info.coarse_cond     = true;
-                    info.grad_norm       = cond_grad_norm;
-                    info.grad_restr_norm = cond_grad_restr_norm;
+                    info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
                     auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
@@ -297,7 +295,7 @@ public:
                     }
 
                     // Avoid a stalling line search where the solution x does not change
-                    if (options_descent_mg[level].line_search && info.step_size == 0.0) {
+                    if (options_descent_mg[level].line_search && info.step == 0.0) {
                         std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
                         break;
                     }
@@ -332,9 +330,7 @@ fine_step:
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
-                info.coarse_cond     = true;
-                info.grad_norm       = cond_grad_norm;
-                info.grad_restr_norm = cond_grad_restr_norm;
+                info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
                 auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
 
@@ -349,7 +345,7 @@ fine_step:
                 }
 
                 // Avoid a stalling line search where the solution x does not change
-                if (options_descent_mg[level].line_search && info.step_size == 0.0) {
+                if (options_descent_mg[level].line_search && info.step == 0.0) {
                     std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
                     break;
                 }
