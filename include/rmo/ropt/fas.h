@@ -9,8 +9,8 @@
 #include <deal.II/base/mg_level_object.h>
 
 #include <rmo/ropt/observer.h>
-#include <rmo/ropt/oracle_base.h>
-#include <rmo/ropt/oracle_coarse_base.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_coarse.h>
 
 #include <rmo/ropt/transport.h>
 #include <rmo/ropt/solver.h>

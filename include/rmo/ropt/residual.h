@@ -1,5 +1,5 @@
-#ifndef RMO_ROPT_RESIDUAL_BASE_H
-#define RMO_ROPT_RESIDUAL_BASE_H
+#ifndef RMO_ROPT_RESIDUAL_H
+#define RMO_ROPT_RESIDUAL_H
 
 #include <rmo/lac.h>
 
@@ -21,4 +21,4 @@ public:
 
 } // namespace rmo
 
-#endif //RMO_ROPT_RESIDUAL_BASE_H
+#endif //RMO_ROPT_RESIDUAL_H
