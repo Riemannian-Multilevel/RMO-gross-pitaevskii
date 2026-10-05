@@ -86,14 +86,21 @@ public:
     // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
     // TiltCoarseModelType:  The coarse oracle used for building 'w' (e.g. MassCoarseOracle)
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
+    // CoarseResidualType:   The residual of the coarse model (e.g. GrossPitaevskiiCoarseResidual)
     // OracleBase&:          The oracle used to evaluate the level objective
+    // ResidualBase&:        The residual of the level problem, usually O_level.get_residual()
+    //                       (reported; stopping criterion on the finest level; value passed to O_level.gradient())
     // TODO: report the iterate history through the observer as well (x_hist)
-    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
-        requires TiltOracle<TiltOracleType, Functional>
-    void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType,
+              typename CoarseResidualType>
+        requires TiltOracle<TiltOracleType, Functional> && CoarseResidual<CoarseResidualType, Functional>
+    void cycle(OracleBase& O_level, OracleBase& T_level, const ResidualBase& R_level, Vector<double>& x,
+               unsigned level_idx)
     {
         AssertIndexRange(level_idx, level_indices.size());
         unsigned level = level_indices.at(level_idx);
+        // A residual of another problem (e.g. another level) has another dimension
+        AssertDimension(R_level.n_dofs(), O_level.n_dofs());
         std::cerr << "level: " << level << std::endl;
         //AssertIndexRange(level - min_level, max_level - min_level + 1);
 
@@ -127,14 +134,15 @@ public:
             info.step      = 0.0;   // no step taken yet
             info.elapsed   = timer.cpu_time();
 
-            cycle_eval(O_level, x, m_observer, info);
+            // Residual at x, passed to the next gradient (inner tolerance)
+            double residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
             // Coarse condition is always false on coarsest level
             // -> gradient descent
             for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
                 level_log.push_back(level);
 
-                auto info_grad = O_level.gradient(x, x_grad);
+                auto info_grad = O_level.gradient(x, x_grad, residual);
                 dk  = x_grad;
                 dk *= -1.0;
 
@@ -149,8 +157,7 @@ public:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                //auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
-                cycle_eval(O_level, x, m_observer, info);
+                residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
                 // Avoid a stalling line search where the solution x does not change
                 if (options_descent_mg[level].line_search && info.step == 0.0) {
@@ -185,6 +192,8 @@ public:
         CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
         // Evaluation of coarse model objective (-> correction term w, M-gradient)
         TiltCoarseOracleType qk_m(qk_base, options_solver_mg[coarse_level]);
+        // Residual of the coarse model (reported on the coarse level; value passed to qk.gradient())
+        CoarseResidualType rk(qk_base, *m_objective_mg[coarse_level]);
 
         // T_level.update(x) is implied by O_level.update(x) above (shared functional)
 
@@ -201,7 +210,8 @@ public:
 
         info.extra = {{"grad_norm", 0.0}, {"grad_restr_norm", 0.0}};  // this level has a coarser one: report the condition norms
 
-        auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+        // Residual at x, passed to the next fine-step gradient (inner tolerance)
+        double residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
@@ -247,8 +257,8 @@ public:
                     // Solve the coarse model q_k(zk)
                     // TODO: pass on ostream (-> callback strategy)
                     //       throw/catch exception when we do not have a descent direction on the fine level
-                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(qk, qk_m,
-                        zk, coarse_level_idx, std::cerr);
+                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType, CoarseResidualType>(
+                        qk, qk_m, rk, zk, coarse_level_idx, std::cerr);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -282,7 +292,7 @@ public:
                     info.level     = level;
                     info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
-                    auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+                    residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
@@ -314,7 +324,7 @@ fine_step:
                 // Record that a fine step was taken on this level
                 level_log.push_back(level_indices.at(level_idx));
                 // Update gradient
-                auto info_grad = O_level.gradient(x, x_grad);
+                auto info_grad = O_level.gradient(x, x_grad, residual);
                 dk  = x_grad;
                 dk *= -1.0;
 
@@ -332,7 +342,7 @@ fine_step:
                 info.level     = level;
                 info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
-                auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+                residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {
@@ -363,11 +373,14 @@ fine_step:
     }
 
     // TODO: only output on certain levels OR include the current level in the table
-    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
-        requires TiltOracle<TiltOracleType, Functional>
-    void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType,
+              typename CoarseResidualType>
+        requires TiltOracle<TiltOracleType, Functional> && CoarseResidual<CoarseResidualType, Functional>
+    void cycle(OracleBase& O_level, OracleBase& T_level, const ResidualBase& R_level, Vector<double>& x,
+               unsigned level_idx, std::ostream& os)
     {
-        cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(O_level, T_level, x, level_idx);
+        cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType, CoarseResidualType>(O_level, T_level, R_level,
+                                                                                         x, level_idx);
 
         unsigned level = level_indices.at(level_idx);
         if (m_observer != nullptr) {

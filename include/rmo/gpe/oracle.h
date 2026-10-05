@@ -56,13 +56,9 @@ public:
         return m_func.n_dofs();
     }
 
-    // Residual evaluation
-    [[nodiscard]] double residual(const Vector<double>& x) const override
-    {
-        return m_res.residual(x);
-    }
-
     // Shared accessors
+    const Functional& get_functional() const { return m_func; }
+    const GrossPitaevskiiResidual<System>& get_residual() const { return m_res; }
     const Operator& get_M() const { return m_func.get_M(); }
     const Operator& get_A() const { return m_func.get_A(); }
     const SparseMatrix<double>& get_A0() const { return m_func.get_A0(); }
@@ -100,7 +96,7 @@ public:
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double x_residual = this->residual(x);
+        const double x_residual = this->m_res.residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, x_residual);
@@ -167,7 +163,7 @@ public:
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double x_residual = this->residual(x);
+        const double x_residual = this->m_res.residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, x_residual);

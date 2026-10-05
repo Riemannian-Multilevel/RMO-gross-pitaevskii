@@ -7,12 +7,13 @@
 
 #include <rmo/ropt/metric.h>
 #include <rmo/ropt/oracle_coarse_base.h>
+#include <rmo/ropt/residual_base.h>
 
 /**
  * @file
- * @brief Eigenvalue residuals of the Gross-Pitaevskii problem on the fine level (GrossPitaevskiiResidual)
- * and of the tilted coarse models (GrossPitaevskiiCoarseResidual). The oracles use them to set the
- * tolerance of the inner solvers in gradient().
+ * @brief Eigenvalue residuals of the Gross-Pitaevskii problem (GrossPitaevskiiResidual) and of its tilted
+ * coarse models (GrossPitaevskiiCoarseResidual), measured in the M-norm. The solvers report them, stop on
+ * them, and pass them to OracleBase::gradient() for the inner tolerance.
  */
 namespace rmo::gpe
 {
@@ -76,7 +77,7 @@ Vector<double> eigen_residual(const MatrixType& A, const MatrixType& M, const Ve
 
 
 template <typename System>
-class GrossPitaevskiiResidual
+class GrossPitaevskiiResidual : public ResidualBase
 {
 public:
     using Functional = GrossPitaevskiiFunctional<System>;
@@ -88,19 +89,19 @@ public:
     {
     }
 
-    [[nodiscard]] double residual(const Vector<double>& x) const
+    [[nodiscard]] double residual(const Vector<double>& x) const override
     {
         return m_metric.norm(residual_vector(x));
     }
 
-protected:
+    [[nodiscard]] unsigned n_dofs() const override { return m_func.n_dofs(); }
+
+private:
     Vector<double> residual_vector(const Vector<double>& x) const
     {
-        // r = A x - lambda M x, with the Rayleigh quotient lambda = x^T A x / x^T M x
         return kernels::eigen_residual(m_func.get_A(), m_func.get_M(), x);
     }
 
-private:
     const Functional& m_func;
 
     OperatorMetric<Operator> m_metric; // M-metric
@@ -108,37 +109,40 @@ private:
 
 
 template <typename System>
-class GrossPitaevskiiCoarseResidual
+class GrossPitaevskiiCoarseResidual : public ResidualBase
 {
 public:
-    using Operator = typename GrossPitaevskiiFunctional<System>::Operator;
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
 
-    // M, A: operators of the (uncorrected) coarse objective E_GP
     // model: coarse model, providing the state (y, w) and the metric of the coarse correction term <w,L(z)>
-    GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model, const Operator& M, const Operator& A)
+    // func:  functional of the coarse level, with the operators M, A of the (uncorrected) objective E_GP
+    GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model, const Functional& func)
         : m_model(model)
-          , M(M)
-          , A(A)
-          , m_metric(M, MetricKind::MASS)
+          , m_func(func)
+          , m_metric(func.get_M(), MetricKind::MASS)
     {
     }
 
-    [[nodiscard]] double residual(const Vector<double>& x) const
+    [[nodiscard]] double residual(const Vector<double>& x) const override
     {
-        // This is fixed for different coarse models
         return m_metric.norm(residual_vector(x));
     }
 
-protected:
+    [[nodiscard]] unsigned n_dofs() const override { return m_func.n_dofs(); }
+
+private:
     Vector<double> residual_vector(const Vector<double>& x) const
     {
         const auto& state = m_model.get_state();
+        const Operator& M = m_func.get_M();
+        const Operator& A = m_func.get_A();
 
         // 1. Compute the pullback of the tilt (u)
         Vector<double> u(x.size());
         ellipsoid::retract_inv_diff_by_norm_adjoint(M, state.y, x, state.w, u);
 
-        // This varies for different coarse models
+        // Tilt in the metric of the coarse correction term (depends on the coarse model)
         Vector<double> grad_tilt(x.size());
         m_model.metric().apply(u, grad_tilt);
 
@@ -146,9 +150,8 @@ protected:
         return kernels::eigen_residual(A, M, x, grad_tilt);
     }
 
-private:
     const CoarseOracleBase& m_model;
-    const Operator &M, &A;
+    const Functional& m_func;
 
     OperatorMetric<Operator> m_metric; // M-metric
 };
