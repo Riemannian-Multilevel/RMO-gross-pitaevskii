@@ -234,7 +234,7 @@ namespace gpe
 
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping));
-BOOST_DESCRIBE_ENUM(Potential, SQUARE, OPTICAL_LATTICE, EXPRESSION);
+BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
     (metric_t, transport_t, interpol_t));
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
@@ -261,7 +261,7 @@ inline po::options_description gpe_cli_options() {
         ("mesh", po::value<std::string>()->default_value("quadrilateral"),
             "type of mesh elements used (quadrilateral|simplex)")
         ("potential", po::value<std::string>()->default_value("square"),
-            "used potential (square|optical_lattice|expression)")
+            "used potential (zero|constant|square|optical_lattice|expression)")
         ("potential-expr", po::value<std::string>()->default_value(""),
             "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
             "implies --potential expression")

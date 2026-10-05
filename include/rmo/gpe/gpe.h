@@ -29,6 +29,33 @@ namespace rmo::gpe
 
 namespace potential
 {
+template <int dim>
+class Zero
+{
+public:
+    double operator()(const Point<dim>& p) const
+    {
+        return 0.0;
+    }
+};
+
+template <int dim>
+class Constant
+{
+public:
+    explicit Constant(const double a = 1.0)
+        : m_a(a)
+    {}
+
+    double operator()(const Point<dim>& p) const
+    {
+        return m_a;
+    }
+
+private:
+    double const m_a;
+};
+
 /**
  * @brief Functor computing the square of the Euclidean norm of a point.
  *
@@ -102,15 +129,21 @@ private:
 
 
 template <int dim>
-using PVar = std::variant<Square<dim>, OpticalLattice<dim>, Expression<dim>>;
+using PVar = std::variant<Zero<dim>, Constant<dim>, Square<dim>, OpticalLattice<dim>, Expression<dim>>;
 
 template <int dim>
 PVar<dim>
 get_potential(Potential potential_t, const std::string& expr = "") {
     switch (potential_t)
     {
+        case Potential::ZERO:
+            return Zero<dim>();
+        // TODO: allow setting constructor variable
+        case Potential::CONSTANT:
+            return Constant<dim>();
         case Potential::SQUARE:
             return Square<dim>();
+        // TODO: allow setting constructor variable
         case Potential::OPTICAL_LATTICE:
             return OpticalLattice<dim>();
         case Potential::EXPRESSION:
