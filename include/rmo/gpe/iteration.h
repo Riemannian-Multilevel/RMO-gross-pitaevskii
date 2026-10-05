@@ -7,7 +7,8 @@
 
 #include <rmo/lac.h>
 #include <rmo/gpe/gpe.h>
-#include <rmo/gpe/oracle.h>  // kernels::grad_mass, grad_energy_adaptive, grad_frobenius
+#include <rmo/gpe/kernels.h>
+#include <rmo/gpe/residual.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/transport.h>
 

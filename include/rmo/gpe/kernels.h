@@ -9,6 +9,7 @@
  * @file
  * @brief Numerical kernels of the Gross-Pitaevskii oracles: Riemannian gradients on the unit-mass
  * manifold, and value, directional derivative and gradient of the coarse models.
+ * The eigenvalue residuals are in residual.h.
  *
  * Shared by the oracles (oracle.h, oracle_coarse.h), the iterations (iteration.h) and the tests.
  */

@@ -46,8 +46,7 @@ void solve(const ProgramOptions& opts)
         Vector<double> x0(context.n_dofs());
         x0 = 1.0;
         context.distribute(x0);
-        // auto M_norm = SpdNorm(context.get_M());
-        // x0 /= M_norm(x0);
+        // x0 /= OperatorMetric(context.get_M(), MetricKind::MASS).norm(x0);
 
         // Define objective in ambient space
         auto gp = context.get_eval(opts.gpe.beta, opts.solver);
@@ -57,7 +56,7 @@ void solve(const ProgramOptions& opts)
         EnergyOracle<System> oracle(gp, opts.solver);
 
         // Termination criterion for gradient descent
-        GradientDescent solver(oracle, manifold, opts.descent);
+        GradientDescent solver(oracle, oracle.get_residual(), manifold, opts.descent);
         ConvergenceTableObserver<CycleInfo> conv_observer;
         solver.set_observer(conv_observer);
 
