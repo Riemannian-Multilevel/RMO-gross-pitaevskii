@@ -388,7 +388,7 @@ private:
         const LevelNorm& norm = m_cond_norm_mg[level];
         if (norm)              // a norm was configured for this level
             return norm(v);
-        return T.norm(v);      // default: metric of the (tilt) oracle on this level
+        return T.metric().norm(v);  // default: metric of the (tilt) oracle on this level
     }
 
     mutable dealii::Timer timer;
