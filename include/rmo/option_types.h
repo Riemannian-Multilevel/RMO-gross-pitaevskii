@@ -179,7 +179,7 @@ enum class Interpolate
 
 
 // Selection of the multilevel components for the GP problem (main_coarse.cc)
-// TODO: MetricKind is still defined in rmo (used by OracleBase::get_metric)
+// TODO: MetricKind is still defined in rmo (used by MetricBase::kind)
 struct CoarseModelOptions
 {
     MetricKind metric_t;    // type of coarse oracle (shift metric, gradient metric); NONE: single-level

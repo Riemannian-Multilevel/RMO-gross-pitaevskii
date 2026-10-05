@@ -56,7 +56,7 @@ protected:
 
         // This varies for different coarse models
         Vector<double> grad_tilt(x.size());
-        m_model.apply_metric(u, grad_tilt);
+        m_model.metric().apply(u, grad_tilt);
 
         // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
         Vector<double> Ax(x.size());
@@ -116,9 +116,9 @@ public:
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
           , M_inv_coarse(gp_coarse.get_M_inv())
-          , m_norm(M_coarse)
+          , m_metric(M_coarse, metric_t)
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("mass metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("mass metric expected"));
     }
 
     // Update for _evaluation_ of the coarse model
@@ -192,22 +192,7 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        M_coarse.vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
@@ -222,7 +207,7 @@ private:
     const Operator &M_coarse, &A_coarse;
     InverseM& M_inv_coarse;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -247,10 +232,9 @@ public:
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
           , A_inv_coarse(gp_coarse.get_A_inv())
-          //, m_norm(M_coarse)
-          , m_norm(A_coarse)
+          , m_metric(A_coarse, metric_t)
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("mass metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("mass metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -322,23 +306,7 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    // TODO: apply_model_metric?  (residual computations)
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        A_coarse.vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
@@ -352,7 +320,7 @@ private:
     const Operator &M_coarse, &A_coarse;
     InverseA& A_inv_coarse;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -379,7 +347,7 @@ public:
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -436,22 +404,7 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return std::sqrt(v * v);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return x * z;
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        dst = src;
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
@@ -462,6 +415,8 @@ private:
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+
+    EuclideanMetric m_metric;
 };
 
 
@@ -486,9 +441,9 @@ public:
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
           , A_inv_coarse(gp_coarse.get_A_inv())
-          , m_norm(A_coarse)
+          , m_metric(A_coarse, metric_t)
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -561,24 +516,7 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    // TODO: apply_model_metric?  (residual computations)
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        A_coarse.vmult(dst, src);
-    }
-
-    //MetricKind get_model() const { return model_t; }
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
@@ -592,7 +530,7 @@ private:
     const Operator &M_coarse, &A_coarse;
     InverseA& A_inv_coarse;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 } // namespace rmo::gpe
