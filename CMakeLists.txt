@@ -41,12 +41,16 @@ file(GLOB_RECURSE HEADER_ALL "include/*.h")
 function(add_rmo_executable TARGET_NAME)
     # Parse the arguments
     set(options "")
-    set(oneValueArgs "")
+    set(oneValueArgs SOURCE)
     set(multiValueArgs LINK_LIBS EXTRA_SOURCES)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
-    # Construct the path to the source file
-    set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${TARGET_NAME}.cc")
+    # Source file: SOURCE (relative to the project directory), or src/<target>.cc
+    if(ARG_SOURCE)
+        set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/${ARG_SOURCE}")
+    else()
+        set(SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${TARGET_NAME}.cc")
+    endif()
 
     if(NOT EXISTS "${SRC_FILE}")
         message(FATAL_ERROR "Cannot create target '${TARGET_NAME}': Source file ${SRC_FILE} not found.")
@@ -82,13 +86,13 @@ add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 # --- Create targets for tests
 enable_testing()
 
-add_rmo_executable(test_arpack LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_descent LINK_LIBS fmt::fmt)
-add_rmo_executable(test_gradient LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_matrix_free LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_operator)
-add_rmo_executable(test_lumping)
-add_rmo_executable(test_m_matrix)
+add_rmo_executable(test_arpack SOURCE test/arpack.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_descent SOURCE test/descent.cc LINK_LIBS fmt::fmt)
+add_rmo_executable(test_gradient SOURCE test/gradient.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_matrix_free SOURCE test/matrix_free.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_operator SOURCE test/operator.cc)
+add_rmo_executable(test_lumping SOURCE test/lumping.cc)
+add_rmo_executable(test_m_matrix SOURCE test/m_matrix.cc)
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
