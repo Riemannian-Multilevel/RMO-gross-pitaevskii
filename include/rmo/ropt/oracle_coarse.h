@@ -73,7 +73,9 @@ public:
     // Compute parameters for coarse model
     // Note that unlike the coarse models - which take a coarse vector as argument - this takes a fine vector.
     // Models are based on the difference w of coarse gradients, and restricted fine gradients.
-    void update_model(const Vector<double>& x_fine, const double model_tol = -1.0)
+    // TODO: optional absolute tolerance (model_tol) for the gradients defining the model; this needs its own
+    //       entry point, since gradient(x, output, residual) expects the residual at x
+    void update_model(const Vector<double>& x_fine)
     {
         AssertDimension(x_fine.size(), n_fine);
         m_state.x = x_fine;
@@ -95,26 +97,14 @@ public:
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_coarse.id() << "-coarse gradient\n";
 #endif
-        // Set tolerance for coarse gradient defining the coarse model
-        // TODO: model_tol is multiplied by options.tol_inner_res inside OracleBase::gradient() implementations
-        if (model_tol > 0.0) {
-            T_coarse.gradient(m_state.y, m_state.y_grad, model_tol);
-        } else {
-            T_coarse.gradient(m_state.y, m_state.y_grad);  // set based on residual of coarse objective
-        }
+        T_coarse.gradient(m_state.y, m_state.y_grad);  // tolerance from the residual of the coarse objective
         AssertDimension(m_state.y_grad.size(), n_coarse);
 
         // Compute fine (F or M)-gradient
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_fine.id() << "-fine gradient\n";
 #endif
-        // Set tolerance for fine gradient defining the coarse model
-        // TODO: model_tol is multiplied by options.tol_inner_res inside OracleBase::gradient() implementations
-        if (model_tol > 0.0) {
-            T_fine.gradient(m_state.x, m_state.x_grad, model_tol);
-        } else {
-            T_fine.gradient(m_state.x, m_state.x_grad);   // set based on residual of fine objective
-        }
+        T_fine.gradient(m_state.x, m_state.x_grad);  // tolerance from the residual of the fine objective
 
         AssertDimension(m_state.x_grad.size(), n_fine);
 

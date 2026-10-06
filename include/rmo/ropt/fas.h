@@ -242,7 +242,7 @@ public:
             if (check_coarse_cond && (i == 1 || (i-1) % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
-                // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
+                // TODO: fixed (absolute) tolerance for the model gradients, see CoarseOracleBase::update_model()
                 qk_base.update_model(x);
 
                 // Compute coarse condition (in the configured norm, or the oracle's metric by default)
