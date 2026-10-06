@@ -36,7 +36,8 @@ public:
     // TODO: leave `x` argument in update() exclusively, to avoid mismatches
     //       check marker `needs_gradient
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&) const = 0;  // Riemannian gradient - metric-dependent
-    // Riemannian gradient, given the residual at x: oracles with inner solvers use it for the tolerance, others ignore it
+    // Riemannian gradient, given the residual at x (debug builds check it, see assert_residual_at()):
+    // oracles with inner solvers use it for the tolerance, others ignore it
     virtual GradInfo gradient(const Vector<double>&, Vector<double>&, double) const = 0;
 
     //! Metric of the Riemannian gradient

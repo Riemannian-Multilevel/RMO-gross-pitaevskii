@@ -30,7 +30,8 @@ namespace rmo
 using dealii::MGLevelObject;
 
 // Metric on one level for the coarse condition ||R g||_{l-1} >= kappa ||g||_l of FullApproximationScheme;
-// nullptr: metric of the tilt oracle on that level
+// nullptr: metric of the tilt oracle on that level.
+// Non-owning: an OperatorMetric refers to the operator of the level functional and must not outlive it.
 using LevelMetric = std::shared_ptr<const MetricBase>;
 
 
@@ -95,7 +96,7 @@ public:
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // CoarseResidualType:   The residual of the coarse model (e.g. GrossPitaevskiiCoarseResidual)
     // OracleBase&:          The oracle used to evaluate the level objective
-    // ResidualBase&:        The residual of the level problem, usually O_level.get_residual()
+    // ResidualBase&:        The residual of the level problem, e.g. the residual owned by O_level
     //                       (reported; stopping criterion on the finest level; value passed to O_level.gradient())
     // TODO: report the iterate history through the observer as well (x_hist)
     template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType,
@@ -241,7 +242,7 @@ public:
             if (check_coarse_cond && (i == 1 || (i-1) % options_fas.coarse_every == 0)) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
-                // TODO: set fixed tolerance (multiplied by options.tol_inner_res)
+                // TODO: fixed (absolute) tolerance for the model gradients, see CoarseOracleBase::update_model()
                 qk_base.update_model(x);
 
                 // Compute coarse condition (in the configured norm, or the oracle's metric by default)

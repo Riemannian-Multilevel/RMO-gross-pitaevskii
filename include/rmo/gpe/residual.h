@@ -86,9 +86,8 @@ public:
 
     explicit GrossPitaevskiiResidual(const Functional& func)
         : m_func(func)
-          , m_metric(func.get_M(), MetricKind::MASS)
-    {
-    }
+        , m_metric(func.get_M(), MetricKind::MASS)
+    {}
 
     [[nodiscard]] double residual(const Vector<double>& x) const override
     {
@@ -125,10 +124,9 @@ public:
     // func:  functional of the coarse level, with the operators M, A of the (uncorrected) objective E_GP
     GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model, const Functional& func)
         : m_model(model)
-          , m_func(func)
-          , m_metric(func.get_M(), MetricKind::MASS)
-    {
-    }
+        , m_func(func)
+        , m_metric(func.get_M(), MetricKind::MASS)
+    {}
 
     [[nodiscard]] double residual(const Vector<double>& x) const override
     {
@@ -150,7 +148,7 @@ private:
 
         // Tilt in the metric of the coarse correction term (depends on the coarse model)
         Vector<double> grad_tilt(x.size());
-        m_model.metric().apply(u, grad_tilt);
+        m_model.metric().apply(grad_tilt, u);
 
         // 2. Residual of the tilted problem: r = (Ax - grad_tilt) - lambda_tilde * Mx
         return kernels::eigen_residual(A, M, x, grad_tilt);

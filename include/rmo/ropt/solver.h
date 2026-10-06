@@ -132,7 +132,7 @@ class GradientDescent : public SolverBase
 public:
     // O_fine: oracle used for computing gradient descent steps on the fine level
     // R_fine: residual of the fine problem (stopping criterion; its value is passed to O_fine.gradient()),
-    //         usually O_fine.get_residual()
+    //         e.g. the residual owned by the oracle
     GradientDescent(OracleBase& O_fine, const ResidualBase& R_fine, const ManifoldBase& manifold,
                     DescentOptions options_gd)
         : O_fine(O_fine)
@@ -143,6 +143,10 @@ public:
         // A residual of another problem (e.g. another level) has another dimension
         AssertDimension(R_fine.n_dofs(), O_fine.n_dofs());
     }
+
+    // R_fine and manifold are stored by reference: reject temporaries, which would dangle after construction
+    GradientDescent(OracleBase&, const ResidualBase&&, const ManifoldBase&, DescentOptions) = delete;
+    GradientDescent(OracleBase&, const ResidualBase&, const ManifoldBase&&, DescentOptions) = delete;
 
     void cycle(Vector<double>& x) override
     {
