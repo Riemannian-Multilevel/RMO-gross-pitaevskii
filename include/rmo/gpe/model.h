@@ -9,6 +9,12 @@
 #include <rmo/option_types.h>
 #include <rmo/util/random.h>
 
+#include <deal.II/base/function.h>
+#include <deal.II/numerics/vector_tools.h>
+
+#include <cmath>
+#include <numbers>
+
 
 /**
  * @file
@@ -16,6 +22,33 @@
  */
 namespace rmo::gpe
 {
+
+/**
+ * @brief Cosine bump \f$ u_0(x) = \prod_d \cos(\pi x_d / (2r)) \f$ for \f$ |x_d| < r \f$, and 0 otherwise.
+ */
+template <int dim>
+class CosineBump : public dealii::Function<dim>
+{
+public:
+    explicit CosineBump(double r)
+        : r(r)
+    {
+        AssertThrow(r > 0, dealii::ExcMessage("radius of the cosine bump must be positive"));
+    }
+
+    double value(const Point<dim>& p, unsigned = 0) const override
+    {
+        double u = 1.0;
+        for (unsigned d = 0; d < dim; ++d) {
+            u *= (std::abs(p[d]) < r) ? std::cos(0.5 * std::numbers::pi * p[d] / r) : 0.0;
+        }
+        return u;
+    }
+
+private:
+    double r;
+};
+
 
 /**
  * @brief Owns the GrossPitaevskiiPackage and the assembled @p System (GrossPitaevskiiSystem or
@@ -58,6 +91,10 @@ public:
         switch (options.initial) {
             case InitialValue::CONSTANT:
                 x0 = options.initial_arg.value_or(1.0);
+                break;
+            case InitialValue::COSINE:
+                dealii::VectorTools::interpolate(package.get_mapping(), package.get_dofs(),
+                                                 CosineBump<dim>(options.initial_arg.value_or(options.radius)), x0);
                 break;
             case InitialValue::RANDOM:
                 NumberGenerator::get().unifrnd(0.5, 1.5, x0);
