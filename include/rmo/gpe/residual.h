@@ -148,7 +148,7 @@ private:
 
         // Tilt in the metric of the coarse correction term (depends on the coarse model)
         Vector<double> grad_tilt(x.size());
-        m_model.metric().apply(u, grad_tilt);
+        m_model.metric().apply(grad_tilt, u);
 
         // 2. Residual of the tilted problem: r = (Ax - grad_tilt) - lambda_tilde * Mx
         return kernels::eigen_residual(A, M, x, grad_tilt);

@@ -30,7 +30,8 @@ namespace rmo
 using dealii::MGLevelObject;
 
 // Metric on one level for the coarse condition ||R g||_{l-1} >= kappa ||g||_l of FullApproximationScheme;
-// nullptr: metric of the tilt oracle on that level
+// nullptr: metric of the tilt oracle on that level.
+// Non-owning: an OperatorMetric refers to the operator of the level functional and must not outlive it.
 using LevelMetric = std::shared_ptr<const MetricBase>;
 
 
@@ -95,7 +96,7 @@ public:
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
     // CoarseResidualType:   The residual of the coarse model (e.g. GrossPitaevskiiCoarseResidual)
     // OracleBase&:          The oracle used to evaluate the level objective
-    // ResidualBase&:        The residual of the level problem, usually O_level.get_residual()
+    // ResidualBase&:        The residual of the level problem, e.g. the residual owned by O_level
     //                       (reported; stopping criterion on the finest level; value passed to O_level.gradient())
     // TODO: report the iterate history through the observer as well (x_hist)
     template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType,
