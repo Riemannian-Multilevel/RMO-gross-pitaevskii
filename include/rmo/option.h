@@ -241,7 +241,7 @@ namespace gpe
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind, initial, initial_arg, seed));
 BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
-BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, RANDOM);
+BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, COSINE, RANDOM);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
     (metric_t, transport_t));
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
@@ -272,9 +272,9 @@ inline po::options_description gpe_cli_options() {
             "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
             "implies --potential expression")
         ("initial", po::value<std::string>()->default_value("constant"),
-            "initial value (constant|random)")
+            "initial value (constant|cosine|random)")
         ("initial-arg", po::value<std::string>()->default_value(""),
-            "value for --initial constant (default 1)")
+            "value (constant, default 1) or bump radius (cosine, default --radius)")
         ("seed", po::value<unsigned>()->default_value(default_seed),
             "seed of the random number generator");
     return d;
