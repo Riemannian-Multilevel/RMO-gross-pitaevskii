@@ -213,8 +213,8 @@ void retract_by_exp(const MatrixType& M, const Vector<double>& v, Vector<double>
     Vector<double> Mv(x.size());
     M.vmult(Mv, v);
 
-    double vMv = v*Mv;
-    double v_Mnorm = std::sqrt(vMv);
+    const double vMv = v*Mv;
+    const double v_Mnorm = std::sqrt(vMv);
     AssertThrow(v_Mnorm > 0.0, dealii::ExcInternalError("|z|_M must be positive"));
 
     // Derivation:

@@ -86,9 +86,8 @@ public:
 
     explicit GrossPitaevskiiResidual(const Functional& func)
         : m_func(func)
-          , m_metric(func.get_M(), MetricKind::MASS)
-    {
-    }
+        , m_metric(func.get_M(), MetricKind::MASS)
+    {}
 
     [[nodiscard]] double residual(const Vector<double>& x) const override
     {
@@ -125,10 +124,9 @@ public:
     // func:  functional of the coarse level, with the operators M, A of the (uncorrected) objective E_GP
     GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model, const Functional& func)
         : m_model(model)
-          , m_func(func)
-          , m_metric(func.get_M(), MetricKind::MASS)
-    {
-    }
+        , m_func(func)
+        , m_metric(func.get_M(), MetricKind::MASS)
+    {}
 
     [[nodiscard]] double residual(const Vector<double>& x) const override
     {

@@ -23,14 +23,12 @@ using namespace rmo::gpe;
 // Transfer Setup Helper
 // -------------------------------------------------------------------------
 template <int dim, typename Operator, typename InverseM>
-auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_f,
-                     const AffineConstraints<double>& constr_c, const AffineConstraints<double>& constr_f,
-                     const Operator& M_c, const Operator& M_f, const InverseM& M_inv_c,
-                     const CoarseModelOptions& options_cm)
+static auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_f,
+                            const AffineConstraints<double>& constr_c, const AffineConstraints<double>& constr_f,
+                            const Operator& M_c, const Operator& M_f, const InverseM& M_inv_c,
+                            const CoarseModelOptions& options_cm)
 {
     std::shared_ptr<LinearTransferBase> transfer;
-    std::shared_ptr<ManifoldTransferBase> point_transfer;
-    std::shared_ptr<VectorTransportBase> vector_transport;
 
     if (options_cm.interpol_t == Interpolate::MASS) {
         transfer = std::make_shared<MassTransfer<dim,fe::LinearTransferMG<dim>,Operator,InverseM>>(
@@ -43,7 +41,9 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
         std::abort();
     }
 
-    point_transfer = std::make_shared<ManifoldTransfer<Operator>>(*transfer, M_c, M_f);
+    std::shared_ptr<ManifoldTransferBase> point_transfer = std::make_shared<ManifoldTransfer<Operator>>(
+        *transfer, M_c, M_f);
+    std::shared_ptr<VectorTransportBase> vector_transport;
 
     // TODO: include other operators
     if (options_cm.transport_t == Transport::FROBENIUS) {
@@ -80,16 +80,16 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
 
 // Metric for the coarse condition on one level, chosen by CoarseModelOptions::ccond_t
 template <typename System>
-LevelMetric
+static LevelMetric
 build_cond_metric(const GrossPitaevskiiFunctional<System>& objective, MetricKind ccond_t)
 {
-    using Metric = OperatorMetric<typename GrossPitaevskiiFunctional<System>::Operator>;
+    using OpMetric = OperatorMetric<typename GrossPitaevskiiFunctional<System>::Operator>;
 
     switch (ccond_t) {
         case MetricKind::MASS:
-            return std::make_shared<Metric>(objective.get_M(), MetricKind::MASS);
+            return std::make_shared<OpMetric>(objective.get_M(), ccond_t);
         case MetricKind::ENERGY_ADAPTIVE:  // A(x) at the state the level functional was last updated to
-            return std::make_shared<Metric>(objective.get_A(), MetricKind::ENERGY_ADAPTIVE);
+            return std::make_shared<OpMetric>(objective.get_A(), ccond_t);
         case MetricKind::FROBENIUS:
             return std::make_shared<EuclideanMetric>();
         case MetricKind::NONE:             // use the metric of the coarse model (oracle metric)
@@ -357,7 +357,7 @@ private:
 // -------------------------------------------------------------------------
 // Writes <basename>_coords.bin and one <basename>_iter<k>.bin per iterate (see plot_solution.py)
 template <int dim, typename History>
-void output_bin(const History& history, const GrossPitaevskiiPackage<dim>& package, const std::string& basename)
+static void output_bin(const History& history, const GrossPitaevskiiPackage<dim>& package, const std::string& basename)
 {
     write_support_points(package.get_dofs(), package.get_mapping(), basename + "_coords.bin");
 
@@ -383,7 +383,7 @@ struct ProgramOptions
 
 // Single- or multilevel experiment, for the system type selected by --mass-lumping
 template <typename System>
-void run_experiment(const ProgramOptions& opts)
+static void run_experiment(const ProgramOptions& opts)
 {
     constexpr int dim = System::dimension;
     const unsigned n_levels = opts.mg.n_levels;
@@ -449,9 +449,8 @@ void run_experiment(const ProgramOptions& opts)
 
 int main(int argc, char* argv[])
 {
-    ProgramOptions opts{};
-
     try {
+        ProgramOptions opts{};
         po::options_description all("Allowed options");
         all.add_options()("help", "produce help message");
         all.add(gpe_cli_options());
