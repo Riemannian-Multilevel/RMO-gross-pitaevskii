@@ -1,7 +1,8 @@
-#ifndef RMO_ROPT_ORACLE_COARSE_BASE_H
-#define RMO_ROPT_ORACLE_COARSE_BASE_H
+#ifndef RMO_ROPT_ORACLE_COARSE_H
+#define RMO_ROPT_ORACLE_COARSE_H
 
-#include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/residual.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/ropt/transport.h>
 
@@ -58,7 +59,7 @@ public:
     // Coarse parameter initialization
         , m_state(n_fine, n_coarse)
     {
-        AssertThrow(T_fine.get_metric() == T_coarse.get_metric(),
+        AssertThrow(T_fine.metric().kind() == T_coarse.metric().kind(),
             dealii::ExcInternalError("non-corresponding metrics for coarse and fine oracle types"));
     }
 
@@ -88,6 +89,7 @@ public:
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_coarse.id() << "-coarse gradient\n";
 #endif
         // Set tolerance for coarse gradient defining the coarse model
+        // TODO: model_tol is multiplied by options.tol_inner_res inside OracleBase::gradient() implementations
         if (model_tol > 0.0) {
             T_coarse.gradient(m_state.y, m_state.y_grad, model_tol);
         } else {
@@ -100,6 +102,7 @@ public:
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_fine.id() << "-fine gradient\n";
 #endif
         // Set tolerance for fine gradient defining the coarse model
+        // TODO: model_tol is multiplied by options.tol_inner_res inside OracleBase::gradient() implementations
         if (model_tol > 0.0) {
             T_fine.gradient(m_state.x, m_state.x_grad, model_tol);
         } else {
@@ -120,18 +123,8 @@ public:
         m_state.w.add(-1.0, m_state.x_grad_restr);
     }
 
-    double norm(const Vector<double> &x) const
-    {
-        return T_coarse.norm(x);
-    }
-    double metric(const Vector<double> &x, const Vector<double> &z) const
-    {
-        return T_coarse.inner(x, z);
-    }
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const
-    {
-        return T_coarse.apply_metric(src, dst);
-    }
+    //! Metric of the coarse model, i.e. of the coarse tilt oracle
+    const MetricBase& metric() const { return T_coarse.metric(); }
 
     void set_timer(const dealii::Timer& timer_new) const { timer = timer_new; }
     const CoarseState& get_state() const { return m_state; }
@@ -169,6 +162,12 @@ template <typename T>
 concept CoarseOracle = std::derived_from<T, OracleBase>
                     && std::constructible_from<T, CoarseOracleBase&, SolverOptions>;
 
+// Contract for the residual of a coarse model, built by FullApproximationScheme::cycle() from the coarse
+// model and the functional of the coarse level
+template <typename T, typename Functional>
+concept CoarseResidual = std::derived_from<T, ResidualBase>
+                      && std::constructible_from<T, const CoarseOracleBase&, const Functional&>;
+
 } // namespace rmo
 
-#endif //RMO_ROPT_ORACLE_COARSE_BASE_H
+#endif //RMO_ROPT_ORACLE_COARSE_H

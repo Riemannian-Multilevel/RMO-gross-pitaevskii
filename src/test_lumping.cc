@@ -495,18 +495,32 @@ void check_oracle(const std::string& name, typename Oracle::Functional& func, co
 {
     Oracle oracle(func, options);
     oracle.update(x);
-    Vector<double> g(x.size()), g_iter(x.size()), Mg(x.size()), Mx(x.size());
+    Vector<double> g(x.size()), g_iter(x.size());
     const GradInfo info = oracle.gradient(x, g);
 
-    // x was normalized with system.get_M(); the oracle's M must be the same lumped matrix
-    oracle.get_M().vmult(Mx, x);
-    const double mass = x * Mx;
+    // Metrics of the functional, independent of the oracle and its metric
+    const OperatorMetric M_metric(func.get_M(), MetricKind::MASS);
+    const OperatorMetric A_metric(func.get_A(), MetricKind::ENERGY_ADAPTIVE);
+    const EuclideanMetric F_metric;
+
+    // x was normalized with system.get_M(); the functional's M must be the same lumped matrix
+    const double mass = M_metric.inner(x, x);
     check(std::abs(mass - 1.0) < 1e-12, name + ": x is on the mass sphere (x^T M x = 1)",
           "x^T M x - 1 = " + fmt_double(mass - 1.0));
 
-    oracle.get_M().vmult(Mg, g);
-    const double tangent = std::abs(x * Mg) / g.l2_norm();
+    const double tangent = std::abs(M_metric.inner(x, g)) / g.l2_norm();
     check(tangent < 1e-8, name + ": gradient is tangent (x^T M g = 0)", "|x^T M g| / |g| = " + fmt_double(tangent));
+
+    const MetricBase* expected = &F_metric;
+    if (Oracle::metric_t == MetricKind::MASS) {
+        expected = &M_metric;
+    }
+    else if (Oracle::metric_t == MetricKind::ENERGY_ADAPTIVE) {
+        expected = &A_metric;
+    }
+    const double norm_diff = std::abs(oracle.metric().norm(g) - expected->norm(g));
+    check(oracle.metric().kind() == Oracle::metric_t && norm_diff < 1e-12 * expected->norm(g),
+          name + ": metric() matches the metric of its kind", "norm difference " + fmt_double(norm_diff));
 
     if (exact_solve) {
         check(info.num_iter == 0, name + ": exact M^{-1}, no solver iterations");

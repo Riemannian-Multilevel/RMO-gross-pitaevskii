@@ -4,63 +4,14 @@
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/kernels.h>
 #include <rmo/gpe/metric.h>
+#include <rmo/gpe/residual.h>
 
-#include <rmo/ropt/oracle_base.h>
+#include <rmo/ropt/oracle.h>
 
 #include <deal.II/base/timer.h>
 
 namespace rmo::gpe
 {
-
-template <typename System>
-class GrossPitaevskiiResidual
-{
-public:
-    using Functional = GrossPitaevskiiFunctional<System>;
-    using Operator   = typename Functional::Operator;
-
-    explicit GrossPitaevskiiResidual(const Functional& m_func)
-        : m_func(m_func)
-          , m_norm(m_func.get_M())
-    {
-    }
-
-    GrossPitaevskiiResidual(const Functional& m_func, Operator op)
-        : m_func(m_func)
-          , m_norm(op)
-    {
-    }
-
-    Vector<double> residual_vector(const Vector<double>& x) const
-    {
-        Vector<double> Mx(x.size());
-        m_func.get_M().vmult(Mx, x);
-
-        const double mass = x * Mx; // should be ~ 1 (energy constraint)
-        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
-
-        Vector<double> Ax(x.size()); // A x
-        m_func.get_A().vmult(Ax, x);
-
-        const double lambda = x * Ax / mass; // Rayleigh quotient (x'Ax / x'Mx)
-
-        Vector<double> r(Ax);
-        r.add(-lambda, Mx); // r = A x - lambda M x
-
-        return r;
-    }
-
-    [[nodiscard]] double residual(const Vector<double>& x) const
-    {
-        return m_norm(residual_vector(x));
-    }
-
-private:
-    const Functional& m_func;
-
-    SpdNorm<Operator> m_norm;
-};
-
 
 // Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
 // System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
@@ -105,13 +56,9 @@ public:
         return m_func.n_dofs();
     }
 
-    // Residual evaluation
-    [[nodiscard]] double residual(const Vector<double>& x) const override
-    {
-        return m_res.residual(x);
-    }
-
     // Shared accessors
+    const Functional& get_functional() const { return m_func; }
+    const GrossPitaevskiiResidual<System>& get_residual() const { return m_res; }
     const Operator& get_M() const { return m_func.get_M(); }
     const Operator& get_A() const { return m_func.get_A(); }
     const SparseMatrix<double>& get_A0() const { return m_func.get_A0(); }
@@ -142,14 +89,14 @@ public:
     MassOracle(Functional& func, SolverOptions options)
         : Base(func)
           , options(options)
-          , m_norm(this->get_M())
+          , m_metric(func.get_M(), metric_t)
     {}
 
     /* @brief Computes the Riemannian gradient in the M-metric. */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double x_residual = this->residual(x);
+        const double x_residual = this->m_res.residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, x_residual);
@@ -180,29 +127,14 @@ public:
         return info;
     }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        this->get_M().vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
     SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -221,7 +153,7 @@ public:
     EnergyOracle(Functional& func, SolverOptions options)
         : Base(func)
           , options(options)
-          , m_norm(this->get_A())
+          , m_metric(func.get_A(), metric_t)
     {}
 
     /**
@@ -231,7 +163,7 @@ public:
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double x_residual = this->residual(x);
+        const double x_residual = this->m_res.residual(x);
         Assert(x_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, x_residual);
@@ -262,29 +194,14 @@ public:
         return info;
     }
 
-    [[nodiscard]] double norm(const Vector<double>& x) const override
-    {
-        return m_norm(x);
-    }
-
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        this->get_A().vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
     SolverOptions get_options() const { return options; }
 
 private:
     SolverOptions options;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -325,22 +242,10 @@ public:
         return gradient(x, output); // no-op
     }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return std::sqrt(v * v);
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return x * z;
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        dst = src;
-    }
+private:
+    EuclideanMetric m_metric;
 };
 
 } // namespace rmo::gpe

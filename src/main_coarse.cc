@@ -78,22 +78,22 @@ auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>& dofs_
 }
 
 
-// Norm for the coarse condition on one level, chosen by CoarseModelOptions::ccond_t
+// Metric for the coarse condition on one level, chosen by CoarseModelOptions::ccond_t
 template <typename System>
-LevelNorm
-build_cond_norm(const GrossPitaevskiiFunctional<System>& objective, MetricKind ccond_t)
+LevelMetric
+build_cond_metric(const GrossPitaevskiiFunctional<System>& objective, MetricKind ccond_t)
 {
-    using Operator = typename GrossPitaevskiiFunctional<System>::Operator;
+    using Metric = OperatorMetric<typename GrossPitaevskiiFunctional<System>::Operator>;
 
     switch (ccond_t) {
         case MetricKind::MASS:
-            return SpdNorm<Operator>(objective.get_M());
+            return std::make_shared<Metric>(objective.get_M(), MetricKind::MASS);
         case MetricKind::ENERGY_ADAPTIVE:  // A(x) at the state the level functional was last updated to
-            return SpdNorm<Operator>(objective.get_A());
+            return std::make_shared<Metric>(objective.get_A(), MetricKind::ENERGY_ADAPTIVE);
         case MetricKind::FROBENIUS:
-            return [](const Vector<double>& v) { return v.l2_norm(); };
-        case MetricKind::NONE:             // use the metric of the coarse model (oracle norm)
-            return {};
+            return std::make_shared<EuclideanMetric>();
+        case MetricKind::NONE:             // use the metric of the coarse model (oracle metric)
+            return nullptr;
         default:
             throw std::invalid_argument("unsupported metric for coarse condition");
     }
@@ -132,7 +132,7 @@ public:
 
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
-        std::unique_ptr<OracleBase> oracle;
+        std::unique_ptr<GrossPitaevskiiOracle<System>> oracle;
 
         // 2. Instantiate the corresponding descent oracle
         if (metric_t == MetricKind::FROBENIUS) {
@@ -149,7 +149,7 @@ public:
         }
 
         // 3. Execute the single-level gradient descent cycle
-        solver = std::make_unique<GradientDescent>(*oracle, *manifold, options_gd);
+        solver = std::make_unique<GradientDescent>(*oracle, oracle->get_residual(), *manifold, options_gd);
         solver->set_observer(conv_observer);
         solver->cycle(x0, os);
     }
@@ -194,7 +194,7 @@ public:
         , max_level(*std::ranges::max_element(levels))
         , builders_mg         (min_level, max_level)
         , objective_mg        (min_level, max_level)
-        , cond_norm_mg        (min_level, max_level)
+        , cond_metric_mg      (min_level, max_level)
         , manifold_mg         (min_level, max_level)
         , transfer_mg         (min_level, max_level)
         , point_transfer_mg   (min_level, max_level)
@@ -265,14 +265,14 @@ public:
             vector_transport_mg[l] = vt;
         }
 
-        // 4. Norm for the coarse condition on each level
+        // 4. Metric for the coarse condition on each level
         for (auto l: m_levels) {
-            cond_norm_mg[l] = build_cond_norm(*objective_mg[l], options_cm.ccond_t);
+            cond_metric_mg[l] = build_cond_metric(*objective_mg[l], options_cm.ccond_t);
         }
 
         fas_solver = std::make_unique<FullApproximationScheme<Functional>>(
             manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
-            options_descent_mg, options_solver_mg, options_fas, cond_norm_mg
+            options_descent_mg, options_solver_mg, options_fas, cond_metric_mg
         );
         fas_solver->set_observer(table_observer);
     }
@@ -292,16 +292,16 @@ public:
             FrobeniusOracle<System> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
             fas_solver->template cycle<FrobeniusOracle<System>, FrobeniusCoarseOracle<System>,
-                                       FrobeniusCoarseOracleEnergyAdaptive<System>>(
-                O_fine, T_fine, x0, m_levels.size() - 1, os
+                                       FrobeniusCoarseOracleEnergyAdaptive<System>, GrossPitaevskiiCoarseResidual<System>>(
+                O_fine, T_fine, O_fine.get_residual(), x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::MASS) {
             MassOracle<System> T_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
             fas_solver->template cycle<MassOracle<System>, MassCoarseOracle<System>,
-                                       MassCoarseOracleEnergyAdaptive<System>>(
-                O_fine, T_fine, x0, m_levels.size() - 1, os
+                                       MassCoarseOracleEnergyAdaptive<System>, GrossPitaevskiiCoarseResidual<System>>(
+                O_fine, T_fine, O_fine.get_residual(), x0, m_levels.size() - 1, os
             );
         }
         else if (metric_t == MetricKind::ENERGY_ADAPTIVE) {
@@ -338,7 +338,7 @@ private:
     MGLevelObject<std::unique_ptr<ModelBuilder<System>>> builders_mg;
 
     MGLevelObject<std::shared_ptr<Functional>> objective_mg;
-    MGLevelObject<LevelNorm> cond_norm_mg;
+    MGLevelObject<LevelMetric> cond_metric_mg;
     MGLevelObject<std::shared_ptr<ManifoldBase>>                   manifold_mg;
     MGLevelObject<std::shared_ptr<LinearTransferBase>>             transfer_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>           point_transfer_mg;

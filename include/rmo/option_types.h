@@ -112,7 +112,7 @@ struct OutputOptions
     std::string bin_filename;     // base name of binary files (empty: default name)
     bool output_vtk;              // write solutions in VTK format
     std::string vtk_filename;     // base name of VTK files (empty: default name)
-    unsigned output_every;        // also write every k-th iterate to VTK (0: final solution only)
+    unsigned output_every;        // also write every k-th and the final iterate as a VTK series (0: final iterate only)
 };
 
 // Fields for gradient computation with inner solver
@@ -179,7 +179,7 @@ enum class Interpolate
 
 
 // Selection of the multilevel components for the GP problem (main_coarse.cc)
-// TODO: MetricKind is still defined in rmo (used by OracleBase::get_metric)
+// TODO: MetricKind is still defined in rmo (used by MetricBase::kind)
 struct CoarseModelOptions
 {
     MetricKind metric_t;    // type of coarse oracle (shift metric, gradient metric); NONE: single-level

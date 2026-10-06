@@ -6,78 +6,14 @@
 #define RMO_GPE_ORACLE_COARSE_H
 
 #include <rmo/gpe/oracle.h>
+#include <rmo/gpe/residual.h>
 #include <rmo/gpe/manifold.h>
 #include <rmo/gpe/metric.h>
 
-#include <rmo/ropt/oracle_coarse_base.h>
+#include <rmo/ropt/oracle_coarse.h>
 
 namespace rmo::gpe
 {
-
-template <typename System>
-class GrossPitaevskiiCoarseResidual
-{
-public:
-    using GPOracle = GrossPitaevskiiOracle<System>;
-    using Operator = typename GPOracle::Operator;
-
-    // M, A: matrices for computing residual of (uncorrected) objective E_GP
-    // M_tilt: matrix for computing residual of coarse correction term <w,L(z)>
-    explicit GrossPitaevskiiCoarseResidual(const CoarseOracleBase& model)
-        : m_model(model)
-          // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
-          , gp_coarse(dynamic_cast<const GPOracle&>(model.coarse()))
-          , m_norm(gp_coarse.get_M())
-    {
-    }
-
-    [[nodiscard]] double residual(const Vector<double>& x) const
-    {
-        // This is fixed for different coarse models
-        return m_norm(residual_vector(x));
-    }
-
-protected:
-    Vector<double> residual_vector(const Vector<double>& x) const
-    {
-        const auto& state = m_model.get_state();
-        const Operator& M = gp_coarse.get_M();
-        const Operator& A = gp_coarse.get_A();
-
-        Vector<double> Mx(x.size());
-        M.vmult(Mx, x);
-
-        const double mass = x * Mx;
-        //AssertThrow(std::abs(mass - 1) < 1e-12, dealii::ExcInternalError("mass constraint not fulfilled"));
-
-        // 1. Compute the pullback of the tilt (u)
-        Vector<double> u(x.size());
-        ellipsoid::retract_inv_diff_by_norm_adjoint(M, state.y, x, state.w, u);
-
-        // This varies for different coarse models
-        Vector<double> grad_tilt(x.size());
-        m_model.apply_metric(u, grad_tilt);
-
-        // 2. Compute modified lambda: lambda_tilde = x^T A x - x^T M u
-        Vector<double> Ax(x.size());
-        A.vmult(Ax, x);
-        const double lambda = (x * Ax - x * grad_tilt) / mass;
-
-        // 3. Form the modified residual vector: r = (Ax - Mu) - lambda_tilde * Mx
-        Vector<double> r(Ax);
-        r.add(-1.0, grad_tilt);
-        r.add(-lambda, Mx);
-
-        return r;
-    }
-
-private:
-    const CoarseOracleBase& m_model;
-    const GPOracle& gp_coarse;
-
-    SpdNorm<Operator> m_norm; // M-norm
-};
-
 
 // O_coarse: oracle for evaluating \grad E_c(y) in correction term w = \grad E_c(y) - R \grad E_f(x)
 //           assumed to be consistent with metric in oracle for evaluating <w, .>_y
@@ -109,16 +45,16 @@ public:
 
     MassCoarseOracle(CoarseOracleBase& model, SolverOptions options)
         : m_model(model)
-          , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, gp_coarse.get_functional())
           , M_inv_coarse(gp_coarse.get_M_inv())
-          , m_norm(M_coarse)
+          , m_metric(M_coarse, metric_t)
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("mass metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("mass metric expected"));
     }
 
     // Update for _evaluation_ of the coarse model
@@ -142,10 +78,6 @@ public:
         return kernels::coarse_mass_dir_deriv(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    [[nodiscard]] double residual(const Vector<double>& x) const override
-    {
-        return m_coarse_res.residual(x);
-    }
 
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
@@ -175,7 +107,7 @@ public:
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double coarse_residual = this->residual(x);
+        const double coarse_residual = m_coarse_res.residual(x);
         Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, coarse_residual);
@@ -192,37 +124,24 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        M_coarse.vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    const GrossPitaevskiiCoarseResidual<System>& get_residual() const { return m_coarse_res; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     // TODO: dynamic_cast to const? (M, A const methods)
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     InverseM& M_inv_coarse;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -240,17 +159,16 @@ public:
 
     MassCoarseOracleEnergyAdaptive(CoarseOracleBase& model, SolverOptions options)
         : m_model(model)
-          , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, gp_coarse.get_functional())
           , A_inv_coarse(gp_coarse.get_A_inv())
-          //, m_norm(M_coarse)
-          , m_norm(A_coarse)
+          , m_metric(A_coarse, metric_t)
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("mass metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("mass metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -272,10 +190,6 @@ public:
         return kernels::coarse_mass_dir_deriv(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    [[nodiscard]] double residual(const Vector<double>& x) const override
-    {
-        return m_coarse_res.residual(x);
-    }
 
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
@@ -305,7 +219,7 @@ public:
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double coarse_residual = this->residual(x);
+        const double coarse_residual = m_coarse_res.residual(x);
         Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, coarse_residual);
@@ -322,37 +236,23 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    // TODO: apply_model_metric?  (residual computations)
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        A_coarse.vmult(dst, src);
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    const GrossPitaevskiiCoarseResidual<System>& get_residual() const { return m_coarse_res; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     InverseA& A_inv_coarse;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 
@@ -373,13 +273,13 @@ public:
 
     FrobeniusCoarseOracle(CoarseOracleBase& model, SolverOptions)
         : m_model(model)
-          , m_coarse_res(model)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, gp_coarse.get_functional())
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -401,10 +301,6 @@ public:
         return kernels::coarse_frobenius_dir_deriv(x, coarse_step.y, coarse_step.w, z, this->M_coarse, this->A_coarse);
     }
 
-    [[nodiscard]] double residual(const Vector<double>& x) const override
-    {
-        return m_coarse_res.residual(x);
-    }
 
     // Wrapper method for providing residual*TOL to matrix solver
     // Frobenius: no-op since no matrix inversion is involved
@@ -436,32 +332,21 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return std::sqrt(v * v);
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return x * z;
-    }
-
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        dst = src;
-    }
-
-    MetricKind get_metric() const override { return metric_t; }
+    const GrossPitaevskiiCoarseResidual<System>& get_residual() const { return m_coarse_res; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;  // not used for gradient(): no inner solver
+
+    EuclideanMetric m_metric;
 };
 
 
@@ -479,16 +364,16 @@ public:
 
     FrobeniusCoarseOracleEnergyAdaptive(CoarseOracleBase& model, SolverOptions options)
         : m_model(model)
-          , m_coarse_res(model)
           , options(options)
           // Assume CoarseOracleBase<> was constructed from GrossPitaevskiiOracle<>
           , gp_coarse(dynamic_cast<GPOracle&>(model.coarse()))
           , M_coarse(gp_coarse.get_M())
           , A_coarse(gp_coarse.get_A())
+          , m_coarse_res(model, gp_coarse.get_functional())
           , A_inv_coarse(gp_coarse.get_A_inv())
-          , m_norm(A_coarse)
+          , m_metric(A_coarse, metric_t)
     {
-        AssertThrow(model.coarse().get_metric() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
+        AssertThrow(model.coarse().metric().kind() == model_t, dealii::ExcInternalError("Frobenius metric expected"));
     }
 
     void update(const Vector<double>& x) override
@@ -510,10 +395,6 @@ public:
         return kernels::coarse_frobenius_dir_deriv(x, coarse_step.y, coarse_step.w, z, M_coarse, A_coarse);
     }
 
-    [[nodiscard]] double residual(const Vector<double>& x) const override
-    {
-        return m_coarse_res.residual(x);
-    }
 
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
@@ -544,7 +425,7 @@ public:
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
-        const double coarse_residual = this->residual(x);
+        const double coarse_residual = m_coarse_res.residual(x);
         Assert(coarse_residual >= 0, dealii::ExcInternalError("residual must be positive"));
 
         auto info = gradient(x, output, coarse_residual);
@@ -561,38 +442,23 @@ public:
     const Operator& get_M() const { return M_coarse; }
     const Operator& get_A() const { return A_coarse; }
 
-    [[nodiscard]] double norm(const Vector<double>& v) const override
-    {
-        return m_norm(v);
-    }
+    [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
 
-    [[nodiscard]] double inner(const Vector<double>& x, const Vector<double>& z) const override
-    {
-        return m_norm(x, z);
-    }
-
-    // TODO: apply_model_metric?  (residual computations)
-    void apply_metric(const Vector<double>& src, Vector<double>& dst) const override
-    {
-        A_coarse.vmult(dst, src);
-    }
-
-    //MetricKind get_model() const { return model_t; }
-    MetricKind get_metric() const override { return metric_t; }
+    const GrossPitaevskiiCoarseResidual<System>& get_residual() const { return m_coarse_res; }
 
 private:
     // TODO: the coarse model is const, but we require a non-const reference for updating the state of the coarse oracle
     // Note: if Base::update_model(x) is called, this will be reflected in MassCoarseOracle
     // TODO: wrap Base::update_model to simplify the calling interface?
     CoarseOracleBase& m_model;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     SolverOptions options;
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;
     InverseA& A_inv_coarse;
 
-    SpdNorm<Operator> m_norm;
+    OperatorMetric<Operator> m_metric;
 };
 
 } // namespace rmo::gpe

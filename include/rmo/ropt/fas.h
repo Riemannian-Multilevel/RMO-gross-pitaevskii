@@ -9,13 +9,14 @@
 #include <deal.II/base/mg_level_object.h>
 
 #include <rmo/ropt/observer.h>
-#include <rmo/ropt/oracle_base.h>
-#include <rmo/ropt/oracle_coarse_base.h>
+#include <rmo/ropt/oracle.h>
+#include <rmo/ropt/oracle_coarse.h>
 
 #include <rmo/ropt/transport.h>
 #include <rmo/ropt/solver.h>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -23,9 +24,9 @@ namespace rmo
 {
 using dealii::MGLevelObject;
 
-// Norm on one level, used by FullApproximationScheme to evaluate the coarse condition
-//   ||R g||_{l-1} >= kappa ||g||_l
-using LevelNorm = std::function<double(const Vector<double>&)>;
+// Metric on one level for the coarse condition ||R g||_{l-1} >= kappa ||g||_l of FullApproximationScheme;
+// nullptr: metric of the tilt oracle on that level
+using LevelMetric = std::shared_ptr<const MetricBase>;
 
 
 // Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
@@ -36,8 +37,7 @@ class FullApproximationScheme : public ObservableSolver<CycleInfo>
 {
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
-    // cond_norm_mg[l]: norm on level l for the coarse condition; an empty entry falls back to the
-    //                  norm of the tilt oracle on that level (i.e. the metric of the coarse model).
+    // cond_metric_mg[l]: metric on level l for the coarse condition, see LevelMetric
     // TODO: dependency injection
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
@@ -47,15 +47,15 @@ public:
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
                             FAS_Options options_fas,
-                            std::optional<MGLevelObject<LevelNorm>> cond_norm_mg = std::nullopt)
+                            std::optional<MGLevelObject<LevelMetric>> cond_metric_mg = std::nullopt)
         : level_indices(level_indices)
         , m_manifold_mg         (std::move(manifold_mg))
         , m_point_transfer_mg   (std::move(point_transfer_mg))
         , m_vector_transport_mg (std::move(vector_transport_mg))
-    // m_manifold_mg is initialized before m_cond_norm_mg, so its level bounds size the default
-        , m_cond_norm_mg        (cond_norm_mg ? std::move(*cond_norm_mg)
-                                              : MGLevelObject<LevelNorm>(m_manifold_mg.min_level(),
-                                                                         m_manifold_mg.max_level()))
+    // m_manifold_mg is initialized before m_cond_metric_mg, so its level bounds size the default
+        , m_cond_metric_mg      (cond_metric_mg ? std::move(*cond_metric_mg)
+                                                : MGLevelObject<LevelMetric>(m_manifold_mg.min_level(),
+                                                                             m_manifold_mg.max_level()))
         , m_objective_mg        (std::move(objective_mg))
         , options_descent_mg    (std::move(options_descent_mg))
         , options_solver_mg     (std::move(options_solver_mg))
@@ -74,8 +74,8 @@ public:
         AssertDimension(m_vector_transport_mg.max_level(), max_level);
         AssertDimension(m_objective_mg.min_level(),        min_level);
         AssertDimension(m_objective_mg.max_level(),        max_level);
-        AssertDimension(m_cond_norm_mg.min_level(),        min_level);
-        AssertDimension(m_cond_norm_mg.max_level(),        max_level);
+        AssertDimension(m_cond_metric_mg.min_level(),      min_level);
+        AssertDimension(m_cond_metric_mg.max_level(),      max_level);
 
         // Check that level indices are contained within MGLevelObject
         AssertIndexRange(min_level, level_indices.front()+1);  // open range
@@ -86,14 +86,21 @@ public:
     // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
     // TiltCoarseModelType:  The coarse oracle used for building 'w' (e.g. MassCoarseOracle)
     // CoarseModelType:      The coarse descent model for gradients (e.g. MassCoarseOracleEnergyAdaptive)
+    // CoarseResidualType:   The residual of the coarse model (e.g. GrossPitaevskiiCoarseResidual)
     // OracleBase&:          The oracle used to evaluate the level objective
+    // ResidualBase&:        The residual of the level problem, usually O_level.get_residual()
+    //                       (reported; stopping criterion on the finest level; value passed to O_level.gradient())
     // TODO: report the iterate history through the observer as well (x_hist)
-    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
-        requires TiltOracle<TiltOracleType, Functional>
-    void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx)
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType,
+              typename CoarseResidualType>
+        requires TiltOracle<TiltOracleType, Functional> && CoarseResidual<CoarseResidualType, Functional>
+    void cycle(OracleBase& O_level, OracleBase& T_level, const ResidualBase& R_level, Vector<double>& x,
+               unsigned level_idx)
     {
         AssertIndexRange(level_idx, level_indices.size());
         unsigned level = level_indices.at(level_idx);
+        // A residual of another problem (e.g. another level) has another dimension
+        AssertDimension(R_level.n_dofs(), O_level.n_dofs());
         std::cerr << "level: " << level << std::endl;
         //AssertIndexRange(level - min_level, max_level - min_level + 1);
 
@@ -127,14 +134,15 @@ public:
             info.step      = 0.0;   // no step taken yet
             info.elapsed   = timer.cpu_time();
 
-            cycle_eval(O_level, x, m_observer, info);
+            // Residual at x, passed to the next gradient (inner tolerance)
+            double residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
             // Coarse condition is always false on coarsest level
             // -> gradient descent
             for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
                 level_log.push_back(level);
 
-                auto info_grad = O_level.gradient(x, x_grad);
+                auto info_grad = O_level.gradient(x, x_grad, residual);
                 dk  = x_grad;
                 dk *= -1.0;
 
@@ -149,8 +157,7 @@ public:
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
 
-                //auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
-                cycle_eval(O_level, x, m_observer, info);
+                residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
                 // Avoid a stalling line search where the solution x does not change
                 if (options_descent_mg[level].line_search && info.step == 0.0) {
@@ -185,6 +192,8 @@ public:
         CoarseModelType qk(qk_base, options_solver_mg[coarse_level]);
         // Evaluation of coarse model objective (-> correction term w, M-gradient)
         TiltCoarseOracleType qk_m(qk_base, options_solver_mg[coarse_level]);
+        // Residual of the coarse model (reported on the coarse level; value passed to qk.gradient())
+        CoarseResidualType rk(qk_base, *m_objective_mg[coarse_level]);
 
         // T_level.update(x) is implied by O_level.update(x) above (shared functional)
 
@@ -201,7 +210,8 @@ public:
 
         info.extra = {{"grad_norm", 0.0}, {"grad_restr_norm", 0.0}};  // this level has a coarser one: report the condition norms
 
-        auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+        // Residual at x, passed to the next fine-step gradient (inner tolerance)
+        double residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
@@ -247,8 +257,8 @@ public:
                     // Solve the coarse model q_k(zk)
                     // TODO: pass on ostream (-> callback strategy)
                     //       throw/catch exception when we do not have a descent direction on the fine level
-                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(qk, qk_m,
-                        zk, coarse_level_idx, std::cerr);
+                    this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType, CoarseResidualType>(
+                        qk, qk_m, rk, zk, coarse_level_idx, std::cerr);
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -282,7 +292,7 @@ public:
                     info.level     = level;
                     info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
-                    auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+                    residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
@@ -314,7 +324,7 @@ fine_step:
                 // Record that a fine step was taken on this level
                 level_log.push_back(level_indices.at(level_idx));
                 // Update gradient
-                auto info_grad = O_level.gradient(x, x_grad);
+                auto info_grad = O_level.gradient(x, x_grad, residual);
                 dk  = x_grad;
                 dk *= -1.0;
 
@@ -332,7 +342,7 @@ fine_step:
                 info.level     = level;
                 info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
-                auto [residual, _] = cycle_eval(O_level, x, m_observer, info);
+                residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {
@@ -363,11 +373,14 @@ fine_step:
     }
 
     // TODO: only output on certain levels OR include the current level in the table
-    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType>
-        requires TiltOracle<TiltOracleType, Functional>
-    void cycle(OracleBase& O_level, OracleBase& T_level, Vector<double>& x, unsigned level_idx, std::ostream& os)
+    template <typename TiltOracleType, CoarseOracle TiltCoarseOracleType, CoarseOracle CoarseModelType,
+              typename CoarseResidualType>
+        requires TiltOracle<TiltOracleType, Functional> && CoarseResidual<CoarseResidualType, Functional>
+    void cycle(OracleBase& O_level, OracleBase& T_level, const ResidualBase& R_level, Vector<double>& x,
+               unsigned level_idx, std::ostream& os)
     {
-        cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType>(O_level, T_level, x, level_idx);
+        cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType, CoarseResidualType>(O_level, T_level, R_level,
+                                                                                         x, level_idx);
 
         unsigned level = level_indices.at(level_idx);
         if (m_observer != nullptr) {
@@ -385,10 +398,8 @@ fine_step:
 private:
     double cond_norm(unsigned level, const OracleBase& T, const Vector<double>& v) const
     {
-        const LevelNorm& norm = m_cond_norm_mg[level];
-        if (norm)              // a norm was configured for this level
-            return norm(v);
-        return T.norm(v);      // default: metric of the (tilt) oracle on this level
+        const LevelMetric& metric = m_cond_metric_mg[level];
+        return metric ? metric->norm(v) : T.metric().norm(v);
     }
 
     mutable dealii::Timer timer;
@@ -399,7 +410,7 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
-    MGLevelObject<LevelNorm>                              m_cond_norm_mg;
+    MGLevelObject<LevelMetric>                            m_cond_metric_mg;
     MGLevelObject<std::shared_ptr<Functional>>            m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
