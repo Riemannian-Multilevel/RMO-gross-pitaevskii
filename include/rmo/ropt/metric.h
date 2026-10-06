@@ -25,8 +25,8 @@ public:
 
     [[nodiscard]] double norm(const Vector<double>& v) const { return std::sqrt(inner(v, v)); }
 
-    //! dst = G src
-    virtual void apply(const Vector<double>& src, Vector<double>& dst) const = 0;
+    //! dst = G src (argument order of vmult)
+    virtual void apply(Vector<double>& dst, const Vector<double>& src) const = 0;
 
     [[nodiscard]] virtual MetricKind kind() const = 0;
 };
@@ -57,7 +57,7 @@ public:
         return u * Gv;
     }
 
-    void apply(const Vector<double>& src, Vector<double>& dst) const override
+    void apply(Vector<double>& dst, const Vector<double>& src) const override
     {
         m_G.vmult(dst, src);
     }
@@ -80,7 +80,7 @@ public:
         return u * v;
     }
 
-    void apply(const Vector<double>& src, Vector<double>& dst) const override
+    void apply(Vector<double>& dst, const Vector<double>& src) const override
     {
         dst = src;
     }

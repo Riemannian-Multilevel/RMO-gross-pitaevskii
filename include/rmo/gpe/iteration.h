@@ -14,6 +14,8 @@
 
 #include <deal.II/base/timer.h>
 
+#include <utility>
+
 
 /**
  * @file
@@ -32,16 +34,16 @@ public:
 
     // Shared pointer to ensure lifetime of evaluation point, when IterationBase object relies on it
     IterationBase(std::shared_ptr<const Vector<double>> x_ptr)
-        : x_ptr(x_ptr)
+        : x_ptr(std::move(x_ptr))
     {}
 
-    virtual double value()    const = 0;
-    virtual double residual() const = 0;
-    virtual double directional_derivative(const Vector<double> &z) const = 0;
+    [[nodiscard]] virtual double value()    const = 0;
+    [[nodiscard]] virtual double residual() const = 0;
+    [[nodiscard]] virtual double directional_derivative(const Vector<double> &z) const = 0;
 
     virtual GradInfo gradient(Vector<double>& dst) const = 0;
 
-    unsigned n_dofs() const { return x_ptr->size(); }
+    [[nodiscard]] unsigned n_dofs() const { return x_ptr->size(); }
 
 protected:
     std::shared_ptr<const Vector<double>> x_ptr;
@@ -71,17 +73,17 @@ public:
         m_func.update(*x_ptr);
     }
 
-    double value() const override
+    [[nodiscard]] double value() const override
     {
         return m_func.value(*(this->x_ptr));
     }
 
-    double directional_derivative(const Vector<double> &z) const override
+    [[nodiscard]] double directional_derivative(const Vector<double> &z) const override
     {
         return m_func.directional_derivative(*(this->x_ptr), z);
     }
 
-    double residual() const override
+    [[nodiscard]] double residual() const override
     {
         return m_res.residual(*(this->x_ptr));
     }

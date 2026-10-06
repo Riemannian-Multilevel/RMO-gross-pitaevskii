@@ -85,6 +85,8 @@ public:
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
+        AssertResidualAt(m_coarse_res, x, residual);
+
         dealii::Timer timer;
         GradInfo info{};
 
@@ -198,6 +200,8 @@ public:
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
+        AssertResidualAt(m_coarse_res, x, residual);
+
         dealii::Timer timer;
         GradInfo info{};
 
@@ -309,8 +313,9 @@ public:
 
     // Wrapper method for providing residual*TOL to matrix solver
     // Frobenius: no-op since no matrix inversion is involved
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
+        AssertResidualAt(m_coarse_res, x, residual);
         return gradient(x, output); // No matrix inversion
     }
 
@@ -349,7 +354,7 @@ private:
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;  // not used for gradient(): no inner solver
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;  // no inner solver: only checks the residual passed to gradient()
 
     EuclideanMetric m_metric;
 };
@@ -405,6 +410,8 @@ public:
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
+        AssertResidualAt(m_coarse_res, x, residual);
+
         dealii::Timer timer;
         GradInfo info{};
 

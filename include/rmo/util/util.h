@@ -105,8 +105,8 @@ void output_vtk(const std::vector<dealii::Vector<double>>& history, const dealii
 
 //! Upper-case copy of @p s.
 inline std::string upper(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned const char c){ return std::toupper(c); });
+    std::ranges::transform(s, s.begin(),
+                           [](unsigned const char c){ return std::toupper(c); });
     return s;
 }
 

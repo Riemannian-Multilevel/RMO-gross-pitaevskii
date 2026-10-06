@@ -12,6 +12,8 @@
 #include <variant>
 #include <vector>
 
+#include <deal.II/base/observer_pointer.h>
+
 #include <deal.II/lac/diagonal_matrix.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
@@ -82,7 +84,7 @@ public:
             AssertDimension(matrix.n(), this->n());
             AssertDimension(matrix.m(), this->m());
         }
-        m_components.push_back({weight, &matrix});
+        m_components.emplace_back(weight, Observer<MatrixType>(&matrix));
     }
 
     /** @brief Removes all components. */
@@ -107,7 +109,7 @@ public:
     global_dof_index m() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return std::visit([](const auto* matrix) -> global_dof_index { return matrix->m(); },
+        return std::visit([](const auto& matrix) -> global_dof_index { return matrix->m(); },
                           m_components.back().second);
     }
 
@@ -115,7 +117,7 @@ public:
     global_dof_index n() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
-        return std::visit([](const auto* matrix) -> global_dof_index { return matrix->n(); },
+        return std::visit([](const auto& matrix) -> global_dof_index { return matrix->n(); },
                           m_components.back().second);
     }
 
@@ -138,7 +140,7 @@ public:
     {
         for (const auto& [weight, matrix] : m_components)
         {
-            std::visit([&](const auto* M) { M->vmult(m_vector, src); }, matrix);
+            std::visit([&](const auto& M) { M->vmult(m_vector, src); }, matrix);
             dst.add(weight, m_vector);
         }
     }
@@ -148,7 +150,7 @@ public:
     {
         for (const auto& [weight, matrix] : m_components)
         {
-            std::visit([&](const auto* M) { M->Tvmult(m_vector, src); }, matrix);
+            std::visit([&](const auto& M) { M->Tvmult(m_vector, src); }, matrix);
             dst.add(weight, m_vector);
         }
     }
@@ -160,7 +162,7 @@ public:
         diag = 0.0;
 
         for (const auto& [weight, matrix] : m_components) {
-            std::visit([&, weight = weight](const auto* M) { add_diagonal(diag, weight, *M); }, matrix);
+            std::visit([&, weight = weight](const auto& M) { add_diagonal(diag, weight, *M); }, matrix);
         }
         return diag;
     }
@@ -182,8 +184,12 @@ private:
         diag.add(weight, matrix.get_vector());
     }
 
-    /** @brief Weights and matrices. */
-    std::vector<std::pair<double, std::variant<const MatrixTypes*...>>> m_components;
+    //! Observer of a component; debug builds report use of a destroyed component
+    template <typename MatrixType>
+    using Observer = dealii::ObserverPointer<const MatrixType, LinearCombination>;
+
+    /** @brief Collection of weights and matrix observers. */
+    std::vector<std::pair<double, std::variant<Observer<MatrixTypes>...>>> m_components;
 
     /** @brief Scratch vector of the (const) vmult() and Tvmult(), hence mutable. */
     mutable VectorType m_vector;
