@@ -4,8 +4,8 @@
 For a fixed transport operator (default adj2), read the elapsed (CPU) time at
 which the residual first reaches a threshold (default 1e-8) for:
 
-  * the single-level reference   sl_b<beta>_l<level>_optical_lattice.org
-  * the multilevel runs          ml_<metric>_<operator>_b<beta>_l<level>_depth<N>_optical_lattice.org
+  * the single-level reference   sl_b<beta>_l<level>_<suffix>.org
+  * the multilevel runs          ml_<metric>_<operator>_b<beta>_l<level>_depth<N>_<suffix>.org
 
 for each metric (default: mass, frob) and each depth (default: 2,3,4,5). The
 output table lists, per depth, the mass-metric ($M$) and Frobenius-metric
@@ -143,15 +143,17 @@ def main():
                    help="multilevel depths to tabulate (default: 2 3 4 5)")
     p.add_argument("--beta", default="1000", help="beta token in filenames (default: 1000)")
     p.add_argument("--level", default="11", help="finest-level token in filenames (default: 11)")
+    p.add_argument("--suffix", default="optical_lattice",
+                   help="filename suffix, e.g. optical_lattice_lumped (default: optical_lattice)")
     p.add_argument("--label", default="tab:times_gp", help="LaTeX label (default: tab:times_gp)")
     p.add_argument("--out", default="times_gp.tex", help="output .tex file (default: times_gp.tex)")
     args = p.parse_args()
 
     d = Path(args.data_dir)
-    sl = d / f"sl_b{args.beta}_l{args.level}_optical_lattice.org"
+    sl = d / f"sl_b{args.beta}_l{args.level}_{args.suffix}.org"
 
     def ml(metric, depth):
-        return d / f"ml_{metric}_{args.operator}_b{args.beta}_l{args.level}_depth{depth}_optical_lattice.org"
+        return d / f"ml_{metric}_{args.operator}_b{args.beta}_l{args.level}_depth{depth}_{args.suffix}.org"
 
     sl_time = time_to_residual(load_org(sl), args.residual)
     if sl_time is None:
