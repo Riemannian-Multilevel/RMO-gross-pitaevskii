@@ -117,6 +117,8 @@ public:
 
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
+        AssertResidualAt(this->m_res, x, residual);
+
         dealii::Timer timer;
         GradInfo info{};
         InverseM& M_inv = this->get_M_inv();
@@ -182,6 +184,8 @@ public:
 
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const override
     {
+        AssertResidualAt(this->m_res, x, residual);
+
         dealii::Timer timer;
         GradInfo info{};
         InverseA& A_inv = this->get_A_inv();
@@ -243,9 +247,10 @@ public:
         return info;
     }
 
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double) const override
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
-        return gradient(x, output); // no-op
+        AssertResidualAt(this->m_res, x, residual);
+        return gradient(x, output); // no inner solver
     }
 
     [[nodiscard]] const MetricBase& metric() const override { return m_metric; }
