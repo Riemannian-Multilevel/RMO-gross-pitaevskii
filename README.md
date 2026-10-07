@@ -184,3 +184,12 @@ python3 ../plot_convergence.py --format png --coarse-steps
 ```
 
 This requires the Python packages `seaborne`, `pandas` and `orgparse`.
+
+# AI disclosure
+
+Claude (Fable 5, Opus 5.5) was used for the following:
+
+* Generation of plotting (`plot_*.py`) and test code (`test/`)
+* Validation of software design
+* Code review and debugging
+* Doxygen documentation

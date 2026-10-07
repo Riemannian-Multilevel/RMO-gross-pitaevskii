@@ -5,6 +5,7 @@ doc/
 *.cmake
 *.html
 *~
+*.dat
 compile_commands.json
 Makefile
 interpolate_test/
