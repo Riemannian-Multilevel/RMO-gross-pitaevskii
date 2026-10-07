@@ -45,12 +45,12 @@ struct SolverInfo {
  * @brief Armijo backtracking line search for @p oracle along the descent direction @p eta at @p x.
  *
  * Starting from options.ls.alpha and reducing by options.ls.beta, accepts the first step size \f$ \alpha \f$ with
- * \f$ f(R_x(\alpha \eta)) \le f(x) + \sigma \alpha \langle \grad f(x), \eta \rangle_x \f$ (up to rounding). A
- * trial step size below options.ls.min is accepted unconditionally. On acceptance, @p x and the oracle are at the
- * new point. @p fx is \f$ f(x) \f$ and @p dir_deriv is \f$ \langle \grad f(x), \eta \rangle_x \f$.
+ * \f$ f(R_x(\alpha \eta)) \le f(x) + \sigma \alpha \langle \grad f(x), \eta \rangle_x \f$ (up to rounding). On
+ * acceptance, @p x and the oracle are at the new point. @p fx is \f$ f(x) \f$ and @p dir_deriv is
+ * \f$ \langle \grad f(x), \eta \rangle_x \f$.
  *
- * @return The step size (options.ls.min for an unconditional step), or 0 if no step was accepted within
- * options.ls.max_iter trials; then @p x and the oracle are unchanged.
+ * @return The accepted step size, or 0 if no step was accepted before the step size fell below options.ls.min or
+ * within options.ls.max_iter trials; then @p x and the oracle are unchanged.
  */
 // TODO: the oracle state (e.g. M_phiphi) is reassembled for every trial point and restored after a rejection,
 //       since it is not copied
@@ -91,11 +91,12 @@ double armijo_line_search(OracleType& oracle,
             x = x_trial;    // step accepted, write x
             return alpha;
         }
-        if (alpha < options.ls.min) {
-            x = x_trial;    // step accepted, write x
-            return options.ls.min;
-        }
         oracle.update(x);   // step discarded, restore original state
+
+        // No sufficient decrease down to the smallest step size: reject, as for max_iter below
+        if (alpha < options.ls.min) {
+            return 0.0;
+        }
 
         // Backtrack
         alpha *= options.ls.beta;
