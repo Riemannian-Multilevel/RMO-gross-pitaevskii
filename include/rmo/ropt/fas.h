@@ -117,7 +117,6 @@ public:
         unsigned level = level_indices.at(level_idx);
         // A residual of another problem (e.g. another level) has another dimension
         AssertDimension(R_level.n_dofs(), O_level.n_dofs());
-        std::cerr << "level: " << level << std::endl;
         //AssertIndexRange(level - min_level, max_level - min_level + 1);
 
         // Clear and start the clock on finest level
