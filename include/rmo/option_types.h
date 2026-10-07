@@ -168,18 +168,11 @@ enum class Transport
     DIFFERENTIAL,         // Version VI  (Mixed)
     ADJOINT_RESTRICTION,  // Version V
     ADJOINT_DIFFERENTIAL, // Version III
-    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION
+    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION, same as FROBENIUS
     ADJOINT_DIFFERENTIAL_FROBENIUS, // Frobenius-metric counterpart of ADJOINT_DIFFERENTIAL
     DIFFERENTIAL_FROBENIUS,         // Frobenius-metric counterpart of DIFFERENTIAL
     // DIFFERENTIAL_MASS,
     // ADJOINT_DIFFERENTIAL_MASS,
-};
-
-
-enum class Interpolate
-{
-    NONE,
-    MASS
 };
 
 
@@ -191,8 +184,6 @@ struct CoarseModelOptions
     MetricKind smooth_t;    // type of fine oracle (gradient descent on fine level)
     MetricKind ccond_t;     // metric for evaluating coarse condition
     Transport transport_t;  // type of vector transport
-    Interpolate interpol_t; // galerkin condition on linear interpolator
-                            // should be consistent with metric_t
 };
 
 } // namespace gpe

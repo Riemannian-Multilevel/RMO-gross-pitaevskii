@@ -213,7 +213,7 @@ public:
 
     void vmult(VectorType &dst, const VectorType &src) const
     {
-        m_matrix.Tvmult_add(dst, src);
+        m_matrix.Tvmult(dst, src);
     }
 
     void Tvmult_add(VectorType &dst, const VectorType &src) const

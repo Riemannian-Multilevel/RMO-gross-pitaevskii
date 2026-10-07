@@ -240,10 +240,9 @@ BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping));
 BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
-    (metric_t, transport_t, interpol_t));
+    (metric_t, transport_t));
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
                     ADJOINT_RESTRICTION_FROBENIUS, ADJOINT_DIFFERENTIAL_FROBENIUS, DIFFERENTIAL_FROBENIUS);
-BOOST_DESCRIBE_ENUM(Interpolate, NONE, MASS);
 
 
 // ---------- GPE_Options ----------
@@ -318,9 +317,7 @@ inline po::options_description coarse_model_cli_options()
         //     "metric for smoother (energy_adaptive|mass|frobenius)")
         ("transport", po::value<std::string>()->default_value("mass"),
             "vector transport operator (frobenius|mass|differential|adjoint_restriction|adjoint_differential|"
-            "adjoint_restriction_frobenius|adjoint_differential_frobenius|differential_frobenius)")
-        ("interpolate", po::value<std::string>()->default_value("none"),
-            "galerkin condition on linear interpolation (none|mass)");
+            "adjoint_restriction_frobenius|adjoint_differential_frobenius|differential_frobenius)");
     return d;
 }
 
@@ -329,14 +326,12 @@ inline void apply_coarse_model_options(const po::variables_map& vm, CoarseModelO
     const auto metric_str = upper(vm["metric"].as<std::string>());
     const auto ccond_str  = upper(vm["metric-cond"].as<std::string>());
     const auto transp_str = upper(vm["transport"].as<std::string>());
-    const auto interp_str = upper(vm["interpolate"].as<std::string>());
     // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
 
     options_cm.metric_t    = string_to_enum<MetricKind>(metric_str);
     options_cm.ccond_t     = string_to_enum<MetricKind>(ccond_str);
     // options_cm.smooth_t    = string_to_enum<MetricKind>(smooth_str);
     options_cm.transport_t = string_to_enum<Transport>(transp_str);
-    options_cm.interpol_t  = string_to_enum<Interpolate>(interp_str);
 }
 
 } // namespace gpe
