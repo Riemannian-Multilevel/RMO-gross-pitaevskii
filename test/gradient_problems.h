@@ -10,12 +10,13 @@
 
 /**
  * @file
- * @brief Test problems for the gradient check (test/gradient.cc): the energy with its Riemannian gradient in the
- * energy-adaptive, M- and F-metric, and the coarse models in the M- and F-metric.
+ * @brief Test problems of test/gradient.cc: an objective on the unit-mass sphere with a Riemannian gradient kernel.
  *
- * ConstrainedSphere holds what all problems share: the operators of the functional and the constraints. The
- * classes EnergyAdaptive, Mass and Frobenius collect the kernels of one metric, and FineProblem and CoarseProblem
- * combine them into a GradientProblem.
+ * - ConstrainedSphere: the operators of the functional and the constraints, shared by all problems;
+ * - EnergyAdaptive, Mass, Frobenius: metric, tangent spaces and gradient of the energy, for one metric;
+ * - MassModel, FrobeniusModel: coarse model with the correction term in the M- or F-inner product, and its
+ *   gradient in each metric for which a kernel exists;
+ * - FineProblem (energy) and CoarseProblem (coarse model) implement GradientProblem for one metric.
  */
 namespace rmo::gpe::test
 {
@@ -57,21 +58,16 @@ public:
         ellipsoid::retract_by_norm(m_func.get_M(), v, x_new);
     }
 
-    //! \f$ x^\top M x \f$
-    [[nodiscard]] double mass(const Vector<double>& x) const
-    {
-        Vector<double> Mx(x.size());
-        m_func.get_M().vmult(Mx, x);
-        return x * Mx;
-    }
-
 private:
     Functional<dim> m_func;
     const dealii::AffineConstraints<double>& m_constraints;
 };
 
 
-/** @brief Kernels of the energy-adaptive metric \f$ \langle u, v \rangle_x = u^\top A(x) v \f$ (no coarse model yet). */
+/**
+ * @brief Energy-adaptive metric \f$ \langle u, v \rangle_x = u^\top A(x) v \f$: tangent spaces and gradient of
+ * \f$ E \f$.
+ */
 template <int dim>
 class EnergyAdaptive
 {
@@ -101,7 +97,7 @@ private:
 };
 
 
-/** @brief Kernels of the M-metric \f$ \langle u, v \rangle = u^\top M v \f$. */
+/** @brief M-metric \f$ \langle u, v \rangle = u^\top M v \f$: tangent spaces and gradient of \f$ E \f$. */
 template <int dim>
 class Mass
 {
@@ -125,24 +121,13 @@ public:
         kernels::grad_mass(f.get_M_inv(), f.get_A(), f.get_M(), x, g);
     }
 
-    [[nodiscard]] double coarse_value(const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w) const
-    {
-        return kernels::coarse_mass_value(x, phi, w, f.get_M(), f.value(x));
-    }
-
-    void coarse_gradient(const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w,
-                         Vector<double>& g) const
-    {
-        kernels::coarse_mass_grad(f.get_M(), f.get_M_inv(), f.get_A(), x, phi, w, g);
-    }
-
 private:
     const Functional<dim>& f;
     const OperatorMetric<OperatorType> m_metric;
 };
 
 
-/** @brief Kernels of the F-metric \f$ \langle u, v \rangle = u^\top v \f$. */
+/** @brief F-metric \f$ \langle u, v \rangle = u^\top v \f$: tangent spaces and gradient of \f$ E \f$. */
 template <int dim>
 class Frobenius
 {
@@ -166,20 +151,85 @@ public:
         kernels::grad_frobenius(f.get_A(), f.get_M(), x, g);
     }
 
-    [[nodiscard]] double coarse_value(const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w) const
+private:
+    const Functional<dim>& f;
+    const EuclideanMetric m_metric;
+};
+
+
+/**
+ * @brief Coarse model \f$ \Psi(x) = E(x) - \langle w, R_\phi^{-1}(x) \rangle_M \f$, with gradient kernels for the M- and
+ * the energy-adaptive metric.
+ */
+template <int dim>
+class MassModel
+{
+public:
+    explicit MassModel(const Functional<dim>& f) : f(f) {}
+
+    [[nodiscard]] double value(const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w) const
     {
-        return kernels::coarse_frobenius_value(x, phi, w, f.get_M(), f.value(x));
+        return kernels::coarse_mass_value(x, phi, w, f.get_M(), f.value(x));
     }
 
-    void coarse_gradient(const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w,
-                         Vector<double>& g) const
+    //! Correction \f$ w \f$: @p w_ambient projected onto the tangent space at @p phi.
+    void correction(const Vector<double>& phi, const Vector<double>& w_ambient, Vector<double>& w) const
     {
-        kernels::coarse_frobenius_grad(f.get_M(), f.get_A(), x, phi, w, g);
+        metric::mass::project_onto_tangent_space(phi, f.get_M(), w_ambient, w);
+    }
+
+    void gradient(const Mass<dim>&, const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w,
+                  Vector<double>& g) const
+    {
+        kernels::coarse_mass_grad(f.get_M(), f.get_M_inv(), f.get_A(), x, phi, w, g);
+    }
+
+    void gradient(const EnergyAdaptive<dim>&, const Vector<double>& x, const Vector<double>& phi,
+                  const Vector<double>& w, Vector<double>& g) const
+    {
+        kernels::coarse_mass_grad_energy_adaptive(f.get_M(), f.get_A_inv(), x, phi, w, g);
     }
 
 private:
     const Functional<dim>& f;
-    const EuclideanMetric m_metric;
+};
+
+
+/**
+ * @brief Coarse model \f$ \Psi(x) = E(x) - w^\top R_\phi^{-1}(x) \f$, with gradient kernels for the F- and the
+ * energy-adaptive metric.
+ */
+template <int dim>
+class FrobeniusModel
+{
+public:
+    explicit FrobeniusModel(const Functional<dim>& f) : f(f) {}
+
+    [[nodiscard]] double value(const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w) const
+    {
+        return kernels::coarse_frobenius_value(x, phi, w, f.get_M(), f.value(x));
+    }
+
+    //! Correction \f$ w \f$: @p w_ambient projected onto the tangent space at @p phi.
+    void correction(const Vector<double>& phi, const Vector<double>& w_ambient, Vector<double>& w) const
+    {
+        metric::frobenius::project_onto_tangent_space(phi, f.get_M(), w_ambient, w);
+    }
+
+    void gradient(const Frobenius<dim>&, const Vector<double>& x, const Vector<double>& phi, const Vector<double>& w,
+                  Vector<double>& g) const
+    {
+        kernels::coarse_frobenius_grad(f.get_M(), f.get_A(), x, phi, w, g);
+    }
+
+    void gradient(const EnergyAdaptive<dim>&, const Vector<double>& x, const Vector<double>& phi,
+                  const Vector<double>& w, Vector<double>& g) const
+    {
+        kernels::coarse_frobenius_grad_energy_adaptive(f.get_M(), f.get_A_inv(), f.get_A(), x, phi, w, g);
+    }
+
+private:
+    const Functional<dim>& f;
 };
 
 
@@ -251,18 +301,19 @@ public:
 
 
 /**
- * @brief Coarse model \f$ \Psi(x) = E(x) - \langle w, R_\phi^{-1}(x) \rangle \f$ in @p Metric (see kernels.h), on the
- * mesh of the fine problem: a coarse mesh and grid transfers are not needed to check its gradient.
+ * @brief Coarse model @p Model with its Riemannian gradient in @p Metric, on the mesh of the fine problem: a coarse
+ * mesh and grid transfers are not needed to check the gradient.
  *
  * Each trial draws a random base point \f$ \phi \f$, and projects a fixed vector onto the tangent space at
  * \f$ \phi \f$ for the correction \f$ w \f$.
  */
-template <int dim, template <int> class Metric>
+template <int dim, template <int> class Model, template <int> class Metric>
 class CoarseProblem final : public MetricProblem<dim, Metric>
 {
 public:
     CoarseProblem(const ConstrainedSphere<dim>& sphere, const Vector<double>& w)
         : MetricProblem<dim, Metric>(sphere)
+        , model(sphere.functional())
         , w_ambient(w)
         , phi(w.size())
         , w(w.size())
@@ -272,7 +323,7 @@ public:
     {
         ellipsoid::random_point(phi, this->sphere.functional().get_M());
         this->sphere.make_admissible(phi);
-        this->metric_kernels.project(phi, w_ambient, w);
+        model.correction(phi, w_ambient, w);
     }
 
     //! \f$ R_\phi(v) \f$ for a random unit tangent vector \f$ v \f$ at \f$ \phi \f$, so that the point is near \f$ \phi \f$.
@@ -284,17 +335,15 @@ public:
         this->sphere.retract(phi, v, x);
     }
 
-    [[nodiscard]] double value(const Vector<double>& x) const override
-    {
-        return this->metric_kernels.coarse_value(x, phi, w);
-    }
+    [[nodiscard]] double value(const Vector<double>& x) const override { return model.value(x, phi, w); }
 
     void gradient(const Vector<double>& x, Vector<double>& g) const override
     {
-        this->metric_kernels.coarse_gradient(x, phi, w, g);
+        model.gradient(this->metric_kernels, x, phi, w, g);
     }
 
 private:
+    const Model<dim> model;
     const Vector<double> w_ambient;
     Vector<double> phi, w;
 };

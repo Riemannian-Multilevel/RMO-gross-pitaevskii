@@ -1,16 +1,16 @@
-//
-// Checks the matrix form of the grid transfers for Q1 elements on uniformly refined squares
-// (coarse mesh 2x2 cells, 9 DoFs; fine mesh 4x4 cells, 25 DoFs):
-//
-//   to_fine_mesh() (P) evaluates the coarse function at the fine nodes. A fine node is a coarse node,
-//   an edge midpoint or a cell centre, so each row of P is [1], [1/2, 1/2] or [1/4, 1/4, 1/4, 1/4].
-//
-//   to_coarse_mesh() (R) evaluates the fine function at the coarse nodes. Each coarse node is a fine
-//   node, so each row of R is [1] (injection); in particular, R is not P^T.
-//
-//   Tfine() is P^T. Its row sums are up to 2^dim, those of R are 1, so the transports must not mix up
-//   the two restrictions.
-//
+/**
+ * @file
+ * @brief Checks the matrix form of the grid transfers, for Q1 elements on uniformly refined squares (coarse mesh
+ * 2x2 cells, fine mesh 4x4 cells).
+ *
+ * - to_fine_mesh() (\f$ P \f$) evaluates the coarse function at the fine nodes. A fine node is a coarse node, an edge
+ *   midpoint or a cell centre, so each row of \f$ P \f$ is \f$ [1] \f$, \f$ [\frac12, \frac12] \f$ or
+ *   \f$ [\frac14, \frac14, \frac14, \frac14] \f$.
+ * - to_coarse_mesh() (\f$ R \f$) evaluates the fine function at the coarse nodes. Each coarse node is a fine node, so
+ *   each row of \f$ R \f$ is \f$ [1] \f$ (injection); in particular, \f$ R \neq P^\top \f$.
+ * - Tfine() is \f$ P^\top \f$. Its row sums are up to \f$ 2^d \f$, those of \f$ R \f$ are 1, so the transports must
+ *   not mix up the two restrictions.
+ */
 #include "check.h"
 
 #include <rmo/fe/interpolate.h>

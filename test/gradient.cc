@@ -1,15 +1,16 @@
-//
-// Checks the Riemannian gradients of the energy (energy-adaptive, M- and F-metric) and of the coarse
-// models (M- and F-metric) at random points x and unit tangent vectors v:
-//
-//   - the normal part |grad f(x) - Pi_x grad f(x)|_x of the gradient vanishes;
-//   - <grad f(x), v>_x matches difference quotients of f along v;
-//   - the Taylor error |f(R_x(t v)) - f(x) - t <grad f(x), v>_x| is O(t^2), i.e. its slope in log-log scale
-//     is 2. Only this is checked (--slope-tol); the rest is reported in a table of the trials.
-//
-// The Taylor errors are written to checkgradient_<problem>_<dim>d_<trial>.dat (columns t, error;
-// without _<trial> for a single trial).
-//
+/**
+ * @file
+ * @brief Taylor test of the Riemannian gradient kernels: the energy in the energy-adaptive, M- and F-metric, and the
+ * coarse models in their own metric and in the energy-adaptive metric.
+ *
+ * At random points \f$ x \f$ and unit tangent vectors \f$ v \f$, the Taylor error
+ * \f$ |f(R_x(t v)) - f(x) - t \langle \grad f(x), v \rangle_x| \f$ is \f$ O(t^2) \f$ exactly when the gradient is
+ * correct, so its slope in log-log scale must be 2 (checked with `--slope-tol`). The table of the trials also lists
+ * the normal part of the gradient and difference quotients of \f$ f \f$ along \f$ v \f$.
+ *
+ * The Taylor errors are written to `checkgradient_<problem>_<dim>d_<trial>.dat` (columns \f$ t \f$, error; without
+ * `_<trial>` for a single trial).
+ */
 #include "check.h"
 #include "finite_difference.h"
 #include "gradient_problems.h"
@@ -148,11 +149,9 @@ double taylor_slope(const std::vector<double>& t, const std::vector<double>& err
 
 struct TrialResult
 {
-    double mass;         ///< x^T M x, 1 on the sphere
     double grad_v;       ///< <grad f(x), v>_x
-    double fd_forward;   ///< Df(x)[v] by a forward difference
     double fd_central;   ///< Df(x)[v] by a central difference
-    double normal_part;  ///< |grad f(x) - Pi_x grad f(x)|_x
+    double normal_part;  ///< |grad f(x) - Pi_x grad f(x)|_x / |grad f(x)|_x, not seen by the Taylor error
     double slope;        ///< slope of the Taylor error, 2 for a correct gradient
     std::vector<double> t, taylor_error;
 };
@@ -174,7 +173,6 @@ public:
         problem.random_point(x);
         sphere.make_admissible(x);
         sphere.update(x);
-        r.mass = sphere.mass(x);
 
         // Tangent vector with |v|_x = 1; the constraints move v off the tangent space, so project afterwards
         Vector<double> v_ambient(n), v(n);
@@ -188,15 +186,14 @@ public:
         problem.gradient(x, g);
         r.grad_v = problem.metric().inner(g, v);
 
-        // Difference quotients; h ~ eps^(1/3) balances truncation and round-off of the central difference
-        r.fd_forward = forward_difference([this](const auto& z) { return value(z); }, x, v, 1e-8, fx);
+        // h ~ eps^(1/3) balances truncation and round-off
         r.fd_central = central_difference([this](const auto& z) { return value(z); }, x, v, 1e-5);
         sphere.update(x);
 
         Vector<double> g_tangent(n), g_normal(g);
         problem.project(x, g, g_tangent);
         g_normal -= g_tangent;
-        r.normal_part = problem.metric().norm(g_normal);
+        r.normal_part = problem.metric().norm(g_normal) / problem.metric().norm(g);
 
         r.t = logspace(-8, 0, 100);
         Vector<double> tv(n), x_t(n);
@@ -221,7 +218,7 @@ private:
     GradientProblem& problem;
 };
 
-/** @brief Table of the trials, and the Taylor error of each trial in the file <prefix>_<trial>.dat (<prefix>.dat for one trial). */
+/** @brief Table of the trials, and the Taylor error of each trial in `<prefix>_<trial>.dat` (`<prefix>.dat` for one). */
 class TrialLog
 {
 public:
@@ -229,9 +226,7 @@ public:
 
     void add(unsigned trial, const TrialResult& r)
     {
-        table.add_value("x^T M x", r.mass);
         table.add_value("<grad, v>", r.grad_v);
-        table.add_value("fd_forward", r.fd_forward);
         table.add_value("fd_central", r.fd_central);
         table.add_value("normal_part", r.normal_part);
         table.add_value("slope", r.slope);
@@ -244,7 +239,7 @@ public:
 
     void write_table(std::ostream& os)
     {
-        for (const auto* column : {"x^T M x", "<grad, v>", "fd_forward", "fd_central", "normal_part"}) {
+        for (const auto* column : {"<grad, v>", "fd_central", "normal_part"}) {
             table.set_precision(column, 6);
             table.set_scientific(column, true);
         }
@@ -259,22 +254,26 @@ private:
 };
 
 template <int dim>
-void check_problem(CheckReport& report, ConstrainedSphere<dim>& sphere, GradientProblem& problem,
+void check_problem(CheckReport& report, ConstrainedSphere<dim>& sphere, GradientProblem&& problem,
                    const std::string& name, const Config& config)
 {
     GradientCheck<dim> check(sphere, problem);
     TrialLog log(fmt::format("checkgradient_{}_{}d", name, dim), config.n_trials);
     double slope_min =  std::numeric_limits<double>::infinity();
     double slope_max = -std::numeric_limits<double>::infinity();
+    double max_normal = 0.0;
 
     for (unsigned trial = 0; trial < config.n_trials; trial++) {
         const TrialResult r = check.trial();
         log.add(trial, r);
         slope_min = std::min(slope_min, r.slope);
         slope_max = std::max(slope_max, r.slope);
+        max_normal = std::max(max_normal, r.normal_part);
     }
     std::cout << "\n" << name << "\n";
     log.write_table(std::cout);
+
+    report.check(max_normal < 1e-8, name + ": gradient is tangent", "max |normal part| / |grad| " + sci(max_normal));
 
     // Only a slope below 2 fails: above 2, the second-order term happens to vanish along v
     const std::string detail = fmt::format("slope in [{:.4f}, {:.4f}]", slope_min, slope_max);
@@ -313,18 +312,17 @@ int main(int argc, char* argv[])
             w = 1.0;
             sphere.distribute(w);
 
-            // TODO: coarse model in the energy-adaptive metric; check first-order coherence
-            FineProblem<dim, EnergyAdaptive> energy(sphere);
-            FineProblem<dim, Mass>           mass(sphere);
-            FineProblem<dim, Frobenius>      frobenius(sphere);
-            CoarseProblem<dim, Mass>         coarse_mass(sphere, w);
-            CoarseProblem<dim, Frobenius>    coarse_frobenius(sphere, w);
-
-            check_problem(report, sphere, energy, "energy", *config);
-            check_problem(report, sphere, mass, "mass", *config);
-            check_problem(report, sphere, frobenius, "frob", *config);
-            check_problem(report, sphere, coarse_mass, "coarse_mass", *config);
-            check_problem(report, sphere, coarse_frobenius, "coarse_frob", *config);
+            // TODO: check first-order coherence
+            check_problem(report, sphere, FineProblem<dim, EnergyAdaptive>(sphere), "energy", *config);
+            check_problem(report, sphere, FineProblem<dim, Mass>(sphere), "mass", *config);
+            check_problem(report, sphere, FineProblem<dim, Frobenius>(sphere), "frob", *config);
+            check_problem(report, sphere, CoarseProblem<dim, MassModel, Mass>(sphere, w), "coarse_mass", *config);
+            check_problem(report, sphere, CoarseProblem<dim, FrobeniusModel, Frobenius>(sphere, w),
+                          "coarse_frob", *config);
+            check_problem(report, sphere, CoarseProblem<dim, MassModel, EnergyAdaptive>(sphere, w),
+                          "coarse_mass_energy", *config);
+            check_problem(report, sphere, CoarseProblem<dim, FrobeniusModel, EnergyAdaptive>(sphere, w),
+                          "coarse_frob_energy", *config);
         });
     });
 }

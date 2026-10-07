@@ -1,14 +1,15 @@
-//
-// Checks the linear case (beta = 0) against an ARPACK eigenvalue solve.
-//
-// For beta = 0, the energy is E(x) = 1/2 x^T A0 x on { x : x^T M x = 1 }. Its minimizer is the
-// eigenvector of A0 u = lambda M u for the smallest eigenvalue lambda_1, and the minimal energy is
-// lambda_1 / 2. The test minimizes E by Riemannian gradient descent, computes lambda_1 with ARPACK, and
-// compares the two.
-//
-// With --boundary dirichlet, the constrained rows of A0 and M add artificial eigenvalues; the default
-// (neumann) has no constrained rows.
-//
+/**
+ * @file
+ * @brief Checks the minimizer of the linear problem (\f$ \beta = 0 \f$) against an ARPACK eigenvalue solve.
+ *
+ * For \f$ \beta = 0 \f$, the energy is \f$ E(x) = \frac12 x^\top A_0 x \f$ on \f$ x^\top M x = 1 \f$. Its minimizer is
+ * the eigenvector of \f$ A_0 u = \lambda M u \f$ for the smallest eigenvalue \f$ \lambda_1 \f$, and the minimal
+ * energy is \f$ \lambda_1 / 2 \f$. The test minimizes \f$ E \f$ by Riemannian gradient descent, computes
+ * \f$ \lambda_1 \f$ with ARPACK, and compares the two.
+ *
+ * With `--boundary dirichlet`, the constrained rows of \f$ A_0 \f$ and \f$ M \f$ add artificial eigenvalues; the
+ * default (neumann) has no constrained rows. Without ARPACK in deal.II, the test is skipped.
+ */
 #include "check.h"
 
 #include <rmo/gpe/manifold.h>

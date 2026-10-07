@@ -434,6 +434,7 @@ public:
     [[nodiscard]] const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
     const fe::HyperCube<dim>& get_grid() const { return grid; }
     const dealii::Mapping<dim>& get_mapping() const { return *mapping; }
+    const dealii::Quadrature<dim>& get_quadrature() const { return *quadrature; }
 
 private:
     fe::HyperCube<dim>    grid;    ///< The geometry and triangulation.

@@ -1,13 +1,12 @@
-//
-// Checks that A0 = S + M_{V,L} is an M-matrix with mass lumping. Then A_u = A0 + beta Mpp(u) has a
-// non-negative inverse, and the energy-adaptive step A_u^{-1} M u preserves positivity.
-//
-// A0 is symmetric positive definite, so non-positive off-diagonal entries suffice; the non-negative
-// inverse is also checked directly on a few columns. Dirichlet rows and columns are excluded.
-//
-// Required: degree 1 (2d Q1, 2d P1 on the simplex mesh, 3d Q1). Reported as INFO, since they are no
-// M-matrices: consistent A0, Q2, P2-bubble, 3d P1 on the simplex mesh.
-//
+/**
+ * @file
+ * @brief Checks that the lumped \f$ A_0 = S + M_{V,L} \f$ is an M-matrix for elements of degree 1 (2d Q1, 2d P1, 3d Q1).
+ *
+ * Then \f$ A_u = A_0 + \beta M_{\phi\phi}(u) \f$ has a non-negative inverse, and the energy-adaptive step
+ * \f$ A_u^{-1} M u \f$ preserves positivity. \f$ A_0 \f$ is symmetric positive definite, so non-positive
+ * off-diagonal entries suffice; the non-negative inverse is also checked directly on a few columns. Dirichlet rows
+ * and columns are excluded. The consistent \f$ A_0 \f$, and elements of higher degree, give no M-matrix.
+ */
 #include "check.h"
 
 #include <rmo/gpe/gpe.h>
@@ -25,16 +24,6 @@ using namespace dealii;
 
 namespace
 {
-
-//! Discretization of one test case.
-struct Config
-{
-    MeshKind    mesh;
-    int         degree;
-    unsigned    n_levels;
-    std::string name;
-    bool        required;  ///< false: lumped A0 is reported, not checked
-};
 
 //! Signs of the entries of a matrix in the unconstrained rows and columns, relative to max |A_ij|.
 struct SignPattern
@@ -118,27 +107,18 @@ GPE_Options make_options(MeshKind mesh, int degree)
 }
 
 template <int dim>
-void check_config(CheckReport& report, const Config& config)
+void check_lumped_A0(CheckReport& report, MeshKind mesh, unsigned n_levels, const std::string& name)
 {
-    const GrossPitaevskiiPackage<dim> package(make_options<dim>(config.mesh, config.degree), config.n_levels);
+    const GrossPitaevskiiPackage<dim> package(make_options<dim>(mesh, 1), n_levels);
     const auto& constraints = package.get_constraints();
-    const potential::Square<dim> V;
+    const auto  lumped      = package.template system<GrossPitaevskiiLumpedSystem<dim>>(potential::Square<dim>());
 
-    // The consistent potential term adds positive off-diagonal entries
-    const auto consistent = package.template system<GrossPitaevskiiSystem<dim>>(V);
-    report.info(config.name + ", consistent A0", sign_pattern(consistent.get_A0(), constraints).str());
-
-    const auto lumped = package.template system<GrossPitaevskiiLumpedSystem<dim>>(V);
     const SignPattern sp = sign_pattern(lumped.get_A0(), constraints);
-    if (!config.required) {
-        report.info(config.name + ", lumped A0", sp.str());
-        return;
-    }
-    report.check(sp.n_positive_offdiag == 0 && sp.min_diagonal > 0,
-                 config.name + ": lumped A0 is a Z-matrix with positive diagonal", sp.str());
+    report.check(sp.n_positive_offdiag == 0 && sp.min_diagonal > 0, name + ": lumped A0 is a Z-matrix with positive diagonal",
+                 sp.str());
 
     const double min_inv = min_inverse_entry(lumped.get_A0(), constraints);
-    report.check(min_inv > -1e-10, config.name + ": lumped A0^{-1} is non-negative (5 columns)",
+    report.check(min_inv > -1e-10, name + ": lumped A0^{-1} is non-negative (5 columns)",
                  "min relative entry " + sci(min_inv));
 }
 
@@ -150,12 +130,8 @@ int main()
     std::cerr.setstate(std::ios::failbit);  // silence the mesh statistics of GrossPitaevskiiPackage
 
     return run_tests([](CheckReport& report) {
-        check_config<2>(report, {MeshKind::QUADRILATERAL, 1, 5, "2d Q1 (squares)", true});
-        check_config<2>(report, {MeshKind::SIMPLEX,       1, 4, "2d P1 (simplex mesh)", true});
-        check_config<3>(report, {MeshKind::QUADRILATERAL, 1, 3, "3d Q1 (cubes)", true});
-
-        check_config<2>(report, {MeshKind::QUADRILATERAL, 2, 4, "2d Q2 (squares)", false});
-        check_config<2>(report, {MeshKind::SIMPLEX,       2, 3, "2d P2-bubble (simplex mesh)", false});
-        check_config<3>(report, {MeshKind::SIMPLEX,       1, 3, "3d P1 (simplex mesh)", false});
+        check_lumped_A0<2>(report, MeshKind::QUADRILATERAL, 5, "2d Q1");
+        check_lumped_A0<2>(report, MeshKind::SIMPLEX, 4, "2d P1");
+        check_lumped_A0<3>(report, MeshKind::QUADRILATERAL, 3, "3d Q1");
     });
 }
