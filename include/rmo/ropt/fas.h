@@ -8,6 +8,7 @@
 #include <deal.II/numerics/data_postprocessor.h>
 #include <deal.II/base/mg_level_object.h>
 
+#include <rmo/ropt/condition.h>
 #include <rmo/ropt/observer.h>
 #include <rmo/ropt/oracle.h>
 #include <rmo/ropt/oracle_coarse.h>
@@ -46,7 +47,8 @@ class FullApproximationScheme : public ObservableSolver<CycleInfo>
 public:
     // Components are sorted in ascending level of discretization (from coarse to fine)
     // cond_metric_mg[l]: metric on level l for the coarse condition, see LevelMetric
-    // TODO: dependency injection
+    // condition_mg[l]:   coarse-correction trigger (eq. 16) evaluated on level l against level l-1;
+    //                    a null entry falls back to DefaultCoarseCondition.
     FullApproximationScheme(MGLevelObject<std::shared_ptr<ManifoldBase>>          manifold_mg,
                             MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  point_transfer_mg,
                             MGLevelObject<std::shared_ptr<VectorTransportBase>>   vector_transport_mg,
@@ -55,15 +57,19 @@ public:
                             MGLevelObject<DescentOptions>  options_descent_mg,
                             MGLevelObject<SolverOptions>   options_solver_mg,
                             FAS_Options options_fas,
-                            std::optional<MGLevelObject<LevelMetric>> cond_metric_mg = std::nullopt)
+                            std::optional<MGLevelObject<LevelMetric>> cond_metric_mg = std::nullopt,
+                            std::optional<MGLevelObject<std::shared_ptr<CoarseConditionBase>>> condition_mg = std::nullopt)
         : level_indices(level_indices)
         , m_manifold_mg         (std::move(manifold_mg))
         , m_point_transfer_mg   (std::move(point_transfer_mg))
         , m_vector_transport_mg (std::move(vector_transport_mg))
-    // m_manifold_mg is initialized before m_cond_metric_mg, so its level bounds size the default
+    // m_manifold_mg is initialized before m_cond_metric_mg/m_condition_mg, so its level bounds size the defaults
         , m_cond_metric_mg      (cond_metric_mg ? std::move(*cond_metric_mg)
                                                 : MGLevelObject<LevelMetric>(m_manifold_mg.min_level(),
                                                                              m_manifold_mg.max_level()))
+        , m_condition_mg        (condition_mg ? std::move(*condition_mg)
+                                              : MGLevelObject<std::shared_ptr<CoarseConditionBase>>(
+                                                    m_manifold_mg.min_level(), m_manifold_mg.max_level()))
         , m_objective_mg        (std::move(objective_mg))
         , options_descent_mg    (std::move(options_descent_mg))
         , options_solver_mg     (std::move(options_solver_mg))
@@ -84,6 +90,8 @@ public:
         AssertDimension(m_objective_mg.max_level(),        max_level);
         AssertDimension(m_cond_metric_mg.min_level(),      min_level);
         AssertDimension(m_cond_metric_mg.max_level(),      max_level);
+        AssertDimension(m_condition_mg.min_level(),        min_level);
+        AssertDimension(m_condition_mg.max_level(),        max_level);
 
         // Check that level indices are contained within MGLevelObject
         AssertIndexRange(min_level, level_indices.front()+1);  // open range
@@ -257,8 +265,7 @@ public:
                     check_coarse_cond = false;  // stop coarse condition evaluation once threshold was reached
                 }
 
-                // Different values of kappa for different levels?
-                if (norm_coarse >= options_fas.kappa * norm_level && norm_level > options_fas.eps) {
+                if (coarse_condition_trigger(level, norm_level, norm_coarse)) {
                     // Initialize coarse trial point as the restricted fine point
                     Vector<double> zk = state.y;
 
@@ -410,6 +417,14 @@ private:
         return metric ? metric->norm(v) : T.metric().norm(v);
     }
 
+    bool coarse_condition_trigger(unsigned level, double norm_level, double norm_coarse) const
+    {
+        if (m_condition_mg[level])   // a condition was configured for this level
+            return m_condition_mg[level]->trigger(norm_level, norm_coarse, options_fas);
+        static const DefaultCoarseCondition default_condition;
+        return default_condition.trigger(norm_level, norm_coarse, options_fas);
+    }
+
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
     std::vector<unsigned> level_indices;
@@ -419,6 +434,7 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
     MGLevelObject<LevelMetric>                            m_cond_metric_mg;
+    MGLevelObject<std::shared_ptr<CoarseConditionBase>>   m_condition_mg;
     MGLevelObject<std::shared_ptr<Functional>>            m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
