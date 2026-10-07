@@ -10,7 +10,7 @@
 
 /**
  * @file
- * @brief Test problems of test/gradient.cc: an objective on the unit-mass sphere with a Riemannian gradient kernel.
+ * @brief Test problems of staging/test/gradient.cc: an objective on the unit-mass sphere with a Riemannian gradient kernel.
  *
  * - ConstrainedSphere: the operators of the functional and the constraints, shared by all problems;
  * - EnergyAdaptive, Mass, Frobenius: metric, tangent spaces and gradient of the energy, for one metric;

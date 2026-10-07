@@ -86,10 +86,10 @@ add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 # --- Create targets for tests
 enable_testing()
 
-add_rmo_executable(test_arpack SOURCE test/arpack.cc LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_gradient SOURCE test/gradient.cc LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_energy SOURCE test/energy.cc)
-add_rmo_executable(test_operator SOURCE test/operator.cc)
+add_rmo_executable(test_arpack SOURCE staging/test/arpack.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_gradient SOURCE staging/test/gradient.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_energy SOURCE staging/test/energy.cc)
+add_rmo_executable(test_operator SOURCE staging/test/operator.cc)
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
