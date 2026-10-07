@@ -119,6 +119,7 @@ public:
 
     unsigned n_dofs() const { return builder->n_dofs(); }
     void distribute(Vector<double>& x) const { builder->distribute(x); }
+    Vector<double> initial_value() const { return builder->initial_value(); }
 
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
@@ -272,6 +273,7 @@ public:
     unsigned n_level_max() const { return max_level; }
 
     void distribute(Vector<double>& x) const { builders_mg[max_level]->distribute(x); }
+    Vector<double> initial_value() const { return builders_mg[max_level]->initial_value(); }
 
     void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
     {
@@ -381,56 +383,54 @@ static void run_experiment(const ProgramOptions& opts)
 
     if (opts.coarse_model.metric_t == MetricKind::NONE || opts.mg.v_levels.size() == 1) {
         // Run standard single-level Riemannian gradient descent on the finest level
-        auto exp = std::visit([&](auto&& arg) {
+        auto context = std::visit([&](auto&& arg) {
             return SingleLevelExperiment<System>(arg, n_levels, opts.gpe, opts.solver, opts.descent);
         }, potential_v);
 
-        Vector<double> x0(exp.n_dofs());
-        x0 = 1.0;
-        exp.distribute(x0);
+        Vector<double> x0 = context.initial_value();
+        context.distribute(x0);
 
         // Starting value on the sphere
-        ellipsoid::retract_by_norm(exp.get_M(), x0);
+        ellipsoid::retract_by_norm(context.get_M(), x0);
 
-        exp.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
+        context.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
 
         if (opts.output.output_bin) {
             const std::string basename = opts.output.bin_filename.empty()
                 ? fmt::format("solution_{}d_sl_b{}_lvl{}", dim, opts.gpe.beta, opts.mg.v_levels.size())
                 : opts.output.bin_filename;
-            output_bin(exp.history(), exp.get_package(), basename);
+            output_bin(context.history(), context.get_package(), basename);
         }
         if (opts.output.output_vtk) {
             const std::string name = opts.output.vtk_filename.empty() ? fmt::format("solution_{}d_sl", dim) : opts.output.vtk_filename;
-            output_vtk(exp.history(), exp.get_package().get_dofs(), fmt::format("{}_lvl{}", name, n_levels),
+            output_vtk(context.history(), context.get_package().get_dofs(), fmt::format("{}_lvl{}", name, n_levels),
                        opts.output.output_every);
         }
     }
     else {
-        auto exp = std::visit([&](auto&& arg) {
+        auto context = std::visit([&](auto&& arg) {
             return MultiLevelExperiment<System>(arg, opts.mg.v_levels, opts.gpe, opts.fas, opts.coarse_model, opts.solver, opts.descent);
         }, potential_v);
 
-        Vector<double> x0(exp.n_dofs());
-        x0 = 1.0;
-        exp.distribute(x0);
+        Vector<double> x0 = context.initial_value();
+        context.distribute(x0);
 
         // Starting value on the sphere
-        ellipsoid::retract_by_norm(exp.get_M(), x0);
+        ellipsoid::retract_by_norm(context.get_M(), x0);
 
-        exp.run(x0, opts.coarse_model.metric_t, std::cout);
-        exp.log(std::cerr);
+        context.run(x0, opts.coarse_model.metric_t, std::cout);
+        context.log(std::cerr);
 
         if (opts.output.output_bin) {
             // TODO: Additional ML parameters in the default name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)
             const std::string basename = opts.output.bin_filename.empty()
                 ? fmt::format("solution_{}d_ml_b{}_lvl{}", dim, opts.gpe.beta, opts.mg.v_levels.size())
                 : opts.output.bin_filename;
-            output_bin(exp.history(), exp.get_package(), basename);
+            output_bin(context.history(), context.get_package(), basename);
         }
         if (opts.output.output_vtk) {
             const std::string name = opts.output.vtk_filename.empty() ? fmt::format("solution_{}d_ml", dim) : opts.output.vtk_filename;
-            output_vtk(exp.history(), exp.get_package().get_dofs(), fmt::format("{}_lvl{}", name, exp.n_level_max()),
+            output_vtk(context.history(), context.get_package().get_dofs(), fmt::format("{}_lvl{}", name, context.n_level_max()),
                        opts.output.output_every);
         }
     }
@@ -461,6 +461,7 @@ int main(int argc, char* argv[])
         }
 
         apply_gpe_options(vm, opts.gpe);
+        NumberGenerator::get().seed(opts.gpe.seed);
         apply_descent_options(vm, opts.descent);
         apply_mg_options(vm, opts.mg);
         apply_inner_options(vm, opts.solver);

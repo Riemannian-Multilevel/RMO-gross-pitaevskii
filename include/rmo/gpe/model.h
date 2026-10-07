@@ -7,6 +7,7 @@
 
 #include <rmo/gpe/gpe.h>
 #include <rmo/option_types.h>
+#include <rmo/util/random.h>
 
 
 /**
@@ -44,6 +45,25 @@ public:
     void distribute(Vector<double>& x) const
     {
         package.distribute(x);
+    }
+
+    /**
+     * @brief Starting value of the iteration, from GPE_Options::initial and GPE_Options::initial_arg (without
+     * constraints and normalization).
+     */
+    Vector<double> initial_value() const
+    {
+        Vector<double> x0(n_dofs());
+
+        switch (options.initial) {
+            case InitialValue::CONSTANT:
+                x0 = options.initial_arg.value_or(1.0);
+                break;
+            case InitialValue::RANDOM:
+                NumberGenerator::get().unifrnd(0.5, 1.5, x0);
+                break;
+        }
+        return x0;
     }
 
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }

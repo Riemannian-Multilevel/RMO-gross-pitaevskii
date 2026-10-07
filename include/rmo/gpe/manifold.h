@@ -28,7 +28,9 @@ template <typename MatrixType>
 void random_point(Vector<double>& x, const MatrixType& M,
                   double mean = 0.0, double stddev = 1.0)
 {
-    normrnd(mean, stddev, x);
+    // Seed is set globally in rmo::NumberGenerator
+    rmo::NumberGenerator::get().normrnd(mean, stddev, x);
+
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);
 

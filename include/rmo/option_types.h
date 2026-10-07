@@ -4,6 +4,8 @@
 
 #ifndef RMO_OPTION_TYPES_H
 #define RMO_OPTION_TYPES_H
+
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -136,7 +138,6 @@ struct GradInfo
 namespace gpe
 {
 
-// TODO: support more complicated potentials
 enum class Potential
 {
     ZERO,
@@ -146,6 +147,12 @@ enum class Potential
     EXPRESSION      // muparser expression, see GPE_Options::potential_expr
 };
 
+// Starting value of the iteration, see ModelBuilder::initial_value()
+enum class InitialValue
+{
+    CONSTANT,   // x = value (default 1)
+    RANDOM      // uniform in [0.5, 1.5]
+};
 
 struct GPE_Options
 {
@@ -159,6 +166,9 @@ struct GPE_Options
     bool mass_lumping;      // lumped (diagonal) mass matrices, see GrossPitaevskiiLumpedSystem
     Potential potential;    // used potential V for matrix M_V
     std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
+    InitialValue initial;   // type of starting point
+    std::optional<double> initial_arg;  // value (CONSTANT); empty: default
+    unsigned seed;          // seed of NumberGenerator
 };
 
 enum class Transport
