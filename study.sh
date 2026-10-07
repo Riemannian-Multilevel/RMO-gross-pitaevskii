@@ -16,6 +16,7 @@ line_search=1
 radius=11
 boundary=dirichlet
 potential=optical_lattice
+mass_lumping=0
 
 
 # Arguments -------------------------------------------------------------------------------------------------------------------
@@ -25,11 +26,16 @@ if (( line_search )); then
     args+=(--line-search)
 fi
 
+if (( mass_lumping )); then
+    args+=(--mass-lumping)
+fi
+
 # Coarse condition
 args_fas=(--kappa "$kappa" --eps "$eps")
 
 # Define file names
 suffix=_optical_lattice.org
+#suffix=_optical_lattice_lumped.org
 #suffix=.org
 
 
