@@ -176,13 +176,6 @@ enum class Transport
 };
 
 
-enum class Interpolate
-{
-    NONE,
-    MASS
-};
-
-
 // Selection of the multilevel components for the GP problem (main_coarse.cc)
 // TODO: MetricKind is still defined in rmo (used by MetricBase::kind)
 struct CoarseModelOptions
@@ -191,8 +184,6 @@ struct CoarseModelOptions
     MetricKind smooth_t;    // type of fine oracle (gradient descent on fine level)
     MetricKind ccond_t;     // metric for evaluating coarse condition
     Transport transport_t;  // type of vector transport
-    Interpolate interpol_t; // galerkin condition on linear interpolator
-                            // should be consistent with metric_t
 };
 
 } // namespace gpe

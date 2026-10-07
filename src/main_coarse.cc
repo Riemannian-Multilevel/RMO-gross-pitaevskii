@@ -1,10 +1,10 @@
 #include <rmo/lac.h>
+#include <rmo/fe/interpolate.h>
 
 #include <rmo/ropt/fas.h>
 #include <rmo/ropt/observer_table.h>
 
 #include <rmo/gpe/model.h>
-#include <rmo/gpe/interpolate.h>
 #include <rmo/gpe/oracle_coarse.h>
 #include <rmo/gpe/manifold.h>
 #include <rmo/gpe/transport.h>
@@ -28,18 +28,8 @@ static auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>
                             const Operator& M_c, const Operator& M_f, const InverseM& M_inv_c,
                             const CoarseModelOptions& options_cm)
 {
-    std::shared_ptr<LinearTransferBase> transfer;
-
-    if (options_cm.interpol_t == Interpolate::MASS) {
-        transfer = std::make_shared<MassTransfer<dim,fe::LinearTransferMG<dim>,Operator,InverseM>>(
-            dofs_c, dofs_f, constr_c, constr_f, M_f, M_inv_c);
-    }
-    else if (options_cm.interpol_t == Interpolate::NONE) {
-        transfer = std::make_shared<fe::LinearTransferMG<dim>>(dofs_c, dofs_f, constr_c, constr_f);
-    }
-    else {
-        std::abort();
-    }
+    std::shared_ptr<LinearTransferBase> transfer = std::make_shared<fe::LinearTransferMG<dim>>(
+        dofs_c, dofs_f, constr_c, constr_f);
 
     std::shared_ptr<ManifoldTransferBase> point_transfer = std::make_shared<ManifoldTransfer<Operator>>(
         *transfer, M_c, M_f);
