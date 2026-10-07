@@ -85,7 +85,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         // Runs O_fine.update(x)
         step_size = armijo_line_search(O_fine, manifold, x, eta, Ex, dir_deriv, options_gd);
 
-        if (step_size <= options_gd.ls.min) {
+        if (step_size == 0.0) {
             std::cerr << "  -> Step rejected by line search." << std::endl;
         }
     }
