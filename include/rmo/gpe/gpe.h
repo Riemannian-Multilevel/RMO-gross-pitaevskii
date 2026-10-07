@@ -18,6 +18,7 @@
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_simplex_p_bubbles.h>  // for higher degree simplex elements with mass lumping
 
+#include <algorithm>
 #include <memory>
 #include <numbers>
 #include <string>
@@ -348,13 +349,15 @@ public:
                                 Potential&& V)
         : Base(dofs, cstr)
     {
-        // Nodal quadrature for the lumped terms; only needed during assembly
-        const auto quad_nodal = fe::make_nodal_quadrature(dofs.get_fe());
-
-        fe::assemble_A0_lumped(this->A0, V, dofs, quad, quad_nodal, map, cstr);
-
         this->M.get_vector().reinit(dofs.n_dofs());
-        fe::assemble_mass_lumped(this->M, dofs, quad_nodal, map, cstr);
+        fe::assemble_mass_lumped(this->M, dofs, quad, map, cstr);
+
+        // Exactly zero row sums (e.g. FE_SimplexP(2)) are only zero up to rounding
+        const auto& m = this->M.get_vector();
+        AssertThrow(*std::ranges::min_element(m) > 1e-12 * m.linfty_norm(),
+                    dealii::ExcMessage("element not lumpable (non-positive row sums of the mass matrix)"));
+
+        fe::assemble_A0_lumped(this->A0, V, dofs, quad, map, cstr);
 
         this->Mpp.get_vector().reinit(dofs.n_dofs());
     }
