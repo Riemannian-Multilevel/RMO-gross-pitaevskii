@@ -355,7 +355,7 @@ private:
 // -------------------------------------------------------------------------
 // Main
 // -------------------------------------------------------------------------
-// Writes <basename>_coords.bin and one <basename>_iter<k>.bin per iterate (see plot_solution.py)
+// Writes <basename>_coords.bin and one <basename>_iter<k>.bin per iterate (see staging/plot_solution.py)
 template <int dim, typename History>
 static void output_bin(const History& history, const GrossPitaevskiiPackage<dim>& package, const std::string& basename)
 {

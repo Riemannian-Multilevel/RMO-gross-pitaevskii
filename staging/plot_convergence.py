@@ -18,10 +18,10 @@ multilevel EARGD at increasing depth, for one fixed transport operator
 Examples
 --------
 Run from the directory containing the .org files:
-    python3 ../plot_convergence.py
+    python3 ../staging/plot_convergence.py
 
 Or point at them explicitly, and plot the Frobenius family instead of mass:
-    python3 plot_convergence.py --data-dir cmake-build-release-deal.ii \\
+    python3 staging/plot_convergence.py --data-dir cmake-build-release-deal.ii \\
         --metric frob --operator adj1 --out-dir figures
 """
 import argparse

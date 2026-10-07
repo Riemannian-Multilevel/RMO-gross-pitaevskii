@@ -18,7 +18,7 @@ for iters in 3 10 20 "$iter_final_ml"; do
         label=it"$iters"
     fi
 
-    python3 ../plot_solution.py \
+    python3 ../staging/plot_solution.py \
         --reference         solution_2d_sl_b1000_lvl1_iter"$iter_ref_sl".bin \
         --reference-coords  solution_2d_sl_b1000_lvl1_coords.bin \
         solution_2d_ml_b1000_lvl"$levels"_coords.bin \
@@ -38,7 +38,7 @@ for iters in 3 10 20 "$iter_final_sl"; do
         label=it"$iters"
     fi
 
-    python3 ../plot_solution.py \
+    python3 ../staging/plot_solution.py \
         --reference         solution_2d_sl_b1000_lvl1_iter"$iter_ref_sl".bin \
         --reference-coords  solution_2d_sl_b1000_lvl1_coords.bin \
         solution_2d_sl_b1000_lvl1_coords.bin \

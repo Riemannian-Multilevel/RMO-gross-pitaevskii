@@ -16,7 +16,7 @@
 /**
  * @file
  * @brief Raw binary output of DoF coordinates and solution vectors, for post-processing outside deal.II
- * (e.g. rasterizing in Python, see plot_solution.py), which scales to large numbers of DoFs.
+ * (e.g. rasterizing in Python, see staging/plot_solution.py), which scales to large numbers of DoFs.
  */
 namespace rmo
 {
