@@ -2,6 +2,7 @@
 #define RMO_OPTION_H
 
 #include <rmo/option_types.h>
+#include <rmo/util/random.h>
 #include <rmo/util/util.h>
 
 #include <boost/program_options.hpp>
@@ -237,8 +238,9 @@ namespace gpe
 {
 
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta, order, bc, mesh_kind));
+    (dimension, degree, radius, beta, order, bc, mesh_kind, initial, initial_arg, seed));
 BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
+BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, RANDOM);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
     (metric_t, transport_t));
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
@@ -267,7 +269,13 @@ inline po::options_description gpe_cli_options() {
             "used potential (zero|constant|square|optical_lattice|expression)")
         ("potential-expr", po::value<std::string>()->default_value(""),
             "potential as an expression in the coordinates x[,y[,z]] (e.g. \"0.5*(x^2+y^2)\"); "
-            "implies --potential expression");
+            "implies --potential expression")
+        ("initial", po::value<std::string>()->default_value("constant"),
+            "initial value (constant|random)")
+        ("initial-arg", po::value<std::string>()->default_value(""),
+            "value for --initial constant (default 1)")
+        ("seed", po::value<unsigned>()->default_value(default_seed),
+            "seed of the random number generator");
     return d;
 }
 
@@ -276,12 +284,35 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     const auto boundary_str = upper(vm["boundary"].as<std::string>());
     const auto mesh_str     = upper(vm["mesh"].as<std::string>());
     const auto potential_str= upper(vm["potential"].as<std::string>());
+    const auto initial_str  = upper(vm["initial"].as<std::string>());
+    const auto initial_arg_str = vm["initial-arg"].as<std::string>();
 
     options.order     = string_to_enum<Ordering>(order_str);
     options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
     options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
     options.potential = string_to_enum<Potential>(potential_str);
+    options.initial   = string_to_enum<InitialValue>(initial_str);
+
     options.potential_expr = vm["potential-expr"].as<std::string>();
+
+    options.seed = vm["seed"].as<unsigned>();
+
+    options.initial_arg.reset();
+    if (!initial_arg_str.empty()) {
+        if (options.initial == InitialValue::RANDOM) {
+            throw std::invalid_argument("--initial-arg: not used by --initial random (see --seed)");
+        }
+        try {
+            std::size_t pos = 0;
+            options.initial_arg = std::stod(initial_arg_str, &pos);
+            if (pos != initial_arg_str.size()) {
+                throw std::invalid_argument(initial_arg_str);
+            }
+        }
+        catch (const std::logic_error&) {  // invalid_argument or out_of_range
+            throw std::invalid_argument("--initial-arg: not a number: " + initial_arg_str);
+        }
+    }
 
     // A supplied expression selects the parsed potential; asking for it without one is an error
     if (!options.potential_expr.empty()) {

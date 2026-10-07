@@ -69,6 +69,7 @@ std::optional<Config> parse_options(int argc, char* argv[])
 
     Config config;
     apply_gpe_options(vm, config.gpe);
+    NumberGenerator::get().seed(config.gpe.seed);
     config.level     = vm["level"].as<unsigned>();
     config.n_trials  = vm["trials"].as<unsigned>();
     config.slope_tol = vm["slope-tol"].as<double>();
