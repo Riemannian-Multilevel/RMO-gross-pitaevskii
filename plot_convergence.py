@@ -4,8 +4,8 @@
 include/gpe/ropt/{descent,solver}.h and include/gpe/main/fas.h).
 
 Expected input files (default --data-dir is the current directory):
-    sl_b<beta>_l<level>_optical_lattice.org
-    ml_<metric>_<operator>_b<beta>_l<level>_depth<N>_optical_lattice.org
+    sl_b<beta>_l<level>_<suffix>.org
+    ml_<metric>_<operator>_b<beta>_l<level>_depth<N>_<suffix>.org
 
 where <metric> is the --metric token (mass or frob; default: mass).
 
@@ -187,6 +187,8 @@ def main():
     parser.add_argument("--out-dir", default=".", help="directory to write figures into")
     parser.add_argument("--beta", default="1000", help="beta token in filenames (default: 1000)")
     parser.add_argument("--level", default="11", help="finest-level token in filenames (default: 11)")
+    parser.add_argument("--suffix", default="optical_lattice",
+                        help="filename suffix, e.g. optical_lattice_lumped (default: optical_lattice)")
     parser.add_argument("--metric", default="mass",
                         help="metric token in the multilevel filenames, i.e. the family "
                              "ml_<metric>_*.org (typically mass or frob; default: mass). Does "
@@ -217,10 +219,10 @@ def main():
     ext = args.format
 
     def sl_path():
-        return data_dir / f"sl_b{args.beta}_l{args.level}_optical_lattice.org"
+        return data_dir / f"sl_b{args.beta}_l{args.level}_{args.suffix}.org"
 
     def ml_path(operator, depth):
-        return data_dir / f"ml_{args.metric}_{operator}_b{args.beta}_l{args.level}_depth{depth}_optical_lattice.org"
+        return data_dir / f"ml_{args.metric}_{operator}_b{args.beta}_l{args.level}_depth{depth}_{args.suffix}.org"
 
     ylabel_residual = r"$\|\mathrm{res}(\phi_k)\|_M$"
     ylabel_energy   = r"$|E^{GP}(\phi_k) - E_{ref}|$"
