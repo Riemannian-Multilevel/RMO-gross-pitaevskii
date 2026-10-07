@@ -19,7 +19,7 @@
  * A vector transport maps \f$ \mathcal{P}: T_y \mathcal{S}_H \to T_x \mathcal{S}_h \f$ (vector_prolongation()) and
  * \f$ \mathcal{R}: T_x \mathcal{S}_h \to T_y \mathcal{S}_H \f$ (vector_restriction()):
  * - MassProjectionTransport: \f$ \mathcal{P} v = \Pi^M_x I_H^h v \f$, \f$ \mathcal{R} v = \Pi^M_y I_h^H v \f$;
- * - FrobeniusProjectionTransport and FrobeniusAdjointRestrictionTransport: \f$ \mathcal{P} v = \Pi^F_x I_H^h v \f$,
+ * - FrobeniusProjectionTransport (= FrobeniusAdjointRestrictionTransport): \f$ \mathcal{P} v = \Pi^F_x I_H^h v \f$,
  *   \f$ \mathcal{R} v = \Pi^F_y (I_H^h)^\top v \f$;
  * - DifferentialTransport: \f$ \mathcal{P} v = \Pi^M_x \mathrm{D}p(y)[v] \f$, \f$ \mathcal{R} v = \Pi^M_y \mathrm{D}r(x)[v] \f$
  *   (FrobeniusDifferentialTransport: with \f$ \Pi^F \f$);
@@ -226,6 +226,13 @@ private:
     const LinearTransferBase& transfer;
 };
 
+/**
+ * @brief F-metric counterpart of AdjointRestrictionTransport. In the F-metric, the adjoint of the prolongation is
+ * its transpose \f$ (I_H^h)^\top \f$, which FrobeniusProjectionTransport already uses for the restriction.
+ */
+template <typename MatrixType>
+using FrobeniusAdjointRestrictionTransport = FrobeniusProjectionTransport<MatrixType>;
+
 
 /** @brief Transport by the differentials of the point maps and \f$ M \f$-orthogonal projection. */
 template <typename MatrixType>
@@ -405,52 +412,6 @@ protected:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
     const InverseMatrixType& M_inv_coarse;
-};
-
-
-/** @brief F-metric counterpart of AdjointRestrictionTransport; equal to FrobeniusProjectionTransport. */
-template <typename MatrixType>
-class FrobeniusAdjointRestrictionTransport : public VectorTransportBase
-{
-public:
-    static constexpr const char* id = "FV2Restr";
-
-    FrobeniusAdjointRestrictionTransport(const LinearTransferBase& I,
-                                         const MatrixType& M_coarse,
-                                         const MatrixType& M_fine)
-        : transfer(I), M_coarse(M_coarse), M_fine(M_fine)
-    {}
-
-    void vector_prolongation(const Vector<double>& x_fine,
-                             [[maybe_unused]] const Vector<double>& y_coarse,
-                             const Vector<double>& v_coarse,
-                             Vector<double>& dst) const override
-    {
-        // 1. Linear prolongation to ambient space
-        Vector<double> Iv(transfer.n_fine());
-        transfer.to_fine_mesh(v_coarse, Iv);
-
-        // 2. F-orthogonal projection onto the target tangent space
-        metric::frobenius::project_onto_tangent_space(x_fine, M_fine, Iv, dst);
-    }
-
-    void vector_restriction(const Vector<double>& y_coarse,
-                            [[maybe_unused]] const Vector<double>& x_fine,
-                            const Vector<double>& v_fine,
-                            Vector<double>& dst) const override
-    {
-        // 1. Apply transpose of prolongation (no M_h/M_H weighting under the F-metric)
-        Vector<double> IT_v(transfer.n_coarse());
-        transfer.Tfine(v_fine, IT_v);
-
-        // 2. Project onto target tangent space T_y S_H
-        metric::frobenius::project_onto_tangent_space(y_coarse, M_coarse, IT_v, dst);
-    }
-
-private:
-    const LinearTransferBase& transfer;
-    const MatrixType& M_coarse;
-    const MatrixType& M_fine;
 };
 
 

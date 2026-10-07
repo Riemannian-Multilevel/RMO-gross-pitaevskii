@@ -168,7 +168,7 @@ enum class Transport
     DIFFERENTIAL,         // Version VI  (Mixed)
     ADJOINT_RESTRICTION,  // Version V
     ADJOINT_DIFFERENTIAL, // Version III
-    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION
+    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION, same as FROBENIUS
     ADJOINT_DIFFERENTIAL_FROBENIUS, // Frobenius-metric counterpart of ADJOINT_DIFFERENTIAL
     DIFFERENTIAL_FROBENIUS,         // Frobenius-metric counterpart of DIFFERENTIAL
     // DIFFERENTIAL_MASS,
