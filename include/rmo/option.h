@@ -241,7 +241,7 @@ namespace gpe
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
     (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping, initial, initial_arg, seed));
 BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
-BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, RANDOM);
+BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, COSINE, RANDOM);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
     (metric_t, transport_t));
 BOOST_DESCRIBE_ENUM(Transport, FROBENIUS, MASS, DIFFERENTIAL, ADJOINT_RESTRICTION, ADJOINT_DIFFERENTIAL,
@@ -275,9 +275,9 @@ inline po::options_description gpe_cli_options() {
             "use lumped (diagonal) mass matrices; requires a lumpable element "
             "(quadrilateral, or simplex with degree <= 2)")
         ("initial", po::value<std::string>()->default_value("constant"),
-            "initial value (constant|random)")
+            "initial value (constant|cosine|random)")
         ("initial-arg", po::value<std::string>()->default_value(""),
-            "value for --initial constant (default 1)")
+            "value (constant, default 1) or bump radius (cosine, default --radius)")
         ("seed", po::value<unsigned>()->default_value(default_seed),
             "seed of the random number generator");
     return d;
