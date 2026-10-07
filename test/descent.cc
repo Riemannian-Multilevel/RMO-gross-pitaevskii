@@ -1,64 +1,70 @@
 //
-// Created by Ferdinand Vanmaele on 04.04.26.
+// Checks that the energy-adaptive gradient g of the F-metric coarse model is a descent direction,
+// D Psi(x)[-g] < 0, at a random point x near the base point phi.
 //
+#include "check.h"
 
-#include <rmo/gpe/gpe.h>
+#include <rmo/gpe/kernels.h>
 #include <rmo/gpe/model.h>
-#include <rmo/gpe/oracle_coarse.h>
-
 #include <rmo/util/random.h>
-
-#include <iostream>
-#include <stdexcept>
 
 using namespace rmo;
 using namespace rmo::gpe;
+using namespace rmo::test;
+
+namespace
+{
+
+//! Parameters of a coarse model and a point x on the sphere where it is evaluated.
+struct CoarseModelSample
+{
+    Vector<double> phi;  ///< base point
+    Vector<double> w;    ///< correction, F-tangent at phi
+    Vector<double> x;    ///< R_phi(v) for a random unit tangent vector v at phi
+};
+
+template <typename MatrixType>
+CoarseModelSample random_sample(const MatrixType& M, unsigned n_dofs)
+{
+    CoarseModelSample s{Vector<double>(n_dofs), Vector<double>(n_dofs), Vector<double>(n_dofs)};
+    ellipsoid::random_point(s.phi, M);
+
+    Vector<double> w(n_dofs);
+    normrnd(0.0, 1.0, w);
+    metric::frobenius::project_onto_tangent_space(s.phi, M, w, s.w);
+
+    Vector<double> v(n_dofs);
+    metric::frobenius::random_tangent_vector(s.phi, M, v);
+    v /= v.l2_norm();
+    s.x = s.phi;
+    ellipsoid::retract_by_norm(M, v, s.x);  // x <- (phi + v) / |phi + v|_M
+    return s;
+}
 
 template <int dim>
-static void check_adaptive_descent_condition(const GrossPitaevskiiSystem<dim>& problem,
-                                             double beta, SolverOptions options_slv)
+void check_energy_adaptive_descent(CheckReport& report, const GrossPitaevskiiSystem<dim>& system, double beta,
+                                   const SolverOptions& options)
 {
-    const unsigned n_dofs = problem.n_dofs();
-    auto A = problem.get_operator_A(beta);
-    auto M = problem.get_operator_M();
-    InverseOpType A_inv(A, options_slv);
+    const auto A = system.get_operator_A(beta);
+    const auto M = system.get_operator_M();
+    const InverseOpType A_inv(A, options);
+    const auto [phi, w, x] = random_sample(M, system.n_dofs());
 
-    // 1. Generate random base point and tilt vector
-    Vector<double> phi(n_dofs), w(n_dofs);
-    ellipsoid::random_point(phi, M);
-    normrnd(0.0, 1.0, w);
-    Vector<double> w_proj(n_dofs);
-    metric::frobenius::project_onto_tangent_space(phi, M, w, w_proj);
+    Vector<double> g(x.size());
+    kernels::coarse_frobenius_grad_energy_adaptive(M, A_inv, A, x, phi, w, g);
+    g *= -1.0;
 
-    // 2. Generate random evaluation point safely near phi
-    Vector<double> v(n_dofs);
-    metric::frobenius::random_tangent_vector(phi, M, v);
-    v /= v.l2_norm();
-
-    Vector<double> x(phi);             // retract_by_norm() updates its base point in place,
-    ellipsoid::retract_by_norm(M, v, x);  // so x <- (phi + v) / ||phi + v||_M
-
-    // 3. Compute the adaptive gradient
-    Vector<double> g_adapt(n_dofs);
-    kernels::coarse_frobenius_grad_energy_adaptive(M, A_inv, A, x, phi, w_proj, g_adapt);
-
-    // 4. Verify it is a valid descent direction: Df(x)[-g_adapt] < 0
-    Vector<double> neg_g_adapt(g_adapt);
-    neg_g_adapt *= -1.0;
-
-    double slope = kernels::coarse_frobenius_dir_deriv(x, phi, w_proj, neg_g_adapt, M, A);
-
-    std::cerr << "Adaptive Gradient Slope: " << slope << "\n";
-    if (slope >= 0.0) {
-        throw std::runtime_error("FAIL: Energy-adaptive gradient is not a descent direction!");
-    } else {
-        std::cerr << "PASS: Energy-adaptive gradient points downhill.\n";
-    }
+    const double slope = kernels::coarse_frobenius_dir_deriv(x, phi, w, g, M, A);
+    report.check(slope < 0.0, "energy-adaptive gradient of the F-metric coarse model is a descent direction",
+                 "D Psi(x)[-g] = " + sci(slope));
 }
+
+} // namespace
+
 
 int main()
 {
-    // Discretization: the condition is metric-level, so one small level suffices
+    // The condition holds at every point, so one small mesh suffices
     GPE_Options options{};
     options.dimension = 2;
     options.degree    = 1;
@@ -67,6 +73,7 @@ int main()
     options.order     = Ordering::CUTHILL_MCKEE;
     options.bc        = BoundaryCondition::DIRICHLET;
     options.mesh_kind = MeshKind::QUADRILATERAL;
+    constexpr unsigned n_levels = 6;
 
     SolverOptions options_slv{};
     options_slv.solver    = SolverMethod::CG;
@@ -74,15 +81,8 @@ int main()
     options_slv.max_inner = 2000;
     options_slv.tol_inner = 1e-12;
 
-    constexpr unsigned n_levels = 6;
-
-    try {
-        ModelBuilder<GrossPitaevskiiSystem<2>> builder(potential::Square<2>(), options, n_levels);
-        check_adaptive_descent_condition(builder.get_system(), options.beta, options_slv);
-    }
-    catch (std::exception& e) {
-        std::cerr << "error: " << e.what() << "\n";
-        return 1;
-    }
-    return 0;
+    return run_tests([&](CheckReport& report) {
+        const ModelBuilder<GrossPitaevskiiSystem<2>> builder(potential::Square<2>(), options, n_levels);
+        check_energy_adaptive_descent(report, builder.get_system(), options.beta, options_slv);
+    });
 }

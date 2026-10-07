@@ -1,30 +1,18 @@
 //
-// Verifies that the grid transfer operators have the matrix form the solver assumes.
+// Checks the matrix form of the grid transfers for Q1 elements on uniformly refined squares
+// (coarse mesh 2x2 cells, 9 DoFs; fine mesh 4x4 cells, 25 DoFs):
 //
-// Both transfers ultimately evaluate the source finite element function at the support points of
-// the target mesh, which is what fixes their matrix form. For Q1 elements on uniformly refined
-// quadrilateral grids:
+//   to_fine_mesh() (P) evaluates the coarse function at the fine nodes. A fine node is a coarse node,
+//   an edge midpoint or a cell centre, so each row of P is [1], [1/2, 1/2] or [1/4, 1/4, 1/4, 1/4].
 //
-//   Prolongation P (coarse -> fine): evaluate the coarse bilinear function at the fine nodes.
-//     fine node coincides with a coarse node  -> row = [1]                     (injection)
-//     fine node is the midpoint of a coarse edge -> row = [0.5, 0.5]           (linear average)
-//     fine node is the centre of a coarse cell   -> row = [0.25, 0.25, ... ]   (bilinear average)
-//   These are the only three cases, so P is standard bilinear interpolation.
+//   to_coarse_mesh() (R) evaluates the fine function at the coarse nodes. Each coarse node is a fine
+//   node, so each row of R is [1] (injection); in particular, R is not P^T.
 //
-//   Restriction R (fine -> coarse): evaluate the fine bilinear function at the coarse nodes. The
-//   meshes are nested, so every coarse node is also a fine node and the evaluation simply returns
-//   the fine value living there. Each row therefore has a single entry equal to 1: injection.
-//   In particular R is neither P^T (full weighting / Galerkin restriction) nor a row-normalised
-//   P^T (half weighting) -- both of those have several nonzeros per row.
+//   Tfine() is P^T. Its row sums are up to 2^dim, those of R are 1, so the transports must not mix up
+//   the two restrictions.
 //
-// That is why LinearTransferBase carries two different restrictions. to_coarse_mesh() is the
-// injection above (primal, magnitude preserving), while Tfine() is the adjoint P^T (dual, row sums
-// 2^dim on interior nodes). The transports pick one or the other, so this test pins both down --
-// mixing them up rescales a restricted vector by 2^dim.
-//
-// Setup: coarse mesh 1 uniform refinement (2x2 cells, 3x3 = 9 DoFs),
-//        fine mesh   2 uniform refinements (4x4 cells, 5x5 = 25 DoFs).
-//
+#include "check.h"
+
 #include <rmo/fe/interpolate.h>
 
 #include <deal.II/dofs/dof_handler.h>
@@ -34,10 +22,12 @@
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/vector.h>
 
-#include <iostream>
+#include <algorithm>
+#include <string>
 #include <vector>
 
 using namespace rmo;
+using namespace rmo::test;
 using namespace dealii;
 
 namespace
@@ -45,172 +35,139 @@ namespace
 constexpr int    dim = 2;
 constexpr double tol = 1e-12;
 
-//! Matrix of a transfer operator, obtained by applying it to every canonical unit vector.
-template <typename Apply>
-FullMatrix<double> transfer_matrix(Apply&& apply, unsigned n_src, unsigned n_dst)
+//! Q1 DoFs on [-1, 1]^2, refined once (coarse) and twice (fine), without constraints.
+struct NestedMeshes
 {
-    FullMatrix<double> M(n_dst, n_src);
+    NestedMeshes()
+    {
+        GridGenerator::hyper_cube(tria_coarse, -1.0, 1.0);
+        GridGenerator::hyper_cube(tria_fine, -1.0, 1.0);
+        tria_coarse.refine_global(1);
+        tria_fine.refine_global(2);
+
+        for (auto* dofs : {&dofs_coarse, &dofs_fine}) {
+            dofs->distribute_dofs(fe);
+            dofs->distribute_mg_dofs();  // required by LinearTransferMG
+        }
+        constraints_coarse.close();
+        constraints_fine.close();
+    }
+
+    // distribute_mg_dofs() requires this mesh smoothing flag
+    Triangulation<dim> tria_coarse{Triangulation<dim>::limit_level_difference_at_vertices};
+    Triangulation<dim> tria_fine{Triangulation<dim>::limit_level_difference_at_vertices};
+    const FE_Q<dim> fe{1};
+    DoFHandler<dim> dofs_coarse{tria_coarse};
+    DoFHandler<dim> dofs_fine{tria_fine};
+    AffineConstraints<double> constraints_coarse, constraints_fine;
+};
+
+using TransferMethod = void (LinearTransferBase::*)(const Vector<double>&, Vector<double>&) const;
+
+//! Matrix of a method of @p transfer, with column j the image of the unit vector e_j.
+FullMatrix<double> matrix_of(const LinearTransferBase& transfer, TransferMethod method, unsigned n_src, unsigned n_dst)
+{
+    FullMatrix<double> A(n_dst, n_src);
     Vector<double> e_j(n_src), col(n_dst);
 
     for (unsigned j = 0; j < n_src; j++) {
         e_j    = 0.0;
         e_j[j] = 1.0;
-        apply(e_j, col);
+        (transfer.*method)(e_j, col);
 
         for (unsigned i = 0; i < n_dst; i++) {
-            M(i, j) = col[i];
+            A(i, j) = col[i];
         }
     }
-    return M;
+    return A;
 }
 
-//! Nonzero entries of one row.
-std::vector<double> row_entries(const FullMatrix<double>& M, unsigned i)
+FullMatrix<double> transpose(const FullMatrix<double>& A)
 {
-    std::vector<double> nz;
-    for (unsigned j = 0; j < M.n(); j++) {
-        if (std::abs(M(i, j)) > tol) {
-            nz.push_back(M(i, j));
-        }
-    }
-    return nz;
+    FullMatrix<double> At(A.n(), A.m());
+    At.copy_transposed(A);
+    return At;
 }
 
-bool all_close(const std::vector<double>& v, double value)
+//! Largest entrywise difference of two matrices of equal size.
+double max_diff(const FullMatrix<double>& A, const FullMatrix<double>& B)
 {
-    return std::ranges::all_of(v, [value](double x) { return std::abs(x - value) < tol; });
-}
-
-//! Every row is injection, an edge average, or a cell average.
-void check_bilinear_prolongation(const FullMatrix<double>& P, const std::string& name)
-{
-    for (unsigned i = 0; i < P.m(); i++) {
-        const auto nz = row_entries(P, i);
-        const bool ok = (nz.size() == 1 && all_close(nz, 1.0))
-                     || (nz.size() == 2 && all_close(nz, 0.5))
-                     || (nz.size() == 4 && all_close(nz, 0.25));
-
-        AssertThrow(ok, ExcMessage(name + ": row " + std::to_string(i) + " has " +
-            std::to_string(nz.size()) + " nonzeros and is neither injection, edge nor cell average"));
-    }
-    std::cout << "  PASS  " << name << " is bilinear interpolation\n";
-}
-
-//! Every row has a single entry equal to one.
-void check_injection(const FullMatrix<double>& R, const std::string& name)
-{
-    for (unsigned i = 0; i < R.m(); i++) {
-        const auto nz = row_entries(R, i);
-        AssertThrow(nz.size() == 1 && all_close(nz, 1.0), ExcMessage(
-            name + ": row " + std::to_string(i) + " is not injection"));
-    }
-    std::cout << "  PASS  " << name << " is injection\n";
-}
-
-//! Maximum entrywise difference between A and B^T.
-double max_diff_transpose(const FullMatrix<double>& A, const FullMatrix<double>& B)
-{
-    AssertDimension(A.m(), B.n());
-    AssertDimension(A.n(), B.m());
+    AssertDimension(A.m(), B.m());
+    AssertDimension(A.n(), B.n());
 
     double diff = 0.0;
     for (unsigned i = 0; i < A.m(); i++) {
         for (unsigned j = 0; j < A.n(); j++) {
-            diff = std::max(diff, std::abs(A(i, j) - B(j, i)));
+            diff = std::max(diff, std::abs(A(i, j) - B(i, j)));
         }
     }
     return diff;
 }
+
+double max_row_sum(const FullMatrix<double>& A)
+{
+    double max_sum = 0.0;
+    for (unsigned i = 0; i < A.m(); i++) {
+        double sum = 0.0;
+        for (unsigned j = 0; j < A.n(); j++) {
+            sum += A(i, j);
+        }
+        max_sum = std::max(max_sum, sum);
+    }
+    return max_sum;
+}
+
+//! True if each row of @p A has @p n_nonzero entries equal to 1 / n_nonzero, for one of the given counts.
+bool rows_are_averages(const FullMatrix<double>& A, const std::vector<unsigned>& n_nonzero)
+{
+    for (unsigned i = 0; i < A.m(); i++) {
+        std::vector<double> row;
+        for (unsigned j = 0; j < A.n(); j++) {
+            if (std::abs(A(i, j)) > tol) {
+                row.push_back(A(i, j));
+            }
+        }
+        const bool is_average = std::ranges::find(n_nonzero, row.size()) != n_nonzero.end()
+            && std::ranges::all_of(row, [&](double a) { return std::abs(a - 1.0 / row.size()) < tol; });
+        if (!is_average) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_bilinear_interpolation(const FullMatrix<double>& P) { return rows_are_averages(P, {1, 2, 4}); }
+bool is_injection(const FullMatrix<double>& R) { return rows_are_averages(R, {1}); }
+
 } // namespace
 
 
-int main(int argc, char* argv[])
+int main()
 {
-    try {
-        // Coarse: 1 refinement (3x3 DoFs).  Fine: 2 refinements (5x5 DoFs).
-        // LinearTransferMG distributes level DoFs, which requires this mesh smoothing flag.
-        Triangulation<dim> tria_coarse(Triangulation<dim>::limit_level_difference_at_vertices);
-        Triangulation<dim> tria_fine(Triangulation<dim>::limit_level_difference_at_vertices);
-        GridGenerator::hyper_cube(tria_coarse, -1.0, 1.0);
-        GridGenerator::hyper_cube(tria_fine,   -1.0, 1.0);
-        tria_coarse.refine_global(1);
-        tria_fine.refine_global(2);
-
-        const FE_Q<dim> fe(1);
-        DoFHandler<dim> dof_coarse(tria_coarse), dof_fine(tria_fine);
-        dof_coarse.distribute_dofs(fe);
-        dof_fine.distribute_dofs(fe);
-        dof_fine.distribute_mg_dofs();
-        dof_coarse.distribute_mg_dofs();
-
-        // No boundary conditions: the plain operators are what is being characterised here
-        AffineConstraints<double> constr_coarse, constr_fine;
-        constr_coarse.close();
-        constr_fine.close();
-
-        const unsigned n_c = dof_coarse.n_dofs();
-        const unsigned n_f = dof_fine.n_dofs();
-        std::cout << "coarse DoFs: " << n_c << ", fine DoFs: " << n_f << "\n\n";
-
-        const fe::LinearTransfer<dim>   transfer(dof_coarse, dof_fine, constr_coarse, constr_fine);
-        const fe::LinearTransferMG<dim> transfer_mg(dof_coarse, dof_fine, constr_coarse, constr_fine);
-
-        auto matrix_of = [&](const LinearTransferBase& t, auto method, unsigned ns, unsigned nd) {
-            return transfer_matrix([&](const Vector<double>& src, Vector<double>& dst) {
-                (t.*method)(src, dst);
-            }, ns, nd);
-        };
+    return run_tests([](CheckReport& report) {
+        const NestedMeshes m;
+        const fe::LinearTransfer<dim>   transfer(m.dofs_coarse, m.dofs_fine, m.constraints_coarse, m.constraints_fine);
+        const fe::LinearTransferMG<dim> transfer_mg(m.dofs_coarse, m.dofs_fine, m.constraints_coarse, m.constraints_fine);
+        const unsigned n_c = m.dofs_coarse.n_dofs();
+        const unsigned n_f = m.dofs_fine.n_dofs();
 
         const auto P    = matrix_of(transfer,    &LinearTransferBase::to_fine_mesh,   n_c, n_f);
         const auto R    = matrix_of(transfer,    &LinearTransferBase::to_coarse_mesh, n_f, n_c);
         const auto P_mg = matrix_of(transfer_mg, &LinearTransferBase::to_fine_mesh,   n_c, n_f);
         const auto R_mg = matrix_of(transfer_mg, &LinearTransferBase::to_coarse_mesh, n_f, n_c);
         const auto T_mg = matrix_of(transfer_mg, &LinearTransferBase::Tfine,          n_f, n_c);
+        const auto P_t  = transpose(P);
 
-        // 1. Both prolongations are the canonical bilinear interpolation, and agree
-        check_bilinear_prolongation(P,    "LinearTransfer::to_fine_mesh");
-        check_bilinear_prolongation(P_mg, "LinearTransferMG::to_fine_mesh");
+        report.check(is_bilinear_interpolation(P), "LinearTransfer::to_fine_mesh is bilinear interpolation");
+        report.check(is_bilinear_interpolation(P_mg), "LinearTransferMG::to_fine_mesh is bilinear interpolation");
+        report.check(max_diff(P, P_mg) < tol, "both prolongations agree", "max diff " + sci(max_diff(P, P_mg)));
 
-        double diff = 0.0;
-        for (unsigned i = 0; i < n_f; i++) {
-            for (unsigned j = 0; j < n_c; j++) {
-                diff = std::max(diff, std::abs(P(i, j) - P_mg(i, j)));
-            }
-        }
-        AssertThrow(diff < tol, ExcMessage(
-            "LinearTransfer and LinearTransferMG disagree on the prolongation (max diff "
-            + std::to_string(diff) + ")"));
-        std::cout << "  PASS  both prolongations agree\n";
+        report.check(is_injection(R), "LinearTransfer::to_coarse_mesh is injection");
+        report.check(is_injection(R_mg), "LinearTransferMG::to_coarse_mesh is injection");
+        report.check(max_diff(R, P_t) > 0.1, "to_coarse_mesh is not P^T");
 
-        // 2. to_coarse_mesh() is injection in both implementations, so it is not the adjoint
-        check_injection(R,    "LinearTransfer::to_coarse_mesh");
-        check_injection(R_mg, "LinearTransferMG::to_coarse_mesh");
-
-        AssertThrow(max_diff_transpose(R, P) > 0.1, ExcMessage(
-            "to_coarse_mesh() equals P^T, but it is documented as pointwise injection"));
-        std::cout << "  PASS  to_coarse_mesh is not P^T\n";
-
-        // 3. Tfine() is the adjoint of the prolongation
-        const double diff_T = max_diff_transpose(T_mg, P);
-        AssertThrow(diff_T < tol, ExcMessage(
-            "LinearTransferMG::Tfine is not the transpose of to_fine_mesh (max diff "
-            + std::to_string(diff_T) + ")"));
-        std::cout << "  PASS  LinearTransferMG::Tfine == P^T\n";
-
-        // 4. The two restrictions differ in scale by 2^dim on interior rows, which is why the
-        //    transports must not be mixed up
-        double row_sum_R = 0.0, row_sum_T = 0.0;
-        for (unsigned j = 0; j < n_f; j++) {
-            row_sum_R += R(4, j);
-            row_sum_T += T_mg(4, j);
-        }
-        std::cout << "\n  interior row sums: to_coarse_mesh " << row_sum_R
-                  << ", Tfine " << row_sum_T << " (ratio " << row_sum_T / row_sum_R << ")\n";
-    }
-    catch (std::exception& e) {
-        std::cerr << "\nFAIL: " << e.what() << "\n";
-        return 1;
-    }
-    std::cout << "\nAll transfer operators have the expected form.\n";
-    return 0;
+        report.check(max_diff(T_mg, P_t) < tol, "LinearTransferMG::Tfine is P^T", "max diff " + sci(max_diff(T_mg, P_t)));
+        report.info("largest row sums", "to_coarse_mesh " + std::to_string(max_row_sum(R))
+                                      + ", Tfine " + std::to_string(max_row_sum(T_mg)));
+    });
 }

@@ -1,191 +1,158 @@
 //
-// Created by Ferdinand Vanmaele on 09.04.26.
+// Compares two evaluations of the Gross-Pitaevskii energy at random points: with the assembled sparse
+// matrices (GrossPitaevskiiFunctional::value() after assembling Mpp(x)), and with the nonlinear term
+// integrated by a loop over the cells. Checks that both agree, and reports the average time of each.
 //
-#include <rmo/gpe/gpe.h>
-#include <rmo/gpe/oracle.h>
+#include "check.h"
+
 #include <rmo/gpe/manifold.h>
 #include <rmo/gpe/model.h>
+#include <rmo/gpe/oracle.h>
 
 #include <rmo/option.h>
 #include <rmo/option_types.h>
 #include <rmo/util/util.h>
 
-#include <fmt/format.h>
+#include <deal.II/base/timer.h>
 
 #include <iostream>
-
-constexpr double MEAN   = 0.0;
-constexpr double STDDEV = 1.0;
-constexpr double MARGIN = 1e-10;
+#include <optional>
+#include <string>
 
 using namespace rmo;
 using namespace rmo::gpe;
+using namespace rmo::test;
 using namespace dealii;
 
-template <typename Range>
-double mean(Range&& x)
+namespace
 {
-    const unsigned n = x.size();
-    Assert(n > 0, dealii::ExcInternalError());
-    long double accum = 0.0;
-    for (auto i : x)
-        accum += i;
-    return accum / static_cast<long double>(n);
+constexpr double tol = 1e-10;  ///< largest admissible difference of the two energies
+
+struct Config
+{
+    GPE_Options gpe{};
+    unsigned    min_level = 0;  ///< coarsest refinement level
+    unsigned    max_level = 0;  ///< finest refinement level
+    unsigned    n_trials  = 0;  ///< random points per level
+};
+
+//! Configuration from the command line, or nothing for --help.
+std::optional<Config> parse_options(int argc, char* argv[])
+{
+    po::options_description all("Cell-loop vs. sparse matrix-vector evaluation of the GP energy");
+    all.add(gpe_cli_options());
+    all.add_options()
+        ("help", "print this message")
+        ("min-level", po::value<unsigned>()->default_value(8), "coarsest refinement level")
+        ("max-level", po::value<unsigned>()->default_value(11), "finest refinement level")
+        ("trials", po::value<unsigned>()->default_value(200), "random points evaluated per level");
+
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, all), vm);
+    po::notify(vm);
+    if (vm.count("help")) {
+        std::cout << all << std::endl;
+        return std::nullopt;
+    }
+
+    Config config;
+    apply_gpe_options(vm, config.gpe);
+    config.min_level = vm["min-level"].as<unsigned>();
+    config.max_level = vm["max-level"].as<unsigned>();
+    config.n_trials  = vm["trials"].as<unsigned>();
+    AssertThrow(config.min_level <= config.max_level, ExcMessage("--min-level must not exceed --max-level"));
+    return config;
 }
 
-// Matrix-free evaluation of the Gross Pitaevskii energy. This function does not require calling
-// assemble_nonlinear_term() beforehand.
-// Conceptually this is similar to rmo::fe::assemble, but iterates over the finite element grid
-// instead of assembling a potentially large sparse matrix.
+//! \f$ \int_\Omega x^4 \f$, by a loop over the cells instead of the assembled \f$ M_{\phi\phi}(x) \f$.
 template <int dim>
-double get_energy_nonlinear(const DoFHandler<dim>& dof_handler, const Vector<double>& x)
+double integrate_fourth_power(const DoFHandler<dim>& dofs, const Vector<double>& x)
 {
-    // Non-linear term: (beta / 2) * \int |x|^4 dx
-    double energy_nonlinear = 0.0;
-    // Use a quadrature formula appropriate for the element degree
-    dealii::QGauss<dim> quadrature_formula(dof_handler.get_fe().degree + 1);
-    // We only need to know the function values and the quadrature weights (JxW)
-    dealii::FEValues<dim> fe_values(dof_handler.get_fe(), quadrature_formula,
-                                    dealii::update_values | dealii::update_JxW_values);
+    const QGauss<dim> quadrature(dofs.get_fe().degree + 1);
+    FEValues<dim> fe_values(dofs.get_fe(), quadrature, update_values | update_JxW_values);
+    std::vector<double> x_values(quadrature.size());
+    double integral = 0.0;
 
-    const unsigned int n_q_points = quadrature_formula.size();
-    std::vector<double> x_values(n_q_points);
-
-    // Loop over all active cells
-    // TODO: dof_handler.mg_cell_iterators_on_level(level)
-    for (const auto& cell : dof_handler.active_cell_iterators()) {
-        if (cell->is_locally_owned()) {
-            fe_values.reinit(cell);
-            fe_values.get_function_values(x, x_values);
-
-            // Integrate |x|^4 over the cell
-            for (unsigned int q = 0; q < n_q_points; ++q) {
-                const double val = x_values[q];
-                const double val_sq = val * val;
-
-                energy_nonlinear += (val_sq * val_sq) * fe_values.JxW(q);
-            }
+    for (const auto& cell : dofs.active_cell_iterators()) {
+        fe_values.reinit(cell);
+        fe_values.get_function_values(x, x_values);
+        for (const unsigned q : fe_values.quadrature_point_indices()) {
+            integral += std::pow(x_values[q], 4) * fe_values.JxW(q);
         }
     }
-    return energy_nonlinear;
+    return integral;
 }
 
-// TODO: can larger benefits be obtained by also assembling A0?
+//! \f$ E(x) = \frac12 x^\top A_0 x + \frac\beta4 \int_\Omega x^4 \f$, see integrate_fourth_power().
 template <int dim, typename MatrixType>
-double get_energy(const DoFHandler<dim>& dof_handler, const Vector<double>& x,
-                  const MatrixType& A0, const double beta)
+double energy_cell_loop(const DoFHandler<dim>& dofs, const MatrixType& A0, double beta, const Vector<double>& x)
 {
-    // Linear term: 0.5 * x^T * A0 * x
-    // A0 is fixed between operations
-    Vector<double> A0_x(x.size());
-    A0.vmult(A0_x, x);
-
-    double energy = 0.0;
-    energy += x * A0_x;  // linear part
-    energy += 0.5*beta*get_energy_nonlinear(dof_handler, x);  // non-linear part
-
-    return 0.5*energy;
+    Vector<double> A0x(x.size());
+    A0.vmult(A0x, x);
+    return 0.5 * (x * A0x) + 0.25 * beta * integrate_fourth_power(dofs, x);
 }
+
+//! CPU time of @p f() in seconds.
+template <typename Function>
+double cpu_time(Function&& f)
+{
+    Timer timer;
+    f();
+    timer.stop();
+    return timer.cpu_time();
+}
+
+template <int dim>
+void check_level(CheckReport& report, const Config& config, unsigned level)
+{
+    ModelBuilder<GrossPitaevskiiSystem<dim>> model(potential::Square<dim>(), config.gpe, level);
+    auto& system = model.get_system();
+    const auto func = model.get_eval(config.gpe.beta, SolverOptions{});
+
+    double time_matrix = 0.0, time_cell_loop = 0.0, max_diff = 0.0;
+    for (unsigned trial = 0; trial < config.n_trials; trial++) {
+        Vector<double> x(model.n_dofs());
+        ellipsoid::random_point(x, model.get_M(), 0.0, 1.0);
+
+        double value = 0.0, value_cell_loop = 0.0;
+        time_matrix += cpu_time([&] {
+            system.assemble_nonlinear_term(x);
+            value = func.value(x);
+        });
+        time_cell_loop += cpu_time([&] {
+            value_cell_loop = energy_cell_loop(model.get_dofs(), system.get_A0(), config.gpe.beta, x);
+        });
+        max_diff = std::max(max_diff, std::abs(value - value_cell_loop));
+    }
+
+    const std::string name = "level " + std::to_string(level);
+    report.check(max_diff < tol, name + ": energy with sparse matrices equals the cell loop", "max diff " + sci(max_diff));
+    report.info(name + ": average time", "sparse matrices " + sci(time_matrix / config.n_trials) + " s, cell loop "
+                                         + sci(time_cell_loop / config.n_trials) + " s");
+}
+
+} // namespace
 
 
 int main(int argc, char* argv[])
 {
-    GPE_Options options{};
-    unsigned min_level = 0, max_level = 0, n_trials = 0;
-
+    std::optional<Config> config;
     try {
-        po::options_description all("Cell-loop vs. sparse matrix-vector evaluation of the GP energy");
-        all.add(gpe_cli_options());
-        all.add_options()
-            ("help", "print this message")
-            ("min-level", po::value<unsigned>()->default_value(8), "coarsest refinement level")
-            ("max-level", po::value<unsigned>()->default_value(11), "finest refinement level")
-            ("trials", po::value<unsigned>()->default_value(200), "random points evaluated per level");
-
-        po::variables_map vm;
-        po::store(po::parse_command_line(argc, argv, all), vm);
-        po::notify(vm);
-
-        if (vm.count("help")) {
-            std::cout << all << std::endl;
-            return 0;
-        }
-
-        apply_gpe_options(vm, options);
-        min_level = vm["min-level"].as<unsigned>();
-        max_level = vm["max-level"].as<unsigned>();
-        n_trials  = vm["trials"].as<unsigned>();
-        AssertThrow(min_level <= max_level,
-            dealii::ExcMessage("--min-level must not exceed --max-level"));
+        config = parse_options(argc, argv);
     }
-    catch (std::exception& e) {
+    catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
+    if (!config) {
+        return 0;
+    }
 
-    try {
-        with_dimension(options.dimension, [&]<typename T0>(T0)
-        {
-        constexpr int dim = T0::value;
-
-        MGLevelObject<std::vector<double>> time_value(min_level, max_level);
-        MGLevelObject<std::vector<double>> time_value_cell_loop(min_level, max_level);
-        MGLevelObject<std::vector<double>> value_error(min_level, max_level);
-
-        for (unsigned level = min_level; level <= max_level; level++) {
-            dealii::Timer timer;
-            ModelBuilder<GrossPitaevskiiSystem<dim>> model(potential::Square<dim>(), options, level);
-
-            auto& system = model.get_system();
-            const auto& eval = model.get_eval(options.beta, SolverOptions{});
-            const unsigned n_dofs = model.n_dofs();
-
-            // Average time over trials for value() + assembly, and the cell-loop reference
-            time_value[level].reserve(n_trials);
-            time_value_cell_loop[level].reserve(n_trials);
-            value_error[level].reserve(n_trials);
-
-            for (unsigned int trial = 0; trial < n_trials; trial++) {
-                double value, value_cell_loop;
-                Vector<double> x(n_dofs);
-                ellipsoid::random_point(x, model.get_M(), MEAN, STDDEV);
-
-                { // Reference value, assembled on the fly in a cell loop
-                    auto begin_t = timer.cpu_time();
-                    value_cell_loop = get_energy(model.get_dofs(), x, system.get_A0(), options.beta);
-
-                    auto end_t = timer.cpu_time();
-                    time_value_cell_loop[level].push_back(end_t - begin_t);
-                }
-
-                { // Value through sparse matrix-vector products (LinearCombination)
-                    auto begin_t = timer.cpu_time();
-                    system.assemble_nonlinear_term(x);
-                    value = eval.value(x);
-
-                    auto end_t = timer.cpu_time();
-                    time_value[level].push_back(end_t - begin_t);
-                }
-
-                // Verify both match within a given margin (done in extended precision to reduce cancellation)
-                // TODO: mean/standard deviation of errors
-                const long double error = std::abs(static_cast<long double>(value) - value_cell_loop);
-                value_error[level].push_back(static_cast<double>(error));
-
-                AssertThrow(error < MARGIN, dealii::ExcInternalError(fmt::format(
-                "mismatch between value: {} and value_cell_loop: {} (level: {}, trial: {})",
-                    value, value_cell_loop, level, trial)));
+    return run_tests([&](CheckReport& report) {
+        with_dimension(config->gpe.dimension, [&]<typename T0>(T0) {
+            for (unsigned level = config->min_level; level <= config->max_level; level++) {
+                check_level<T0::value>(report, *config, level);
             }
-            // TODO: write time_value / time_value_cell_loop to file for plotting
-            std::cerr << fmt::format("Average time on level {}, spmv: {}s\n", level, mean(time_value[level]))
-                      << fmt::format("Average time on level {}, cell loop: {}s\n", level, mean(time_value_cell_loop[level]))
-                      << fmt::format("Average error on level {}: {}\n", level, mean(value_error[level]));
-        }
         });
-    }
-    catch (std::exception& e) {
-        std::cerr << "error: " << e.what() << "\n";
-        return 1;
-    }
-    return 0;
+    });
 }

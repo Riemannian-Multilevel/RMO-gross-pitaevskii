@@ -1,496 +1,438 @@
 //
-// Tests for mass lumping, from the nodal quadrature up to the oracles on GrossPitaevskiiLumpedSystem
-// (sections 1-7 below). Each check prints PASS/FAIL; the exit code is 1 if any check fails.
+// Tests for mass lumping: the lumped matrices of GrossPitaevskiiLumpedSystem, its operators, and the
+// functional, oracles and iterations built on it.
 //
+#include "check.h"
+#include "finite_difference.h"
+
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/iteration.h>
 #include <rmo/gpe/oracle.h>
 
 #include <deal.II/base/function.h>
-#include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_simplex_p.h>
-#include <deal.II/fe/fe_simplex_p_bubbles.h>
+#include <deal.II/fe/fe_tools.h>
+#include <deal.II/fe/mapping_fe.h>
+#include <deal.II/grid/grid_generator.h>
 #include <deal.II/numerics/vector_tools.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <iomanip>
-#include <iostream>
+#include <memory>
 #include <numbers>
-#include <sstream>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 using namespace rmo;
 using namespace rmo::gpe;
+using namespace rmo::test;
 using namespace dealii;
 
 namespace
 {
-constexpr int dim = 2;
-unsigned n_failed = 0;
+constexpr int    dim    = 2;
+constexpr double radius = 4.0;
+constexpr double beta   = 100.0;
 
-void check(bool ok, const std::string& name, const std::string& detail = "")
+//! Element and mesh of a test case: Q<degree> on squares, or P1 / P2-bubble on simplices.
+struct Discretization
 {
-    std::cout << (ok ? "PASS  " : "FAIL  ") << name;
-    if (!detail.empty()) {
-        std::cout << "  (" << detail << ")";
-    }
-    std::cout << "\n";
-    n_failed += !ok;
-}
+    MeshKind mesh;
+    int      degree;
 
-std::string fmt_double(double x)
-{
-    std::ostringstream ss;
-    ss << std::scientific << std::setprecision(2) << x;
-    return ss.str();
-}
-
-GPE_Options make_options(MeshKind mesh, int degree, BoundaryCondition bc)
-{
-    GPE_Options options{};
-    options.dimension       = dim;
-    options.degree          = degree;
-    options.radius          = 4.0;
-    options.beta            = 100.0;
-    options.order           = Ordering::DEFAULT;
-    options.bc              = bc;
-    options.mesh_kind       = mesh;
-    options.potential       = Potential::SQUARE;
-    return options;
-}
-
-std::string config_name(MeshKind mesh, int degree)
-{
-    return (mesh == MeshKind::SIMPLEX ? (degree > 1 ? "P" + std::to_string(degree) + "-bubble"
-                                                    : "P" + std::to_string(degree))
-                                      : "Q" + std::to_string(degree));
-}
-
-//! Sorted weights of a quadrature rule, divided by the reference cell volume.
-std::vector<double> sorted_weights(const Quadrature<dim>& q, double ref_volume)
-{
-    std::vector<double> w(q.get_weights());
-    for (auto& wi : w) {
-        wi /= ref_volume;
-    }
-    std::ranges::sort(w);
-    return w;
-}
-
-// ---------------------------------------------------------------------------------------------
-// 1. Nodal quadrature: weights and lumpability
-// ---------------------------------------------------------------------------------------------
-void test_nodal_quadrature()
-{
-    // The point ordering may differ, so points are matched by position
-    for (unsigned p = 1; p <= 3; ++p) {
-        const FE_Q<dim> fe(p);
-        const auto nodal = fe::make_nodal_quadrature(fe);
-        const QGaussLobatto<dim> gll(p + 1);
-
-        double err = (nodal.size() == gll.size()) ? 0.0 : 1.0;
-        for (unsigned i = 0; i < nodal.size() && err < 1.0; ++i) {
-            bool found = false;
-            for (unsigned j = 0; j < gll.size(); ++j) {
-                if (nodal.point(i).distance(gll.point(j)) < 1e-12) {
-                    err   = std::max(err, std::abs(nodal.weight(i) - gll.weight(j)));
-                    found = true;
-                }
-            }
-            err = found ? err : 1.0;
-        }
-        check(err < 1e-14, "nodal quadrature FE_Q(" + std::to_string(p) + ") == QGaussLobatto(" +
-              std::to_string(p + 1) + ")", "max weight diff " + fmt_double(err));
-    }
-
+    [[nodiscard]] std::string name() const
     {
-        const auto w = sorted_weights(fe::make_nodal_quadrature(FE_SimplexP<dim>(1)), 0.5);
-        const bool ok = w.size() == 3 && std::ranges::all_of(w, [](double x) { return std::abs(x - 1.0/3) < 1e-14; });
-        check(ok, "nodal quadrature FE_SimplexP(1): weights |K|/3");
+        if (mesh == MeshKind::SIMPLEX) {
+            return "P" + std::to_string(degree) + (degree > 1 ? "-bubble" : "");
+        }
+        return "Q" + std::to_string(degree);
     }
 
+    [[nodiscard]] GPE_Options options(BoundaryCondition bc) const
     {
-        const auto w = sorted_weights(fe::make_nodal_quadrature(FE_SimplexP_Bubbles<dim>(2)), 0.5);
-        const std::vector<double> expected = {1./20, 1./20, 1./20, 2./15, 2./15, 2./15, 9./20};
-        bool ok = w.size() == expected.size();
-        for (unsigned i = 0; ok && i < w.size(); ++i) {
-            ok = std::abs(w[i] - expected[i]) < 1e-14;
-        }
-        check(ok, "nodal quadrature FE_SimplexP_Bubbles(2): weights |K|(1/20, 2/15, 9/20)");
+        GPE_Options options{};
+        options.dimension = dim;
+        options.degree    = degree;
+        options.radius    = radius;
+        options.beta      = beta;
+        options.order     = Ordering::DEFAULT;
+        options.bc        = bc;
+        options.mesh_kind = mesh;
+        options.potential = Potential::SQUARE;
+        return options;
     }
 
-    // Not lumpable: the vertex weights of FE_SimplexP(2) are zero
+    //! Gauss rule of higher order than the one of the package (degree + 1).
+    [[nodiscard]] Quadrature<dim> gauss() const
     {
-        bool thrown = false;
-        try {
-            fe::make_nodal_quadrature(FE_SimplexP<dim>(2));
+        if (mesh == MeshKind::SIMPLEX) {
+            return QGaussSimplex<dim>(degree + 2);
         }
-        catch (const std::exception&) {
-            thrown = true;
-        }
-        check(thrown, "nodal quadrature FE_SimplexP(2) is rejected");
+        return QGauss<dim>(degree + 2);
     }
-}
+};
 
-// ---------------------------------------------------------------------------------------------
-// 2. Lumped matrices and GrossPitaevskiiLumpedSystem, for one element/mesh configuration
-// ---------------------------------------------------------------------------------------------
-void test_lumped_system(MeshKind mesh, int degree, unsigned n_levels)
+const std::array discretizations{Discretization{MeshKind::QUADRILATERAL, 1}, Discretization{MeshKind::QUADRILATERAL, 2},
+                                 Discretization{MeshKind::SIMPLEX, 1},       Discretization{MeshKind::SIMPLEX, 2}};
+
+//! Package with the consistent and the lumped system of one discretization, for the square potential.
+struct Systems
 {
-    const std::string name = config_name(mesh, degree);
+    Systems(const Discretization& disc, BoundaryCondition bc, unsigned n_levels)
+        : name(disc.name())
+        , package(disc.options(bc), n_levels)
+        , consistent(package.system(V))
+        , lumped(package.system<GrossPitaevskiiLumpedSystem<dim>>(V))
+    {}
+
+    [[nodiscard]] unsigned n_dofs() const { return package.n_dofs(); }
+
+    const std::string name;
     const potential::Square<dim> V;
+    GrossPitaevskiiPackage<dim> package;
+    GrossPitaevskiiSystem<dim> consistent;
+    GrossPitaevskiiLumpedSystem<dim> lumped;
+};
 
-    // Neumann boundary: no constrained rows, so every row can be compared
-    GrossPitaevskiiPackage<dim> package(make_options(mesh, degree, BoundaryCondition::NEUMANN), n_levels);
-    const auto& dofs        = package.get_dofs();
-    const auto& mapping     = package.get_mapping();
-    const auto& constraints = package.get_constraints();
-    const auto  n           = package.n_dofs();
-    const auto  nodal       = fe::make_nodal_quadrature(dofs.get_fe());
-    const QGaussSimplex<dim> q_gauss_simplex(degree + 2);
-    const QGauss<dim>        q_gauss(degree + 1);
-    const Quadrature<dim>&   gauss = (mesh == MeshKind::SIMPLEX) ? static_cast<const Quadrature<dim>&>(q_gauss_simplex)
-                                                                 : static_cast<const Quadrature<dim>&>(q_gauss);
-
-    auto consistent = package.system(V);
-    auto lumped     = package.system<GrossPitaevskiiLumpedSystem<dim>>(V);
-    const auto& M_L = lumped.get_M().get_vector();
-
-    {
-        const auto& M = consistent.get_M();
-        double err = 0.0;
-        for (unsigned i = 0; i < n; ++i) {
-            double row_sum = 0.0;
-            for (auto it = M.begin(i); it != M.end(i); ++it) {
-                row_sum += it->value();
-            }
-            err = std::max(err, std::abs(row_sum - M_L[i]) / M_L[i]);
-        }
-        check(err < 1e-12, name + ": M_L equals the row sums of M", "max rel. diff " + fmt_double(err));
-    }
-
-    {
-        const double R = 4.0;
-        const double total = M_L.mean_value() * n;
-        check(*std::ranges::min_element(M_L) > 0, name + ": M_L is positive");
-        check(std::abs(total - std::pow(2*R, dim)) < 1e-10 * total, name + ": sum of M_L equals |Omega|",
-              "sum " + std::to_string(total));
-    }
-
-    {
-        DiagonalMatrix<Vector<double>> M_gauss;
-        M_gauss.get_vector().reinit(n);
-        fe::assemble_mass_lumped(M_gauss, dofs, gauss, mapping, constraints);
-
-        Vector<double> diff(M_gauss.get_vector());
-        diff -= M_L;
-        check(diff.linfty_norm() < 1e-14 * M_L.linfty_norm(), name + ": M_L independent of the quadrature (Gauss vs nodal)",
-              "max diff " + fmt_double(diff.linfty_norm()));
-    }
-
-    // Off-diagonal entries must equal S, diagonal entries S + M_{V,L}
-    {
-        const auto& A0 = lumped.get_A0();
-        SparseMatrix<double> S(A0.get_sparsity_pattern());
-        fe::assemble_stiffness(S, dofs, gauss, mapping, constraints);
-
-        DiagonalMatrix<Vector<double>> M_VL;
-        M_VL.get_vector().reinit(n);
-        fe::assemble_mass_lumped_weighted(M_VL, V, dofs, nodal, mapping, constraints);
-
-        double err_offdiag = 0.0, err_diag = 0.0;
-        for (unsigned i = 0; i < n; ++i) {
-            for (auto it = A0.begin(i); it != A0.end(i); ++it) {
-                const unsigned j = it->column();
-                const double S_ij = S.el(i, j);
-                if (i == j) {
-                    err_diag = std::max(err_diag, std::abs(it->value() - S_ij - M_VL.get_vector()[i]));
-                } else {
-                    err_offdiag = std::max(err_offdiag, std::abs(it->value() - S_ij));
-                }
-            }
-        }
-        const double scale = A0.linfty_norm();
-        check(err_offdiag < 1e-12 * scale && err_diag < 1e-12 * scale, name + ": A0 = S + M_{V,L}",
-              "off-diag " + fmt_double(err_offdiag) + ", diag " + fmt_double(err_diag));
-    }
-
-    Vector<double> u(n);
+//! Deterministic test vector with entries f(i).
+template <typename Function>
+Vector<double> make_vector(unsigned n, Function&& f)
+{
+    Vector<double> v(n);
     for (unsigned i = 0; i < n; ++i) {
-        u[i] = std::sin(0.37 * i) + 0.2;
+        v[i] = f(i);
     }
-    lumped.assemble_nonlinear_term(u);
-    {
-        DiagonalMatrix<Vector<double>> Mpp_ref;
-        Mpp_ref.get_vector().reinit(n);
-        fe::assemble_mass_phiphi_lumped(Mpp_ref, u, dofs, nodal, mapping, constraints);
-
-        Vector<double> diff(Mpp_ref.get_vector());
-        diff -= lumped.get_Mpp().get_vector();
-        check(diff.linfty_norm() < 1e-13 * Mpp_ref.get_vector().linfty_norm(),
-              name + ": Mpp equals fe::assemble_mass_phiphi_lumped", "max diff " + fmt_double(diff.linfty_norm()));
-    }
-
-    // A = A0 + beta Mpp mixes a SparseMatrix and a DiagonalMatrix
-    {
-        const double beta = 100.0;
-        const auto A = lumped.get_operator_A(beta);
-        const auto& mpp = lumped.get_Mpp().get_vector();
-
-        Vector<double> Au(n), ref(n), tmp(n), ATu(n);
-        A.vmult(Au, u);
-        lumped.get_A0().vmult(ref, u);
-        tmp = u;
-        tmp.scale(mpp);
-        ref.add(beta, tmp);
-        Vector<double> diff(Au);
-        diff -= ref;
-        check(diff.linfty_norm() < 1e-12 * ref.linfty_norm(), name + ": LinearCombination<Sparse, Diagonal>::vmult",
-              "max diff " + fmt_double(diff.linfty_norm()));
-
-        A.Tvmult(ATu, u);
-        ATu -= Au;
-        check(ATu.linfty_norm() < 1e-12 * ref.linfty_norm(), name + ": LinearCombination::Tvmult equals vmult (symmetric)");
-
-        Vector<double> diag = A.diagonal();
-        for (unsigned i = 0; i < n; ++i) {
-            diag[i] -= lumped.get_A0().diag_element(i) + beta * mpp[i];
-        }
-        check(diag.linfty_norm() < 1e-12 * ref.linfty_norm(), name + ": LinearCombination::diagonal()");
-
-        const auto M_op = lumped.get_operator_M(2.0);
-        Vector<double> Mu(n);
-        M_op.vmult(Mu, u);
-        tmp = u;
-        tmp.scale(M_L);
-        Mu.add(-2.0, tmp);
-        check(Mu.linfty_norm() < 1e-14 * M_L.linfty_norm(), name + ": get_operator_M(w) applies w M_L");
-    }
+    return v;
 }
 
-// ---------------------------------------------------------------------------------------------
-// 3. Lumped energy and gradient: grad E(x) = A0 x + beta Mpp(x) x
-// ---------------------------------------------------------------------------------------------
-void test_gradient_consistency(MeshKind mesh, int degree, unsigned n_levels)
+Vector<double> test_point(unsigned n) { return make_vector(n, [](unsigned i) { return std::sin(0.37 * i) + 0.2; }); }
+Vector<double> test_direction(unsigned n) { return make_vector(n, [](unsigned i) { return std::cos(1.3 * i); }); }
+
+//! Energy \f$ \frac12 x^\top A_0 x + \frac\beta4 x^\top M_{\phi\phi}(x) x \f$; reassembles \f$ M_{\phi\phi}(x) \f$.
+template <typename System>
+double energy(System& system, const Vector<double>& x)
 {
-    const std::string name = config_name(mesh, degree);
-    const double beta = 100.0;
-
-    GrossPitaevskiiPackage<dim> package(make_options(mesh, degree, BoundaryCondition::DIRICHLET), n_levels);
-    auto lumped = package.system<GrossPitaevskiiLumpedSystem<dim>>(potential::Square<dim>());
-    const auto n = package.n_dofs();
-
-    auto energy = [&](const Vector<double>& x) {
-        lumped.assemble_nonlinear_term(x);
-        const auto A = lumped.get_operator_A(0.25 * beta, 0.5);
-        Vector<double> Ax(n);
-        A.vmult(Ax, x);
-        return x * Ax;
-    };
-
-    Vector<double> x(n), d(n), g(n);
-    for (unsigned i = 0; i < n; ++i) {
-        x[i] = std::sin(0.37 * i) + 0.2;
-        d[i] = std::cos(1.3 * i);
-    }
-    package.distribute(x);
-    package.distribute(d);
-
-    lumped.assemble_nonlinear_term(x);
-    lumped.get_operator_A(beta).vmult(g, x);
-    const double gd = g * d;
-
-    std::vector<double> errors;
-    for (double h : {1e-2, 1e-3}) {
-        Vector<double> xp(x), xm(x);
-        xp.add(h, d);
-        xm.add(-h, d);
-        errors.push_back(std::abs((energy(xp) - energy(xm)) / (2*h) - gd) / std::abs(gd));
-    }
-    // Central differences: the error drops ~100x per decade of h; an inconsistent gradient leaves
-    // an error that does not decrease
-    const double ratio = errors[0] / errors[1];
-    check(errors[1] < 1e-5 && ratio > 50, name + ": gradient of the lumped energy (finite differences)",
-          "rel. error " + fmt_double(errors[1]) + ", ratio " + fmt_double(ratio));
+    system.assemble_nonlinear_term(x);
+    Vector<double> Ax(x.size());
+    system.get_operator_A(0.25 * beta, 0.5).vmult(Ax, x);
+    return x * Ax;
 }
 
-// ---------------------------------------------------------------------------------------------
-// 4. Lumped vs consistent energy of a smooth function: difference O(h^2)
-// ---------------------------------------------------------------------------------------------
-void test_energy_convergence(MeshKind mesh, int degree, unsigned min_level, unsigned max_level)
+//! Checks @p gd = Df(x)[d] by central differences: the error must be small and drop ~100x from h = 1e-2 to 1e-3.
+template <typename Function>
+void check_central_differences(CheckReport& report, const std::string& name, Function&& f,
+                               const Vector<double>& x, const Vector<double>& d, double gd)
 {
-    const std::string name = config_name(mesh, degree);
-    const double beta = 100.0, R = 4.0;
-    const potential::Square<dim> V;
+    std::array<double, 2> error{};
+    for (unsigned k = 0; k < 2; ++k) {
+        const double h = (k == 0) ? 1e-2 : 1e-3;
+        error[k] = std::abs(central_difference(f, x, d, h) - gd) / std::abs(gd);
+    }
+    // An inconsistent gradient leaves an error that does not decrease
+    const double ratio = error[0] / error[1];
+    report.check(error[1] < 1e-5 && ratio > 50, name, "rel. error " + sci(error[1]) + ", ratio " + sci(ratio));
+}
 
-    // u(x) = prod_d cos(pi x_d / (2R)) satisfies the Dirichlet condition on [-R, R]^dim
-    class Scaled : public Function<dim>
-    {
-    public:
-        explicit Scaled(double R) : R(R) {}
-        double value(const Point<dim>& p, unsigned) const override
-        {
-            double out = 1.0;
-            for (unsigned k = 0; k < dim; ++k) {
-                out *= std::cos(0.5 * std::numbers::pi * p[k] / R);
-            }
-            return out;
+
+// ---------------------------------------------------------------------------------------------
+// Lumped matrices
+// ---------------------------------------------------------------------------------------------
+
+//! The vertex shape functions of FE_SimplexP(2) integrate to zero, so the system must reject it.
+void check_lumpability(CheckReport& report)
+{
+    Triangulation<dim> tria;
+    GridGenerator::subdivided_hyper_cube_with_simplices(tria, 2);
+    const FE_SimplexP<dim> fe(2);
+    DoFHandler<dim> dofs(tria);
+    dofs.distribute_dofs(fe);
+
+    const MappingFE<dim> mapping(FE_SimplexP<dim>(1));
+    const QGaussSimplex<dim> quadrature(3);
+    AffineConstraints<double> constraints;
+    constraints.close();
+
+    bool thrown = false;
+    try {
+        const GrossPitaevskiiLumpedSystem<dim> system(dofs, quadrature, mapping, constraints, potential::Square<dim>());
+    }
+    catch (const std::exception&) {
+        thrown = true;
+    }
+    report.check(thrown, "FE_SimplexP(2) is rejected (zero row sums of M)");
+}
+
+//! M_L: row sums of M, positive, summing to |Omega|, and the same for a higher-order quadrature.
+void check_lumped_mass(CheckReport& report, const Systems& s, const Quadrature<dim>& gauss)
+{
+    const auto& M   = s.consistent.get_M();
+    const auto& M_L = s.lumped.get_M().get_vector();
+
+    double err = 0.0;
+    for (unsigned i = 0; i < s.n_dofs(); ++i) {
+        double row_sum = 0.0;
+        for (auto it = M.begin(i); it != M.end(i); ++it) {
+            row_sum += it->value();
         }
-    private:
-        double R;
-    } u_exact(R);
+        err = std::max(err, std::abs(row_sum - M_L[i]) / M_L[i]);
+    }
+    report.check(err < 1e-12, s.name + ": M_L equals the row sums of M", "max rel. diff " + sci(err));
 
+    const double total = M_L.mean_value() * s.n_dofs();
+    report.check(*std::ranges::min_element(M_L) > 0, s.name + ": M_L is positive");
+    report.check(std::abs(total - std::pow(2 * radius, dim)) < 1e-10 * total, s.name + ": sum of M_L equals |Omega|",
+                 "sum " + std::to_string(total));
+
+    DiagonalMatrix<Vector<double>> M_gauss;
+    M_gauss.get_vector().reinit(s.n_dofs());
+    fe::assemble_mass_lumped(M_gauss, s.package.get_dofs(), gauss, s.package.get_mapping(), s.package.get_constraints());
+    Vector<double> diff(M_gauss.get_vector());
+    diff -= M_L;
+    report.check(diff.linfty_norm() < 1e-14 * M_L.linfty_norm(),
+                 s.name + ": M_L independent of the quadrature (higher-order Gauss)", "max diff " + sci(diff.linfty_norm()));
+}
+
+//! Reference for the lumped potential term: (M_{V,L})_ii by the nodal quadrature of deal.II.
+Vector<double> nodal_potential_mass(const Systems& s)
+{
+    const auto& dofs = s.package.get_dofs();
+    const Quadrature<dim> nodal = FETools::compute_nodal_quadrature(dofs.get_fe());
+    FEValues<dim> fe_values(s.package.get_mapping(), dofs.get_fe(), nodal,
+                            update_values | update_JxW_values | update_quadrature_points);
+    std::vector<types::global_dof_index> indices(dofs.get_fe().n_dofs_per_cell());
+    Vector<double> M_VL(s.n_dofs());
+
+    for (const auto& cell : dofs.active_cell_iterators()) {
+        fe_values.reinit(cell);
+        cell->get_dof_indices(indices);
+        for (const unsigned q : fe_values.quadrature_point_indices()) {
+            for (const unsigned j : fe_values.dof_indices()) {
+                M_VL[indices[j]] += s.V(fe_values.quadrature_point(q)) * fe_values.shape_value(j, q) * fe_values.JxW(q);
+            }
+        }
+    }
+    return M_VL;
+}
+
+//! Off-diagonal entries of A0 equal S, diagonal entries S + M_{V,L}.
+void check_lumped_A0(CheckReport& report, const Systems& s, const Quadrature<dim>& gauss)
+{
+    const auto& A0 = s.lumped.get_A0();
+    SparseMatrix<double> S(A0.get_sparsity_pattern());
+    fe::assemble_stiffness(S, s.package.get_dofs(), gauss, s.package.get_mapping(), s.package.get_constraints());
+    const Vector<double> M_VL = nodal_potential_mass(s);
+
+    double err_offdiag = 0.0, err_diag = 0.0;
+    for (unsigned i = 0; i < s.n_dofs(); ++i) {
+        for (auto it = A0.begin(i); it != A0.end(i); ++it) {
+            const unsigned j = it->column();
+            if (i == j) {
+                err_diag = std::max(err_diag, std::abs(it->value() - S.el(i, j) - M_VL[i]));
+            } else {
+                err_offdiag = std::max(err_offdiag, std::abs(it->value() - S.el(i, j)));
+            }
+        }
+    }
+    const double scale = A0.linfty_norm();
+    report.check(err_offdiag < 1e-12 * scale && err_diag < 1e-12 * scale, s.name + ": A0 = S + M_{V,L}",
+                 "off-diag " + sci(err_offdiag) + ", diag " + sci(err_diag));
+}
+
+void check_lumped_Mpp(CheckReport& report, Systems& s, const Quadrature<dim>& gauss)
+{
+    const Vector<double> u = test_point(s.n_dofs());
+    s.lumped.assemble_nonlinear_term(u);
+
+    DiagonalMatrix<Vector<double>> Mpp;
+    Mpp.get_vector().reinit(s.n_dofs());
+    fe::assemble_mass_phiphi_lumped(Mpp, u, s.package.get_dofs(), gauss, s.package.get_mapping(),
+                                    s.package.get_constraints());
+    Vector<double> diff(Mpp.get_vector());
+    diff -= s.lumped.get_Mpp().get_vector();
+    report.check(diff.linfty_norm() < 1e-13 * Mpp.get_vector().linfty_norm(),
+                 s.name + ": Mpp equals fe::assemble_mass_phiphi_lumped", "max diff " + sci(diff.linfty_norm()));
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Operators of the lumped system: A = A0 + beta Mpp mixes a SparseMatrix and a DiagonalMatrix
+// ---------------------------------------------------------------------------------------------
+
+void check_lumped_operators(CheckReport& report, Systems& s)
+{
+    const unsigned n = s.n_dofs();
+    const Vector<double> u = test_point(n);
+    s.lumped.assemble_nonlinear_term(u);
+    const auto& A0  = s.lumped.get_A0();
+    const auto& Mpp = s.lumped.get_Mpp().get_vector();
+    const auto& M_L = s.lumped.get_M().get_vector();
+    const auto  A   = s.lumped.get_operator_A(beta);
+
+    Vector<double> Au(n), ref(n), tmp(u);
+    A.vmult(Au, u);
+    A0.vmult(ref, u);
+    tmp.scale(Mpp);
+    ref.add(beta, tmp);
+    const double scale = ref.linfty_norm();
+
+    Vector<double> diff(Au);
+    diff -= ref;
+    report.check(diff.linfty_norm() < 1e-12 * scale, s.name + ": LinearCombination<Sparse, Diagonal>::vmult",
+                 "max diff " + sci(diff.linfty_norm()));
+
+    A.Tvmult(diff, u);
+    diff -= Au;
+    report.check(diff.linfty_norm() < 1e-12 * scale, s.name + ": LinearCombination::Tvmult equals vmult (symmetric)");
+
+    diff = A.diagonal();
+    for (unsigned i = 0; i < n; ++i) {
+        diff[i] -= A0.diag_element(i) + beta * Mpp[i];
+    }
+    report.check(diff.linfty_norm() < 1e-12 * scale, s.name + ": LinearCombination::diagonal()");
+
+    s.lumped.get_operator_M(2.0).vmult(diff, u);
+    tmp = u;
+    tmp.scale(M_L);
+    diff.add(-2.0, tmp);
+    report.check(diff.linfty_norm() < 1e-14 * M_L.linfty_norm(), s.name + ": get_operator_M(w) applies w M_L");
+}
+
+//! A component of LinearCombination with weight zero is skipped, so that A(beta = 0) = A0 exactly.
+template <typename System>
+void check_zero_weight(CheckReport& report, System& system, const std::string& name)
+{
+    const Vector<double> x = test_point(system.n_dofs());
+    Vector<double> Ax(x.size()), A0x(x.size());
+    system.assemble_nonlinear_term(x);
+    system.get_operator_A(0.0).vmult(Ax, x);
+    system.get_A0().vmult(A0x, x);
+    Ax -= A0x;
+    report.check(Ax.linfty_norm() == 0.0, name + ": zero-weight component is skipped (A(0) = A0)");
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Lumped energy
+// ---------------------------------------------------------------------------------------------
+
+//! grad E(x) = A0 x + beta Mpp(x) x is the gradient of the lumped energy.
+void check_energy_gradient(CheckReport& report, Systems& s)
+{
+    Vector<double> x = test_point(s.n_dofs()), d = test_direction(s.n_dofs()), g(s.n_dofs());
+    s.package.distribute(x);
+    s.package.distribute(d);
+
+    s.lumped.assemble_nonlinear_term(x);
+    s.lumped.get_operator_A(beta).vmult(g, x);
+
+    check_central_differences(report, s.name + ": gradient of the lumped energy (finite differences)",
+                              [&](const Vector<double>& z) { return energy(s.lumped, z); }, x, d, g * d);
+}
+
+//! u(x) = prod_k cos(pi x_k / (2R)), which satisfies the Dirichlet condition on [-R, R]^dim.
+class CosineBump : public Function<dim>
+{
+public:
+    double value(const Point<dim>& p, unsigned) const override
+    {
+        double out = 1.0;
+        for (unsigned k = 0; k < dim; ++k) {
+            out *= std::cos(0.5 * std::numbers::pi * p[k] / radius);
+        }
+        return out;
+    }
+};
+
+//! The lumped and the consistent energy of a smooth function differ by O(h^2).
+void check_energy_convergence(CheckReport& report, const Discretization& disc, unsigned min_level, unsigned max_level)
+{
     std::vector<double> diffs;
     for (unsigned level = min_level; level <= max_level; ++level) {
-        GrossPitaevskiiPackage<dim> package(make_options(mesh, degree, BoundaryCondition::DIRICHLET), level);
-        Vector<double> u(package.n_dofs());
-        VectorTools::interpolate(package.get_mapping(), package.get_dofs(), u_exact, u);
-        package.distribute(u);
-
-        auto value = [&](auto& system) {
-            system.assemble_nonlinear_term(u);
-            Vector<double> Au(u.size());
-            system.get_operator_A(0.25 * beta, 0.5).vmult(Au, u);
-            return u * Au;
-        };
-        auto consistent = package.system(V);
-        auto lumped     = package.system<GrossPitaevskiiLumpedSystem<dim>>(V);
-        diffs.push_back(std::abs(value(lumped) - value(consistent)));
+        Systems s(disc, BoundaryCondition::DIRICHLET, level);
+        Vector<double> u(s.n_dofs());
+        VectorTools::interpolate(s.package.get_mapping(), s.package.get_dofs(), CosineBump(), u);
+        s.package.distribute(u);
+        diffs.push_back(std::abs(energy(s.lumped, u) - energy(s.consistent, u)));
     }
 
     const double rate = std::log2(diffs[diffs.size() - 2] / diffs.back());
     std::string detail = "|E_L - E| =";
     for (double d : diffs) {
-        detail += " " + fmt_double(d);
+        detail += " " + sci(d);
     }
-    detail += ", rate " + fmt_double(rate);
-    check(rate > 1.8, name + ": lumped vs consistent energy converges at O(h^2)", detail);
+    report.check(rate > 1.8, disc.name() + ": lumped vs consistent energy converges at O(h^2)",
+                 detail + ", rate " + sci(rate));
 }
 
+
 // ---------------------------------------------------------------------------------------------
-// 5. Zero-weight components of LinearCombination are skipped: A(beta = 0) = A0
+// Functional, oracles and iterations on the lumped system
 // ---------------------------------------------------------------------------------------------
-template <typename System>
-void check_zero_weight(System& system, const std::string& name)
+
+SolverOptions solver_options(double tol_inner_res)
 {
-    const auto n = system.n_dofs();
-    Vector<double> x(n), Ax(n), A0x(n);
-    for (unsigned i = 0; i < n; ++i) {
-        x[i] = std::sin(0.37 * i) + 0.2;
-    }
-    system.assemble_nonlinear_term(x);
-    system.get_operator_A(0.0).vmult(Ax, x);
-    system.get_A0().vmult(A0x, x);
-    Ax -= A0x;
-    check(Ax.linfty_norm() == 0.0, name + ": zero-weight component is skipped (A(0) = A0)");
-}
-
-void test_zero_weight()
-{
-    GrossPitaevskiiPackage<dim> package(make_options(MeshKind::QUADRILATERAL, 1, BoundaryCondition::DIRICHLET), 4);
-    auto consistent = package.system(potential::Square<dim>());
-    auto lumped     = package.system<GrossPitaevskiiLumpedSystem<dim>>(potential::Square<dim>());
-    check_zero_weight(consistent, "consistent system");
-    check_zero_weight(lumped, "lumped system");
-}
-
-// ---------------------------------------------------------------------------------------------
-// 6. GrossPitaevskiiFunctional on the lumped system
-// ---------------------------------------------------------------------------------------------
-void test_lumped_functional(MeshKind mesh, int degree, unsigned n_levels)
-{
-    const std::string name = config_name(mesh, degree) + " functional";
-    const double beta = 100.0;
-
-    GrossPitaevskiiPackage<dim> package(make_options(mesh, degree, BoundaryCondition::DIRICHLET), n_levels);
-    auto system = package.system<GrossPitaevskiiLumpedSystem<dim>>(potential::Square<dim>());
-    const auto n = package.n_dofs();
-
     SolverOptions options{};
     options.max_inner     = 2000;
     options.tol_inner     = 1e-12;
-    options.tol_inner_res = 1e-2;
+    options.tol_inner_res = tol_inner_res;
     options.solver        = SolverMethod::CG;
     options.precond       = Precondition::DIAGONAL;
-
-    using Functional = GrossPitaevskiiFunctional<GrossPitaevskiiLumpedSystem<dim>>;
-    static_assert(std::is_same_v<Functional::InverseM, DiagonalInverse>);
-    static_assert(std::is_same_v<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>::InverseM, InverseOpType>);
-    Functional func(system, beta, options);
-
-    Vector<double> x(n), d(n);
-    for (unsigned i = 0; i < n; ++i) {
-        x[i] = std::sin(0.37 * i) + 0.2;
-        d[i] = std::cos(1.3 * i);
-    }
-    package.distribute(x);
-    package.distribute(d);
-    func.update(x);
-
-    {
-        Vector<double> Mx(n), y(n);
-        func.get_M().vmult(Mx, x);
-        func.get_M_inv().vmult(y, Mx);
-        y -= x;
-        check(y.linfty_norm() < 1e-14 * x.linfty_norm() && func.get_M_inv().control().last_step() == 0,
-              name + ": M_inv is the exact inverse of M_L", "max diff " + fmt_double(y.linfty_norm()));
-    }
-
-    // Lumped energy: 1/2 x^T A0 x + beta/4 sum_i (M_L)_ii x_i^4
-    {
-        Vector<double> A0x(n);
-        system.get_A0().vmult(A0x, x);
-        double ref = 0.5 * (x * A0x);
-        for (unsigned i = 0; i < n; ++i) {
-            ref += 0.25 * beta * system.get_M().get_vector()[i] * std::pow(x[i], 4);
-        }
-        const double val = func.value(x);
-        check(std::abs(val - ref) < 1e-12 * std::abs(ref), name + ": value() equals the lumped energy",
-              "rel. diff " + fmt_double(std::abs(val - ref) / std::abs(ref)));
-    }
-
-    {
-        Vector<double> g(n);
-        func.gradient(x, g);
-        const double gd = g * d;
-
-        std::vector<double> errors;
-        for (double h : {1e-2, 1e-3}) {
-            Vector<double> xp(x), xm(x);
-            xp.add(h, d);
-            xm.add(-h, d);
-            func.update(xp);
-            const double Ep = func.value(xp);
-            func.update(xm);
-            const double Em = func.value(xm);
-            errors.push_back(std::abs((Ep - Em) / (2*h) - gd) / std::abs(gd));
-        }
-        func.update(x);
-        const double ratio = errors[0] / errors[1];
-        check(errors[1] < 1e-5 && ratio > 50, name + ": gradient() (finite differences)",
-              "rel. error " + fmt_double(errors[1]) + ", ratio " + fmt_double(ratio));
-    }
-
-    {
-        Vector<double> b(n), y(n), Ay(n);
-        func.get_A().vmult(b, x);
-        func.get_A_inv().vmult(y, b);
-        func.get_A().vmult(Ay, y);
-        Ay -= b;
-        check(Ay.l2_norm() < 1e-8 * b.l2_norm(), name + ": A_inv solves A y = b (CG, Jacobi)",
-              "rel. residual " + fmt_double(Ay.l2_norm() / b.l2_norm()) + ", " +
-              std::to_string(func.get_A_inv().control().last_step()) + " iterations");
-    }
+    return options;
 }
 
-// ---------------------------------------------------------------------------------------------
-// 7. Oracles and iterations on the lumped system
-// ---------------------------------------------------------------------------------------------
+using LumpedFunctional = GrossPitaevskiiFunctional<GrossPitaevskiiLumpedSystem<dim>>;
+static_assert(std::is_same_v<LumpedFunctional::InverseM, DiagonalInverse>);
+static_assert(std::is_same_v<GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>>::InverseM, InverseOpType>);
+
+void check_lumped_functional(CheckReport& report, Systems& s)
+{
+    const std::string name = s.name + " functional";
+    const unsigned n = s.n_dofs();
+    LumpedFunctional func(s.lumped, beta, solver_options(1e-2));
+
+    Vector<double> x = test_point(n), d = test_direction(n);
+    s.package.distribute(x);
+    s.package.distribute(d);
+    func.update(x);
+
+    Vector<double> Mx(n), y(n);
+    func.get_M().vmult(Mx, x);
+    func.get_M_inv().vmult(y, Mx);
+    y -= x;
+    report.check(y.linfty_norm() < 1e-14 * x.linfty_norm() && func.get_M_inv().control().last_step() == 0,
+                 name + ": M_inv is the exact inverse of M_L", "max diff " + sci(y.linfty_norm()));
+
+    // Lumped energy: 1/2 x^T A0 x + beta/4 sum_i (M_L)_ii x_i^4
+    Vector<double> A0x(n);
+    s.lumped.get_A0().vmult(A0x, x);
+    double ref = 0.5 * (x * A0x);
+    for (unsigned i = 0; i < n; ++i) {
+        ref += 0.25 * beta * s.lumped.get_M().get_vector()[i] * std::pow(x[i], 4);
+    }
+    const double rel_diff = std::abs(func.value(x) - ref) / std::abs(ref);
+    report.check(rel_diff < 1e-12, name + ": value() equals the lumped energy", "rel. diff " + sci(rel_diff));
+
+    Vector<double> g(n);
+    func.gradient(x, g);
+    check_central_differences(report, name + ": gradient() (finite differences)",
+                              [&](const Vector<double>& z) { func.update(z); return func.value(z); }, x, d, g * d);
+    func.update(x);
+
+    Vector<double> b(n), Ay(n);
+    func.get_A().vmult(b, x);
+    func.get_A_inv().vmult(y, b);
+    func.get_A().vmult(Ay, y);
+    Ay -= b;
+    report.check(Ay.l2_norm() < 1e-8 * b.l2_norm(), name + ": A_inv solves A y = b (CG, Jacobi)",
+                 "rel. residual " + sci(Ay.l2_norm() / b.l2_norm()) + ", "
+                 + std::to_string(func.get_A_inv().control().last_step()) + " iterations");
+}
+
+//! The oracle gradient is tangent, measured in the metric of its kind, and equal to the gradient of the iteration.
 template <typename Oracle, typename Iteration>
-void check_oracle(const std::string& name, typename Oracle::Functional& func, const Vector<double>& x,
+void check_oracle(CheckReport& report, const std::string& name, LumpedFunctional& func, const Vector<double>& x,
                   const SolverOptions& options, bool exact_solve)
 {
     Oracle oracle(func, options);
@@ -498,70 +440,56 @@ void check_oracle(const std::string& name, typename Oracle::Functional& func, co
     Vector<double> g(x.size()), g_iter(x.size());
     const GradInfo info = oracle.gradient(x, g);
 
-    // Metrics of the functional, independent of the oracle and its metric
+    // Metrics of the functional, independent of the oracle
     const OperatorMetric M_metric(func.get_M(), MetricKind::MASS);
     const OperatorMetric A_metric(func.get_A(), MetricKind::ENERGY_ADAPTIVE);
     const EuclideanMetric F_metric;
 
-    // x was normalized with system.get_M(); the functional's M must be the same lumped matrix
     const double mass = M_metric.inner(x, x);
-    check(std::abs(mass - 1.0) < 1e-12, name + ": x is on the mass sphere (x^T M x = 1)",
-          "x^T M x - 1 = " + fmt_double(mass - 1.0));
+    report.check(std::abs(mass - 1.0) < 1e-12, name + ": x is on the mass sphere (x^T M x = 1)",
+                 "x^T M x - 1 = " + sci(mass - 1.0));
 
     const double tangent = std::abs(M_metric.inner(x, g)) / g.l2_norm();
-    check(tangent < 1e-8, name + ": gradient is tangent (x^T M g = 0)", "|x^T M g| / |g| = " + fmt_double(tangent));
+    report.check(tangent < 1e-8, name + ": gradient is tangent (x^T M g = 0)", "|x^T M g| / |g| = " + sci(tangent));
 
-    const MetricBase* expected = &F_metric;
-    if (Oracle::metric_t == MetricKind::MASS) {
-        expected = &M_metric;
-    }
-    else if (Oracle::metric_t == MetricKind::ENERGY_ADAPTIVE) {
-        expected = &A_metric;
-    }
-    const double norm_diff = std::abs(oracle.metric().norm(g) - expected->norm(g));
-    check(oracle.metric().kind() == Oracle::metric_t && norm_diff < 1e-12 * expected->norm(g),
-          name + ": metric() matches the metric of its kind", "norm difference " + fmt_double(norm_diff));
+    const MetricBase& expected = [&]() -> const MetricBase& {
+        switch (Oracle::metric_t) {
+        case MetricKind::MASS:            return M_metric;
+        case MetricKind::ENERGY_ADAPTIVE: return A_metric;
+        default:                          return F_metric;
+        }
+    }();
+    const double norm_diff = std::abs(oracle.metric().norm(g) - expected.norm(g));
+    report.check(oracle.metric().kind() == Oracle::metric_t && norm_diff < 1e-12 * expected.norm(g),
+                 name + ": metric() matches the metric of its kind", "norm difference " + sci(norm_diff));
 
     if (exact_solve) {
-        check(info.num_iter == 0, name + ": exact M^{-1}, no solver iterations");
+        report.check(info.num_iter == 0, name + ": exact M^{-1}, no solver iterations");
     }
 
     Iteration iteration(func, std::make_shared<const Vector<double>>(x), options);
     iteration.gradient(g_iter);
     g_iter -= g;
-    check(g_iter.linfty_norm() < 1e-10 * g.linfty_norm(), name + ": iteration gradient equals oracle gradient",
-          "max diff " + fmt_double(g_iter.linfty_norm()));
+    report.check(g_iter.linfty_norm() < 1e-10 * g.linfty_norm(), name + ": iteration gradient equals oracle gradient",
+                 "max diff " + sci(g_iter.linfty_norm()));
 }
 
-void test_lumped_oracles(MeshKind mesh, int degree, unsigned n_levels)
+void check_lumped_oracles(CheckReport& report, Systems& s)
 {
-    const std::string name = config_name(mesh, degree);
     using System = GrossPitaevskiiLumpedSystem<dim>;
-
-    GrossPitaevskiiPackage<dim> package(make_options(mesh, degree, BoundaryCondition::DIRICHLET), n_levels);
-    System system = package.system<GrossPitaevskiiLumpedSystem<dim>>(potential::Square<dim>());
-    const auto n = package.n_dofs();
-
-    SolverOptions options{};
-    options.max_inner     = 2000;
-    options.tol_inner     = 1e-12;
-    options.tol_inner_res = 1e-6;
-    options.solver        = SolverMethod::CG;
-    options.precond       = Precondition::DIAGONAL;
-    GrossPitaevskiiFunctional<System> func(system, 100.0, options);
+    const SolverOptions options = solver_options(1e-6);
+    LumpedFunctional func(s.lumped, beta, options);
 
     // On the mass sphere x^T M x = 1, as the tangent check assumes
-    Vector<double> x(n), Mx(n);
-    for (unsigned i = 0; i < n; ++i) {
-        x[i] = std::sin(0.37 * i) + 1.2;
-    }
-    package.distribute(x);
-    system.get_M().vmult(Mx, x);
+    Vector<double> x = make_vector(s.n_dofs(), [](unsigned i) { return std::sin(0.37 * i) + 1.2; });
+    Vector<double> Mx(s.n_dofs());
+    s.package.distribute(x);
+    s.lumped.get_M().vmult(Mx, x);
     x /= std::sqrt(x * Mx);
 
-    check_oracle<MassOracle<System>, MassIteration<System>>(name + " MassOracle", func, x, options, true);
-    check_oracle<EnergyOracle<System>, EnergyIteration<System>>(name + " EnergyOracle", func, x, options, false);
-    check_oracle<FrobeniusOracle<System>, FrobeniusIteration<System>>(name + " FrobeniusOracle", func, x, options, false);
+    check_oracle<MassOracle<System>, MassIteration<System>>(report, s.name + " MassOracle", func, x, options, true);
+    check_oracle<EnergyOracle<System>, EnergyIteration<System>>(report, s.name + " EnergyOracle", func, x, options, false);
+    check_oracle<FrobeniusOracle<System>, FrobeniusIteration<System>>(report, s.name + " FrobeniusOracle", func, x, options, false);
 }
 
 } // namespace
@@ -569,30 +497,32 @@ void test_lumped_oracles(MeshKind mesh, int degree, unsigned n_levels)
 
 int main()
 {
-    try {
-        test_nodal_quadrature();
+    return run_tests([](CheckReport& report) {
+        check_lumpability(report);
 
-        for (const auto& [mesh, degree] : {std::pair{MeshKind::QUADRILATERAL, 1}, std::pair{MeshKind::QUADRILATERAL, 2},
-                                           std::pair{MeshKind::SIMPLEX, 1},       std::pair{MeshKind::SIMPLEX, 2}}) {
-            test_lumped_system(mesh, degree, 4);
-            test_gradient_consistency(mesh, degree, 4);
+        for (const auto& disc : discretizations) {
+            // Neumann boundary: no constrained rows, so every row can be compared
+            Systems s(disc, BoundaryCondition::NEUMANN, 4);
+            const Quadrature<dim> gauss = disc.gauss();
+            check_lumped_mass(report, s, gauss);
+            check_lumped_A0(report, s, gauss);
+            check_lumped_Mpp(report, s, gauss);
+            check_lumped_operators(report, s);
+
+            Systems s_dirichlet(disc, BoundaryCondition::DIRICHLET, 4);
+            check_energy_gradient(report, s_dirichlet);
         }
+        check_energy_convergence(report, {MeshKind::QUADRILATERAL, 1}, 3, 6);
+        check_energy_convergence(report, {MeshKind::SIMPLEX, 1}, 3, 6);
 
-        test_energy_convergence(MeshKind::QUADRILATERAL, 1, 3, 6);
-        test_energy_convergence(MeshKind::SIMPLEX, 1, 3, 6);
+        Systems q1(discretizations[0], BoundaryCondition::DIRICHLET, 4);
+        check_zero_weight(report, q1.consistent, "consistent system");
+        check_zero_weight(report, q1.lumped, "lumped system");
 
-        test_zero_weight();
-        test_lumped_functional(MeshKind::QUADRILATERAL, 1, 4);
-        test_lumped_functional(MeshKind::SIMPLEX, 2, 4);
-
-        test_lumped_oracles(MeshKind::QUADRILATERAL, 1, 4);
-        test_lumped_oracles(MeshKind::SIMPLEX, 2, 4);
-    }
-    catch (const std::exception& exc) {
-        std::cerr << "Exception: " << exc.what() << std::endl;
-        return 1;
-    }
-
-    std::cout << (n_failed ? std::to_string(n_failed) + " check(s) failed" : "all checks passed") << std::endl;
-    return n_failed ? 1 : 0;
+        for (const auto& disc : {discretizations[0], discretizations[3]}) {
+            Systems s(disc, BoundaryCondition::DIRICHLET, 4);
+            check_lumped_functional(report, s);
+            check_lumped_oracles(report, s);
+        }
+    });
 }
