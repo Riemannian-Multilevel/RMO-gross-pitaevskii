@@ -3,6 +3,10 @@
 
 #include <deal.II/lac/diagonal_matrix.h>
 
+/**
+ * @file
+ * @brief Type traits for the linear algebra types of lac.h.
+ */
 namespace rmo
 {
 

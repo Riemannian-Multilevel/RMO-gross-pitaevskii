@@ -15,10 +15,16 @@
 #include <deal.II/base/timer.h>
 
 
+/**
+ * @file
+ * @brief Iterations: oracles with the evaluation point fixed at construction, for the Gross-Pitaevskii functional
+ * with the Riemannian gradient in the M-metric (MassIteration), the energy-adaptive metric (EnergyIteration) or
+ * the F-metric (FrobeniusIteration).
+ */
 namespace rmo::gpe
 {
 
-// Alternative interface setting the evaluation point in the constructor
+/** @brief Oracle interface with the evaluation point fixed at construction (shared ownership). */
 class IterationBase
 {
 public:
@@ -42,7 +48,10 @@ protected:
 };
 
 
-// System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
+/**
+ * @brief Shared part of the iterations of a @p System: updates the functional at the point, and evaluates value,
+ * residual and directional derivative there.
+ */
 template <typename System>
 class GrossPitaevskiiIteration : public IterationBase
 {
@@ -98,6 +107,7 @@ protected:
 };
 
 
+/** @brief Riemannian gradient in the M-metric, see MassOracle. */
 template <typename System>
 class MassIteration : public GrossPitaevskiiIteration<System>
 {
@@ -139,6 +149,7 @@ private:
 };
 
 
+/** @brief Riemannian gradient in the energy-adaptive metric, see EnergyOracle. */
 template <typename System>
 class EnergyIteration : public GrossPitaevskiiIteration<System>
 {
@@ -181,6 +192,7 @@ private:
 };
 
 
+/** @brief Riemannian gradient in the F-metric, see FrobeniusOracle. */
 template <typename System>
 class FrobeniusIteration : public GrossPitaevskiiIteration<System>
 {

@@ -7,12 +7,23 @@
 #include <cmath>
 #include <algorithm>
 
+/**
+ * @file
+ * @brief The unit-mass sphere \f$ \mathcal{S} = \{ x : \|x\|_M = 1 \} \f$, \f$ \|x\|_M^2 = x^\top M x \f$:
+ * retractions, their inverses and differentials (namespace ellipsoid), and the manifold UnitMassSphere.
+ *
+ * Arguments in ellipsoid: the mass matrix `M` (any type with `vmult`), the base point `x` on the sphere, the
+ * vector `v` to retract or lift, and the step factor \f$ h \f$ (`factor`). Retractions overwrite `x`, inverse
+ * retractions overwrite `v`.
+ */
 namespace rmo::gpe
 {
 
+/** @brief Retractions on the unit-mass sphere, their inverses and differentials. */
 namespace ellipsoid
 {
 
+/** @brief Random point on the sphere: normal entries (@p mean, @p stddev), normalized in the M-norm. */
 template <typename MatrixType>
 void random_point(Vector<double>& x, const MatrixType& M,
                   double mean = 0.0, double stddev = 1.0)
@@ -25,23 +36,7 @@ void random_point(Vector<double>& x, const MatrixType& M,
     x /= std::sqrt(factor);
 }
 
-/**
- * @brief Computes the retraction by normalization.
- *
- * Maps a tangent vector @p z at @p x onto the manifold by adding the update and
- * normalizing the result:
- * \f[
- * R_x(h z) = \frac{x + h z}{\|x + h z\|_M}
- * \f]
- *
- * @note This function modifies @p x in-place.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M The mass matrix defining the metric.
- * @param[in] v The tangent vector (update direction).
- * @param[in,out] x On input, the base point. On output, the retracted point.
- * @param[in] factor Scaling factor \f$ h \f$.
- */
+/** @brief Retraction by normalization, \f$ x \leftarrow (x + h v) / \|x + h v\|_M \f$. */
 template <typename MatrixType>
 void retract_by_norm(const MatrixType& M, const Vector<double>& v, Vector<double>& x,
                      const double factor = 1.0)
@@ -54,6 +49,7 @@ void retract_by_norm(const MatrixType& M, const Vector<double>& v, Vector<double
     x /= std::sqrt(x * Mx);     // x' <- x' / ||x'||_M
 }
 
+/** @brief Normalization \f$ x \leftarrow x / \|x\|_M \f$. */
 template <typename MatrixType>
 void retract_by_norm(const MatrixType& M, Vector<double>& x)
 {
@@ -62,24 +58,7 @@ void retract_by_norm(const MatrixType& M, Vector<double>& x)
     x /= std::sqrt(x * Mx);
 }
 
-/**
- * @brief Computes the inverse retraction by normalization.
- *
- * Lifts a point @p v back to the tangent space of @p x by reversing the normalization
- * projection.
- *
- * Formula:
- * \f[
- * v \leftarrow \frac{v}{\langle x, v \rangle_M} - x
- * \f]
- *
- * @note This function modifies @p v in-place.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M The mass matrix defining the metric.
- * @param[in,out] v On input, the point on the manifold. On output, the tangent vector.
- * @param[in] x The base point on the manifold.
- */
+/** @brief Inverse of retract_by_norm() for \f$ v \in \mathcal{S} \f$: \f$ v \leftarrow v / (x^\top M v) - x \f$. */
 template <typename MatrixType>
 void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
 {
@@ -95,20 +74,10 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
 
 // TODO: use x as output vector as with other functions
 /**
- * @brief Computes the differentiated retraction by normalization.
- * Evaluates the differential of the retraction map at \f$v\f$ in the direction \f$w\f$:
- * \f[ \mathrm{D} R_\phi(v)[w] = \frac{1}{\|\phi+v\|_M} \left( I - \frac{(\phi+v)(\phi+v)^\top M}{\|\phi+v\|_M^2} \right) w \f]
- *
- * @note Because \f$w \in T_\phi \mathcal{M}\f$, we have \f$\phi^\top M w = 0\f$.
- * Thus, the numerator \f$(\phi+v)^\top M w\f$ simplifies exactly to \f$v^\top M w\f$.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M Mass matrix defining the metric.
- * @param[in] x Base point \f$\phi\f$ on the manifold.
- * @param[in] v Tangent vector (argument of the retraction).
- * @param[in] w Direction of differentiation.
- * @param[out] dst Resulting vector.
-*/
+ * @brief Differential of retract_by_norm() at \f$ v \f$ in the direction \f$ w \in T_x \mathcal{S} \f$, with
+ * \f$ y = x + v \f$ and using \f$ x^\top M w = 0 \f$:
+ * \f[ \mathrm{dst} = \mathrm{D} R_x(v)[w] = \frac{1}{\|y\|_M} \Big( w - \frac{v^\top M w}{\|y\|_M^2} \, y \Big) \f]
+ */
 template <typename MatrixType>
 void retract_diff_by_norm(const MatrixType& M,
                           const Vector<double>& x,
@@ -147,16 +116,10 @@ void retract_diff_by_norm(const MatrixType& M,
 }
 
 /**
- * @brief Computes the differentiated inverse retraction by normalization.
- * D_invRet_phi(zeta)[u] = (1 / (phi^T M zeta)) * ( I - ( zeta phi^T M ) / (phi^T M zeta) ) * u
- *
- * @tparam MatrixType
- * @param M Mass matrix
- * @param x Base point
- * @param zeta Argument of inverse retraction
- * @param u Direction of differentiation
- * @param dst Resulting vector
-*/
+ * @brief Differential of retract_inv_by_norm() at \f$ \zeta \f$ in the direction \f$ u \f$:
+ * \f[ \mathrm{dst} = \mathrm{D} R_x^{-1}(\zeta)[u]
+ *     = \frac{1}{x^\top M \zeta} \Big( u - \frac{x^\top M u}{x^\top M \zeta} \, \zeta \Big) \f]
+ */
 template <typename MatrixType>
 void retract_inv_diff_by_norm(const MatrixType& M,
                               const Vector<double>& x,
@@ -187,12 +150,8 @@ void retract_inv_diff_by_norm(const MatrixType& M,
 
 // TODO: verify adjoint property
 /**
- * @brief Computes the adjoint of the differentiated inverse retraction.
- * In the mass-weighted metric on the sphere, the adjoint of the differential of
- * the inverse retraction evaluates exactly to the forward differential with the
- * base point and the target point swapped.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
+ * @brief M-adjoint of retract_inv_diff_by_norm(), taken as that differential with \f$ x \f$ and \f$ \zeta \f$
+ * swapped (not yet verified, see the TODO).
  */
 template <typename MatrixType>
 void retract_inv_diff_by_norm_adjoint(const MatrixType& M,
@@ -211,21 +170,8 @@ inline void retract_inv_diff_by_norm_adjoint()
 }
 
 /**
- * @brief Computes the orthographic retraction.
- *
- * Maps a tangent vector @p z at base point @p x onto the manifold using the
- * orthographic projection:
- * \f[
- * R_x(h z) = \sqrt{1 - \|h z\|_M^2} x + h z
- * \f]
- *
- * @note Requires that \f$ \|h z\|_M < 1 \f$.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M The mass matrix defining the metric.
- * @param[in] v The tangent vector.
- * @param[in,out] x On input, the base point. On output, the retracted point.
- * @param[in] factor Scaling factor \f$ h \f$.
+ * @brief Orthographic retraction \f$ x \leftarrow \sqrt{1 - \|h v\|_M^2} \, x + h v \f$; requires
+ * \f$ \|h v\|_M < 1 \f$.
  */
 template <typename MatrixType>
 void retract_by_ortho(const MatrixType& M, const Vector<double>& v,
@@ -244,24 +190,7 @@ void retract_by_ortho(const MatrixType& M, const Vector<double>& v,
     x.add(factor, v);
 }
 
-/**
- * @brief Computes the inverse orthographic retraction.
- *
- * Lifts a point @p v from the manifold to the tangent space at @p x using
- * simple orthogonal projection. This is the inverse of the orthographic retraction.
- *
- * Operation:
- * \f[
- * v \leftarrow v - \langle x, v \rangle_M x
- * \f]
- *
- * @note This function modifies @p v in-place.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M The mass matrix defining the metric.
- * @param[in,out] v On input, the point on the manifold. On output, the tangent vector.
- * @param[in] x The base point on the manifold.
- */
+/** @brief Inverse of retract_by_ortho(): \f$ v \leftarrow v - (x^\top M v) \, x \f$. */
 template <typename MatrixType>
 void retract_inv_by_ortho(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
 {
@@ -273,23 +202,8 @@ void retract_inv_by_ortho(const MatrixType& M, Vector<double>& v, const Vector<d
 }
 
 /**
- * @brief Computes the exponential map retraction on the sphere.
- *
- * This function maps a tangent vector @p z at base point @p x back onto the manifold
- * along a geodesic.
- *
- * The formula corresponds to the Riemannian exponential map on the sphere:
- * \f[
- * \mathrm{Exp}_x(h z) = \cos(h \|z\|_M) x + \sin(h \|z\|_M) \frac{z}{\|z\|_M}
- * \f]
- *
- * @note This function modifies @p x in-place to store the result.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M The mass matrix defining the metric.
- * @param[in] v The tangent vector (direction).
- * @param[in,out] x On input, the base point. On output, the retracted point on the manifold.
- * @param[in] factor A scaling factor \f$ h \f$ applied to the tangent vector @p z. Defaults to 1.0.
+ * @brief Exponential map \f$ x \leftarrow \cos(h \|v\|_M) \, x + \sin(h \|v\|_M) \, v / \|v\|_M \f$, i.e. along
+ * the geodesic.
  */
 template <typename MatrixType>
 void retract_by_exp(const MatrixType& M, const Vector<double>& v, Vector<double>& x,
@@ -312,24 +226,8 @@ void retract_by_exp(const MatrixType& M, const Vector<double>& v, Vector<double>
 }
 
 /**
- * @brief Computes the inverse exponential map (logarithmic map) on the sphere.
- *
- * This function lifts a point @p v from the manifold to the tangent space at @p x.
- * Specifically, it computes \f$ \log_x(v) \f$ where both @p x and @p v are on the sphere.
- *
- * The formula used is:
- * \f[
- * \log_x(v) = \frac{\arccos(\langle x, v \rangle_M)}{\sqrt{1 - \langle x, v \rangle_M^2}}
- * \Pi_x(v)
- * \f]
- * where the projection component is computed via orthogonalization.
- *
- * @note This function modifies @p v in-place to store the result.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @param[in] M The mass matrix defining the metric.
- * @param[in,out] v On input, the point on the manifold. On output, the tangent vector.
- * @param[in] x The base point on the manifold.
+ * @brief Logarithmic map, the inverse of retract_by_exp(), with \f$ c = x^\top M v \f$:
+ * \f$ v \leftarrow \frac{\arccos c}{\sqrt{1 - c^2}} (v - c \, x) \f$ (factor 1 in the limit \f$ v \to x \f$).
  */
 template <typename MatrixType>
 void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
@@ -357,16 +255,14 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace ellipsoid
 
 
+/** @brief The unit-mass sphere as ManifoldBase, with retraction by normalization (see ellipsoid). */
 template <typename MatrixType>
 class UnitMassSphere : public ManifoldBase
 {
 public:
     explicit UnitMassSphere(const MatrixType& M) : M(M) {}
 
-    /**
-     * @brief Retracts a tangent vector back to the unit-mass manifold.
-     * \f[ R_x(z) = \frac{x + z}{\|x + z\|_M} \f]
-     */
+    /** @brief Retraction by normalization, see ellipsoid::retract_by_norm(). */
     void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
     {
         ellipsoid::retract_by_norm(M, z, x, factor);

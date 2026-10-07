@@ -13,10 +13,15 @@
 #include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/multigrid/mg_transfer_global_coarsening.h>
 
+/**
+ * @file
+ * @brief Linear grid transfers between two nested meshes: LinearTransfer (deal.II mesh interpolation) and
+ * LinearTransferMG (deal.II multigrid transfer, with the exact transpose Tfine()).
+ */
 namespace rmo::fe
 {
 
-// Linear interpolation using deal.ii mesh interpolation
+/** @brief Grid transfer by deal.II's interpolation to coarser and finer meshes. */
 template <int dim>
 class LinearTransfer : public LinearTransferBase
 {
@@ -58,16 +63,11 @@ private:
 
 
 /**
- * @brief Linear transfer built on deal.II's geometric global-coarsening
- * multigrid infrastructure (MGTwoLevelTransfer).
+ * @brief Grid transfer by deal.II's multigrid transfer (MGTwoLevelTransfer).
  *
- * Operator mapping (cf. the class documentation of MGTwoLevelTransferBase,
- * which distinguishes restriction of "right hand side vectors" from
- * interpolation of "solution vectors"):
- *  - to_fine_mesh()   = prolongate_and_add()  (FE embedding I_H^h)
- *  - to_coarse_mesh() = interpolate()         (solution/primal restriction,
- *                                              the FAS injection r)
- *  - Tfine()          = restrict_and_add()    (exact transpose (I_H^h)^T)
+ * - to_fine_mesh() = `prolongate_and_add()`: the embedding \f$ I_H^h \f$;
+ * - to_coarse_mesh() = `interpolate()`: restriction of solution vectors (injection at the coarse nodes);
+ * - Tfine() = `restrict_and_add()`: the exact transpose \f$ (I_H^h)^\top \f$.
  */
 template <int dim>
 class LinearTransferMG : public LinearTransferBase
@@ -87,10 +87,7 @@ public:
         transfer.reinit(dof_fine, dof_coarse, constraints_fine, constraints_coarse);
     }
 
-    /**
-     * @brief Prolongates a vector from the coarse mesh to the fine mesh.
-     * Evaluates \f$v_{fine} = I_H^h \cdot v_{coarse}\f$.
-     */
+    /** @brief \f$ v_h = I_H^h v_H \f$, then distributes the fine constraints. */
     void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
         DVector src(n_c), dst(n_f);
@@ -103,11 +100,7 @@ public:
         constraints_f.distribute(dst_fine);
     }
 
-    /**
-     * @brief Restricts a vector from the fine mesh to the coarse mesh via
-     * solution interpolation (pointwise injection at coarse nodes for nested
-     * Lagrange elements), matching the point-restriction map r.
-     */
+    /** @brief Injection at the coarse nodes, then distributes the coarse constraints. */
     void to_coarse_mesh(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
         DVector src(n_f), dst(n_c);
@@ -120,11 +113,7 @@ public:
         constraints_c.distribute(dst_coarse);
     }
 
-    /**
-     * @brief Transpose of the prolongation, \f$(I_H^h)^T\f$ (multigrid residual
-     * restriction). Exact adjoint of to_fine_mesh() w.r.t. the Euclidean
-     * pairing by construction.
-     */
+    /** @brief \f$ (I_H^h)^\top v_h \f$, the transpose of to_fine_mesh(). */
     void Tfine(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
         DVector src(n_f), dst(n_c);

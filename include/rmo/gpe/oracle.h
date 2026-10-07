@@ -10,11 +10,20 @@
 
 #include <deal.II/base/timer.h>
 
+/**
+ * @file
+ * @brief Oracles of the Gross-Pitaevskii energy on the unit-mass sphere, one per metric of the Riemannian gradient:
+ * MassOracle (\f$ M \f$), EnergyOracle (energy-adaptive, \f$ A(x) \f$) and FrobeniusOracle (Euclidean, the
+ * F-metric).
+ *
+ * The oracles evaluate a GrossPitaevskiiFunctional at the state of its last update(), compute gradients with the
+ * kernels of kernels.h, and own the residual of their problem (get_residual()). The residual passed to
+ * gradient() sets the tolerance of the inner solve.
+ */
 namespace rmo::gpe
 {
 
-// Common methods for GP oracles (only distinction in used metric for Riemannian gradient)
-// System: GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem
+/** @brief Shared part of the oracles of a @p System (GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem). */
 template <typename System>
 class GrossPitaevskiiOracle : public OracleBase
 {
@@ -74,6 +83,7 @@ protected:
 };
 
 
+/** @brief Riemannian gradient in the M-metric: one solve with \f$ M \f$ (exact for a lumped system). */
 template <typename System>
 class MassOracle : public GrossPitaevskiiOracle<System>
 {
@@ -138,6 +148,7 @@ private:
 };
 
 
+/** @brief Riemannian gradient in the energy-adaptive metric: one solve with \f$ A(x) \f$. */
 template <typename System>
 class EnergyOracle : public GrossPitaevskiiOracle<System>
 {
@@ -156,10 +167,7 @@ public:
           , m_metric(func.get_A(), metric_t)
     {}
 
-    /**
-     * @brief Computes the Riemannian gradient in the A-metric.
-     * Solves the inner linear system \f$ A^{-1} \nabla E \f$ using the PreconditionInverse wrapper.
-     */
+    /** @brief \f$ \grad_A E(x) \f$, see kernels::grad_energy_adaptive(), with the tolerance from the residual at @p x. */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         // TODO: include residual in CPU time evaluation
@@ -205,6 +213,7 @@ private:
 };
 
 
+/** @brief Riemannian gradient in the F-metric: no inner solve. */
 template <typename System>
 class FrobeniusOracle : public GrossPitaevskiiOracle<System>
 {
@@ -219,10 +228,7 @@ public:
         : Base(func)
     {}
 
-    /**
-     * @brief Computes the Riemannian gradient in the F-metric.
-     * \f[ \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi \f]
-     */
+    /** @brief \f$ \grad_F E(x) \f$, see kernels::grad_frobenius(). */
     GradInfo gradient(const Vector<double>& x, Vector<double>& output) const override
     {
         dealii::Timer timer;

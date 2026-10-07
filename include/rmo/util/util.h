@@ -12,6 +12,11 @@
 #include <type_traits>
 #include <vector>
 
+/**
+ * @file
+ * @brief Utilities of the driver programs: runtime selection of the dimension and the system type, solution
+ * output, enum/string conversion of the options and option dumps.
+ */
 namespace rmo
 {
 
@@ -22,11 +27,7 @@ template <int dim> class GrossPitaevskiiSystem;
 template <int dim> class GrossPitaevskiiLumpedSystem;
 } // namespace gpe
 
-//! Take boundary points as strings "x,y,z" from the command-line
-//! @tparam dim
-//! @param s
-//! @param sep
-//! @return
+//! Point from a string of @p sep separated coordinates, e.g. "x,y,z" from the command line.
 template <int dim>
 dealii::Point<dim> str_to_point(const std::string& s, const char sep=',') {
     dealii::Point<dim> p;
@@ -41,11 +42,7 @@ dealii::Point<dim> str_to_point(const std::string& s, const char sep=',') {
     return p;
 }
 
-//! Select dimension (compile-time) at runtime
-//! @tparam F
-//! @param dim
-//! @param f
-//! @return
+//! Calls `f(std::integral_constant<int, dim>{})` for the runtime @p dim (1, 2 or 3).
 template <class F>
 decltype(auto) with_dimension(unsigned dim, F&& f)
 {
@@ -59,10 +56,8 @@ decltype(auto) with_dimension(unsigned dim, F&& f)
     }
 }
 
-//! Select the Gross-Pitaevskii system type (compile-time) at runtime
-//! @tparam dim Problem dimension
-//! @param mass_lumping Selects gpe::GrossPitaevskiiLumpedSystem<dim> if true, gpe::GrossPitaevskiiSystem<dim> otherwise
-//! @param f Callable templated on the system type, e.g. [&]<typename System>() { ... }
+//! Calls `f.template operator()<System>()` with the system type selected at runtime: GrossPitaevskiiLumpedSystem
+//! if @p mass_lumping is set, GrossPitaevskiiSystem otherwise; e.g. `f = [&]<typename System>() { ... }`.
 template <int dim, class F>
 decltype(auto) with_system(bool mass_lumping, F&& f)
 {
@@ -72,12 +67,7 @@ decltype(auto) with_system(bool mass_lumping, F&& f)
     return f.template operator()<gpe::GrossPitaevskiiSystem<dim>>();
 }
 
-//!
-//! @tparam dim Problem dimension
-//! @param solution
-//! @param dof_handler
-//! @param format
-//! @param filename
+//! Writes @p solution (named "psi") to @p filename in @p format.
 template <int dim>
 void output_results(const dealii::Vector<double>& solution, const dealii::DoFHandler<dim>& dof_handler,
     const dealii::DataOutBase::OutputFormat format, const std::string& filename)
@@ -91,8 +81,8 @@ void output_results(const dealii::Vector<double>& solution, const dealii::DoFHan
     data_out.write(output, format);
 }
 
-//! Writes the final iterate to <basename>.vtk and, if @p every > 0, also every k-th and the final
-//! iterate to <basename>_iter<i>.vtk, which ParaView reads as one time series.
+//! Writes the final iterate to `basename.vtk` and, if @p every > 0, also every k-th and the final iterate to
+//! `basename_iter<i>.vtk`, which ParaView reads as one time series.
 template <int dim>
 void output_vtk(const std::vector<dealii::Vector<double>>& history, const dealii::DoFHandler<dim>& dof_handler,
                 const std::string& basename, unsigned every)
@@ -113,19 +103,14 @@ void output_vtk(const std::vector<dealii::Vector<double>>& history, const dealii
     }
 }
 
-//!
-//! @param s
-//! @return
+//! Upper-case copy of @p s.
 inline std::string upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned const char c){ return std::toupper(c); });
     return s;
 }
 
-//!
-//! @tparam E
-//! @param v
-//! @return
+//! Name of the enumerator @p v of a described enum (BOOST_DESCRIBE_ENUM), or "UNKNOWN".
 template<class E>
 std::string enum_to_string(E v) {
     using namespace boost::describe;
@@ -143,10 +128,8 @@ std::string enum_to_string(E v) {
     return found ? result : "UNKNOWN";
 }
 
-//!
-//! @tparam E
-//! @param name
-//! @return
+//! Enumerator of a described enum (BOOST_DESCRIBE_ENUM) with name @p name.
+//! @throws std::runtime_error if there is none.
 template<class E>
 E string_to_enum(const std::string& name) {
     using namespace boost::describe;
@@ -167,10 +150,7 @@ E string_to_enum(const std::string& name) {
     throw std::runtime_error(name + ": invalid enum value");
 }
 
-//!
-//! @tparam T
-//! @param obj
-//! @param out
+//! Writes the public members of a described struct (BOOST_DESCRIBE_STRUCT) as `name = value` lines.
 template<class T>
 void dump_options(const T& obj, std::ostream& out)
 {

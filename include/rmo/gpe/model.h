@@ -9,16 +9,16 @@
 #include <rmo/option_types.h>
 
 
+/**
+ * @file
+ * @brief ModelBuilder: owner of the package and system of one level, and factory of its functionals.
+ */
 namespace rmo::gpe
 {
 
 /**
- * @brief Orchestrator for Gross-Pitaevskii simulations.
- * The ModelBuilder owns the persistent @ref GrossPitaevskiiPackage (discretization) and the
- * assembled @ref GrossPitaevskiiSystem, and creates the @ref GrossPitaevskiiFunctional evaluators
- * (see get_eval()) used by the oracles, e.g. @ref GrossPitaevskiiOracle.
- *
- * @tparam System GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem.
+ * @brief Owns the GrossPitaevskiiPackage and the assembled @p System (GrossPitaevskiiSystem or
+ * GrossPitaevskiiLumpedSystem) of one level, and creates GrossPitaevskiiFunctional objects for it.
  */
 template <typename System>
 class ModelBuilder
@@ -28,11 +28,8 @@ public:
     using Functional = GrossPitaevskiiFunctional<System>;
 
     /**
-     * @brief Constructor.
-     * @tparam Potential Functor or class representing the external potential \f$ V(x) \f$.
-     * @param V The potential object.
-     * @param options General options for GPE discretization.
-     * @param n_levels Number of global mesh refinements.
+     * @brief Discretizes with @p options on @p n_levels mesh levels (`n_levels - 1` global refinements) and assembles
+     * the system for the potential @p V (see namespace potential).
      */
     template <typename Potential>
     ModelBuilder(Potential&& V, const GPE_Options& options, unsigned int n_levels)
@@ -49,15 +46,15 @@ public:
         package.distribute(x);
     }
 
-    /** @brief Access the discretization package. */
     const GrossPitaevskiiPackage<dim>& get_package() const { return package; }
     const dealii::DoFHandler<dim>& get_dofs() const { return package.get_dofs(); }
 
     const System& get_system() const { return system; }
     System& get_system() { return system; }
 
-    /** @brief Computation of value and derivatives in ambient space.
-     * Non-const so calls to GrossPitaevskiiSystem::update() can propagate
+    /**
+     * @brief Functional of the system with @p beta (default: from the options). Non-const, since the functional
+     * reassembles \f$ M_{\phi\phi} \f$ of the system.
      */
     Functional get_eval(double beta, SolverOptions options_slv)
     {
@@ -77,13 +74,8 @@ public:
     const SparseMatrix<double>& get_A0() const { return system.get_A0(); }
 
 private:
-    /** @brief Persistent discretization infrastructure. */
     GrossPitaevskiiPackage<dim> package;
-
-    /** @brief Assembly and storage of matrices. */
     System system;
-
-    /** @brief Problem configuration options. */
     GPE_Options options;
 };
 

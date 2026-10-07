@@ -4,9 +4,17 @@
 #include <algorithm>
 #include <stdexcept>
 
+/**
+ * @file
+ * @brief Random numbers for test data and starting values: normal (normrnd()), uniform (unifrnd()) and
+ * integer (randi()) samples.
+ */
 namespace rmo {
 
-/// XXX: allow user-specified seed
+/**
+ * @brief Engine of all random numbers (one per thread), seeded from `std::random_device`: results
+ * differ between runs. TODO: allow a user-specified seed.
+ */
 inline std::mt19937& random_engine()
 {
     static thread_local std::mt19937 twister{std::random_device{}()};

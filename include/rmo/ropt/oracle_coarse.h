@@ -10,9 +10,15 @@
 
 #include <concepts>
 
+/**
+ * @file
+ * @brief CoarseOracleBase: the problem-independent part of the coarse models of FullApproximationScheme, and the
+ * concepts of the coarse oracles and coarse residuals.
+ */
 namespace rmo
 {
 
+//! Points, gradients and correction of the current coarse model, see CoarseOracleBase::update_model().
 // TODO: keep track of fine vector for consistency
 struct CoarseState
 {
@@ -34,10 +40,11 @@ struct CoarseState
 };
 
 
-// Class which implements all needed terms for the Nash coarse model. It assumes an oracle on a fine and coarse
-// level of discretization (implementing Riemannian gradient descent for a certain metric),
-// used to compute a correction vector between coarse and fine gradients.
-// Note: generic methods which is compatible with OracleBase
+/**
+ * @brief Problem-independent part of the coarse model: from a fine and a coarse tilt oracle (with the same
+ * metric) and the transfers, update_model() computes the restricted point \f$ y = r(x) \f$ and the correction
+ * \f$ w = \grad f_H(y) - \mathcal{R} \grad f_h(x) \f$ used by the coarse oracles.
+ */
 class CoarseOracleBase
 {
 public:
@@ -157,7 +164,7 @@ protected:
 
 
 // Contract for the coarse oracles handed to FullApproximationScheme::cycle():
-// an OracleBase built on top of the (problem-independent) Nash coarse model.
+// an OracleBase built on top of the problem-independent CoarseOracleBase.
 template <typename T>
 concept CoarseOracle = std::derived_from<T, OracleBase>
                     && std::constructible_from<T, CoarseOracleBase&, SolverOptions>;

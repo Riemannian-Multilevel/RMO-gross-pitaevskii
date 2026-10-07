@@ -9,6 +9,10 @@
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/timer.h>
 
+/**
+ * @file
+ * @brief Armijo line search on a manifold, and solver status types.
+ */
 namespace rmo
 {
 using dealii::ConvergenceTable::RateMode::reduction_rate;
@@ -16,8 +20,8 @@ using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
 
 // TODO: use in GradientDescent::cycle()
 enum class SolverStatus {
-    CONVERGED,          // iterative method, diverged for given tolerance
-    NOT_CONVERGED,      // iterative method, converged for given tolerance
+    CONVERGED,          // iterative method, converged for given tolerance
+    NOT_CONVERGED,      // iterative method, not converged for given tolerance
     SOLUTION,           // non-iterative method
     ERROR               // solver error
 };
@@ -38,18 +42,18 @@ struct SolverInfo {
 // };
 
 /**
- * @brief Performs the Armijo backtracking line search on the manifold.
- * @param oracle The manifold and objective function interface.
- * @param manifold
- * @param x [in-out] Current base point.
- * @param eta Search direction (must be a descent direction).
- * @param fx Function value at current point f(x).
- * @param dir_deriv Directional derivative <grad f(x), eta>_x.
- * @param options Line search parameters.
- * @return The accepted step size alpha (returns 0 if failed to converge).
+ * @brief Armijo backtracking line search for @p oracle along the descent direction @p eta at @p x.
+ *
+ * Starting from options.ls.alpha and reducing by options.ls.beta, accepts the first step size \f$ \alpha \f$ with
+ * \f$ f(R_x(\alpha \eta)) \le f(x) + \sigma \alpha \langle \grad f(x), \eta \rangle_x \f$ (up to rounding). A
+ * trial step size below options.ls.min is accepted unconditionally. On acceptance, @p x and the oracle are at the
+ * new point. @p fx is \f$ f(x) \f$ and @p dir_deriv is \f$ \langle \grad f(x), \eta \rangle_x \f$.
+ *
+ * @return The step size (options.ls.min for an unconditional step), or 0 if no step was accepted within
+ * options.ls.max_iter trials; then @p x and the oracle are unchanged.
  */
-// TODO: vector x is updated in place, even for tentative steps, since no copy
-//       of the problem state (large sparse matrix term Mpp) is made
+// TODO: the oracle state (e.g. M_phiphi) is reassembled for every trial point and restored after a rejection,
+//       since it is not copied
 template <typename VectorType, typename OracleType>
 double armijo_line_search(OracleType& oracle,
                           const ManifoldBase& manifold,
@@ -98,13 +102,8 @@ double armijo_line_search(OracleType& oracle,
     }
     std::cerr << "Warning: Armijo line search hit max iterations ("
               << options.ls.max_iter << ")." << std::endl;
-    // x was never assigned x_trial above, so it (and the oracle's cached
-    // state, restored after each rejected trial) are unchanged -- signal
-    // that no step was taken, per this function's documented contract,
-    // instead of returning options.ls.min as if a (nonexistent) floor step
-    // had succeeded. Silently doing the latter previously caused callers to
-    // treat a stalled search as progress and retry it forever on an
-    // identical, still-non-descent direction (see cycle_smooth()/GradientDescent::cycle()).
+    // No step accepted: x and the oracle state are unchanged. Returning 0 (not options.ls.min) lets callers
+    // detect the stalled search, see cycle_smooth() and GradientDescent::cycle().
     return 0.0;
 }
 

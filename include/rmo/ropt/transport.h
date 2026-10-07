@@ -4,9 +4,15 @@
 #include <rmo/ropt/interpolate.h>
 #include <rmo/option_types.h>
 
+/**
+ * @file
+ * @brief Interfaces of the transfers between a fine manifold \f$ \mathcal{S}_h \f$ and a coarse manifold
+ * \f$ \mathcal{S}_H \f$ (implementations and notation: gpe/transport.h).
+ */
 namespace rmo
 {
 
+/** @brief Point maps \f$ r: \mathcal{S}_h \to \mathcal{S}_H \f$ and \f$ p: \mathcal{S}_H \to \mathcal{S}_h \f$, built on a linear transfer. */
 class ManifoldTransferBase
 {
 public:
@@ -40,6 +46,7 @@ protected:
 };
 
 
+/** @brief Transport of tangent vectors between the coarse and the fine manifold. */
 class VectorTransportBase
 {
 public:
@@ -47,11 +54,8 @@ public:
     virtual ~VectorTransportBase() = default;
 
     /**
-     * @brief Prolongs a tangent vector from the coarse grid to the fine grid.
-     * @param x_fine The actual fine iterate (defines the target tangent space).
-     * @param y_coarse The coarse iterate (defines the source tangent space).
-     * @param v_coarse The vector in T_x S_H to be prolonged.
-     * @param dst_fine [out] The prolonged vector, guaranteed to be in T_y S_h.
+     * @brief Prolongs @p v_coarse \f$ \in T_y \mathcal{S}_H \f$ at the coarse iterate \f$ y \f$ (@p y_coarse) to
+     * @p dst_fine \f$ \in T_x \mathcal{S}_h \f$ at the fine iterate \f$ x \f$ (@p x_fine).
      */
     virtual void vector_prolongation(const Vector<double>& x_fine,
                                      const Vector<double>& y_coarse,
@@ -59,11 +63,8 @@ public:
                                      Vector<double>& dst_fine) const = 0;
 
     /**
-     * @brief Restricts a tangent vector from the fine grid to the coarse grid.
-     * @param y_coarse The actual coarse iterate (defines the target tangent space).
-     * @param x_fine The fine iterate (defines the source tangent space).
-     * @param v_fine The vector in T_y S_h to be restricted.
-     * @param dst_coarse [out] The restricted vector, guaranteed to be in T_x S_H.
+     * @brief Restricts @p v_fine \f$ \in T_x \mathcal{S}_h \f$ at the fine iterate \f$ x \f$ (@p x_fine) to
+     * @p dst_coarse \f$ \in T_y \mathcal{S}_H \f$ at the coarse iterate \f$ y \f$ (@p y_coarse).
      */
     virtual void vector_restriction(const Vector<double>& y_coarse,
                                     const Vector<double>& x_fine,

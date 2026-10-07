@@ -13,20 +13,18 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief Raw binary output of DoF coordinates and solution vectors, for post-processing outside deal.II
+ * (e.g. rasterizing in Python, see plot_solution.py), which scales to large numbers of DoFs.
+ */
 namespace rmo
 {
 
 /**
- * @brief Writes the real-space support point coordinates of every DoF to a
- * simple binary file, for post-processing solution vectors outside deal.II
- * (e.g. rasterizing to a fixed-resolution image in Python instead of writing
- * one SVG polygon per cell, which does not scale to large DoF counts).
+ * @brief Writes the support points of all DoFs; once per mesh, shared by all solution files on it.
  *
- * Layout: uint32 magic | uint32 dim | uint64 n_dofs | n_dofs*dim doubles,
- * row-major (x0,y0,[z0,] x1,y1,[z1,] ...).
- *
- * Call this once per mesh/level -- support points are shared by every
- * solution iterate on that level and do not need to be repeated per file.
+ * Layout: uint32 magic | uint32 dim | uint64 n_dofs | n_dofs*dim doubles, row-major (x0, y0, [z0,] x1, ...).
  */
 template <int dim>
 void write_support_points(const dealii::DoFHandler<dim>& dof_handler,
@@ -58,9 +56,7 @@ void write_support_points(const dealii::DoFHandler<dim>& dof_handler,
 }
 
 /**
- * @brief Writes a raw solution vector to a simple binary file for
- * post-processing outside deal.II. DoF ordering must match the
- * write_support_points() call for the same level.
+ * @brief Writes a solution vector, in the DoF order of write_support_points() for the same mesh.
  *
  * Layout: uint32 magic | uint64 n_dofs | n_dofs doubles.
  */

@@ -12,25 +12,28 @@
 
 #include <rmo/ropt/oracle_coarse.h>
 
+/**
+ * @file
+ * @brief Coarse oracles of the coarse models \f$ \Psi(\zeta) = E_c(\zeta) - \langle w, R_y^{-1}(\zeta) \rangle \f$
+ * (see kernels.h), built on a CoarseOracleBase.
+ *
+ * The CoarseOracleBase computes the correction \f$ w = \grad E_c(y) - \mathcal{R} \grad E_f(x) \f$ from its coarse
+ * and fine tilt oracles; their metric (M or F) defines the inner product of the model. The fine tilt oracle is a
+ * level oracle, or a coarse oracle in a recursive cycle. The metric of the Riemannian gradient of \f$ \Psi \f$
+ * may differ from that of the model:
+ * - MassCoarseOracle: M-metric model, gradient in the M-metric;
+ * - MassCoarseOracleEnergyAdaptive: M-metric model, gradient in the energy-adaptive metric;
+ * - FrobeniusCoarseOracle: F-metric model, gradient in the F-metric;
+ * - FrobeniusCoarseOracleEnergyAdaptive: F-metric model, gradient in the energy-adaptive metric.
+ */
 namespace rmo::gpe
 {
-
-// O_coarse: oracle for evaluating \grad E_c(y) in correction term w = \grad E_c(y) - R \grad E_f(x)
-//           assumed to be consistent with metric in oracle for evaluating <w, .>_y
-
-// O_fine:   oracle for evaluating \grad E_f(x) in correction term w = \grad E_c(y) - R \grad E_f(x)
-//           assumed to be consistent with metric in oracle for evaluating <w, .>_y
-//           independent of oracle used for gradient descent on the fine level
-//           can be either a descent oracle, or a coarse oracle for a recursive implementation
-
-// this:     oracle for evaluating coarse model q_k(y) = E_c(y) + <w, .>_y
-//           oracle for evaluating gradient of coarse model \grad q_k(y)
-//           metric for \grad q_k(y) can differ from gradient of w and <w, .>_y
 
 
 // =========================================================================
 // Mass Coarse Family
 // =========================================================================
+/** @brief M-metric coarse model, Riemannian gradient in the M-metric. */
 template <typename System>
 class MassCoarseOracle : public OracleBase
 {
@@ -145,6 +148,7 @@ private:
 };
 
 
+/** @brief M-metric coarse model, Riemannian gradient in the energy-adaptive metric. */
 template <typename System>
 class MassCoarseOracleEnergyAdaptive : public OracleBase
 {
@@ -260,6 +264,7 @@ private:
 // Frobenius Coarse Family
 // =========================================================================
 
+/** @brief F-metric coarse model, Riemannian gradient in the F-metric. */
 template <typename System>
 class FrobeniusCoarseOracle : public OracleBase
 {
@@ -350,6 +355,7 @@ private:
 };
 
 
+/** @brief F-metric coarse model, Riemannian gradient in the energy-adaptive metric. */
 template <typename System>
 class FrobeniusCoarseOracleEnergyAdaptive : public OracleBase
 {

@@ -24,9 +24,16 @@
  * overwritten), the DoFHandler, the quadrature rule and mapping, the constraints applied when
  * distributing cell matrices, and an optional multigrid level (default: active cells).
  *
- * The `*_lumped` variants assemble diagonal matrices into a `DiagonalMatrix` or a `SparseMatrix`.
- * They require a lumpable element (\f$ \int_K \phi_i > 0 \f$, e.g. `FE_Q`, `FE_SimplexP(1)`,
- * `FE_SimplexP_Bubbles(2)`) and no hanging-node constraints.
+ * The `*_lumped` variants assemble diagonal matrices (row-sum lumping) into a `DiagonalMatrix` or a
+ * `SparseMatrix`. They require positive row sums of the mass matrix, \f$ \int_\Omega \phi_i > 0 \f$
+ * (e.g. `FE_Q`, `FE_SimplexP(1)`, `FE_SimplexP_Bubbles(2)`, but not `FE_SimplexP(2)`), and no
+ * hanging-node constraints.
+ *
+ * General (non-affine) cells: the lumped matrices are integrals of \f$ \hat\phi_i |J| \f$ over the
+ * reference cell, so the quadrature must integrate these exactly. With `MappingQ1` on quadrilaterals,
+ * \f$ |J| \f$ is bilinear and `QGauss(p + 1)` suffices, also on general quadrilaterals. A nodal rule
+ * (quadrature points at the support points) instead gives \f$ \hat w_i |J(\hat a_i)| \f$, which agrees
+ * only on affine cells, where \f$ |J| \f$ is constant.
  */
 namespace rmo::fe
 {
@@ -38,8 +45,7 @@ using dealii::numbers::invalid_unsigned_int;
  *
  * On each cell, `assemble_cell(fe_values, cell_matrix, local_dof_indices)` computes the cell matrix,
  * which is then distributed with @p constraints. The caller constructs @p fe_values (quadrature,
- * mapping, update flags); a kernel that needs a second quadrature rule can reinitialize its own
- * `FEValues` with `fe_values.get_cell()`.
+ * mapping, update flags).
  *
  * @p system_matrix must have the size of the DoF space (on @p level), and is zeroed first if
  * @p reinit is set. A `DiagonalMatrix` keeps only the diagonal entries.
@@ -128,7 +134,8 @@ void assemble_mass(GlobalMatrix& system_matrix,
 /**
  * @brief Lumped mass matrix \f$ (M_L)_{ii} = \int_\Omega \phi_i \, dx \f$, the row sums of \f$ M \f$.
  *
- * @p quadrature must integrate the shape functions exactly; Gauss and nodal rules give the same result.
+ * @p quadrature must integrate \f$ \hat\phi_i |J| \f$ exactly on each cell (see the file documentation),
+ * e.g. the rule used for the stiffness matrix.
  */
 template <int dim, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
 void assemble_mass_lumped(GlobalMatrix& system_matrix,
@@ -255,8 +262,9 @@ void assemble_A0(GlobalMatrix& system_matrix,
 /**
  * @brief Linear part of the Gross-Pitaevskii operator with lumped potential, \f$ A_0 = S + M_{V,L} \f$.
  *
- * @p quadrature is used for \f$ S \f$ and must integrate gradients accurately (e.g. `QGauss(p + 1)`);
- * @p quadrature_mass is used for \f$ M_{V,L} \f$ and should be the nodal rule.
+ * The potential is evaluated at the support points \f$ a_i \f$: \f$ (M_{V,L})_{ii} = V(a_i) \, (M_L)_{ii} \f$,
+ * with \f$ M_L \f$ as assembled by assemble_mass_lumped() with the same @p quadrature. On affine cells
+ * this equals the nodal quadrature of \f$ \int_\Omega V \phi_i \phi_j \f$.
  */
 template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
 void assemble_A0_lumped(GlobalMatrix& system_matrix,
@@ -337,7 +345,7 @@ void assemble_mass_phiphi(GlobalMatrix& matrix,
  *
  * \f$ M_{\phi\phi,L}(u)\,u \f$ is the exact gradient of the lumped energy
  * \f$ \tfrac14 \sum_i (M_L)_{ii} u_i^4 \f$, so value and gradient of the functional are consistent.
- * Any quadrature that integrates \f$ \phi_i \f$ exactly gives the same result.
+ * @p quadrature has the same requirement as for assemble_mass_lumped().
  */
 template <int dim, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
 void assemble_mass_phiphi_lumped(GlobalMatrix& matrix,

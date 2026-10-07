@@ -1,21 +1,20 @@
-//
-// Verification of the linear case (beta = 0) against an ARPACK eigenvalue solve.
-//
-// For beta = 0 the Gross-Pitaevskii energy reduces to the Rayleigh quotient of a linear pencil:
-//
-//     E(x) = 1/2 x^T A0 x     on   { x : x^T M x = 1 },
-//
-// so its minimizer is the eigenvector of  A0 u = lambda M u  belonging to the smallest eigenvalue
-// lambda_1, and the minimal energy is lambda_1 / 2. This program minimizes E with Riemannian
-// gradient descent, computes lambda_1 independently with ARPACK, and compares the two.
-//
-// Note on boundary conditions: with --boundary dirichlet the constrained rows of A0 and M carry
-// artificial diagonal entries and contribute spurious eigenvalues to the pencil. The default
-// (neumann) leaves the system unconstrained, which is what makes the comparison clean.
-//
+/**
+ * @file
+ * @brief Checks the minimizer of the linear problem (\f$ \beta = 0 \f$) against an ARPACK eigenvalue solve.
+ *
+ * For \f$ \beta = 0 \f$, the energy is \f$ E(x) = \frac12 x^\top A_0 x \f$ on \f$ x^\top M x = 1 \f$. Its minimizer is
+ * the eigenvector of \f$ A_0 u = \lambda M u \f$ for the smallest eigenvalue \f$ \lambda_1 \f$, and the minimal
+ * energy is \f$ \lambda_1 / 2 \f$. The test minimizes \f$ E \f$ by Riemannian gradient descent, computes
+ * \f$ \lambda_1 \f$ with ARPACK, and compares the two.
+ *
+ * With `--boundary dirichlet`, the constrained rows of \f$ A_0 \f$ and \f$ M \f$ add artificial eigenvalues; the
+ * default (neumann) has no constrained rows. Without ARPACK in deal.II, the test is skipped.
+ */
+#include "check.h"
+
+#include <rmo/gpe/manifold.h>
 #include <rmo/gpe/model.h>
 #include <rmo/gpe/oracle.h>
-#include <rmo/gpe/manifold.h>
 
 #include <rmo/ropt/observer_table.h>
 #include <rmo/ropt/solver.h>
@@ -33,210 +32,179 @@
 #include <cmath>
 #include <complex>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <vector>
 
 using namespace rmo;
 using namespace rmo::gpe;
+using namespace rmo::test;
 using namespace dealii;
 
-//! Return code reported to ctest when the build cannot run this test (SKIP_RETURN_CODE)
-constexpr int SKIP_TEST = 77;
-
 #ifdef DEAL_II_WITH_ARPACK
-
-//! @brief Eigenvalues of A0 u = lambda M u closest to zero, by shift-and-invert with sigma = 0.
-//!
-//! With sigma = 0 the Arnoldi iteration runs on A0^{-1} M, whose largest-magnitude eigenvalues
-//! 1/lambda are the smallest lambda of the original pencil; ArpackSolver transforms them back.
-//! @p A_inv only has to provide vmult(dst, src), i.e. solve A0 dst = src.
-template <int dim>
-std::vector<double>
-smallest_eigenvalues(const GrossPitaevskiiSystem<dim>& system,
-                     const InverseOpType& A_inv,
-                     std::vector<Vector<double>>& eigenvectors,
-                     unsigned n_eigen)
+namespace
 {
-    const unsigned n_dofs = system.n_dofs();
 
-    SolverControl solver_control(n_dofs, 1e-12, false, false);
-    // ARPACK requires strictly more Arnoldi vectors than 2*n_eigen + 1
-    ArpackSolver::AdditionalData data(2 * n_eigen + 2, ArpackSolver::largest_magnitude,
-                                      /*symmetric=*/true);
-    ArpackSolver eigensolver(solver_control, data);
+struct Config
+{
+    GPE_Options    gpe{};
+    SolverOptions  solver{};
+    DescentOptions descent{};
+    unsigned       level   = 0;    ///< number of global refinements
+    unsigned       n_eigen = 0;    ///< number of eigenvalues computed by ARPACK
+    double         tol     = 0.0;  ///< relative tolerance of the comparison
+};
 
-    std::vector<std::complex<double>> lambda(n_eigen);
-    eigenvectors.assign(n_eigen, Vector<double>(n_dofs));
+//! Configuration from the command line, or nothing for --help.
+std::optional<Config> parse_options(int argc, char* argv[])
+{
+    po::options_description all("Verification of the linear case (beta = 0) against ARPACK");
+    all.add(gpe_cli_options());
+    all.add(descent_cli_options());
+    all.add(inner_cli_options());
+    all.add_options()
+        ("help", "print this message")
+        ("level", po::value<unsigned>()->default_value(6), "number of global refinements")
+        ("n-eigen", po::value<unsigned>()->default_value(4), "number of eigenvalues to compute")
+        ("tol-check", po::value<double>()->default_value(1e-6), "relative tolerance of the comparison");
 
-    eigensolver.solve(system.get_A0(), system.get_M(), A_inv, lambda, eigenvectors, n_eigen);
-
-    std::vector<double> lambda_re;
-    for (const auto& l : lambda) {
-        lambda_re.push_back(l.real());
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, all), vm);
+    po::notify(vm);
+    if (vm.count("help")) {
+        std::cout << all << std::endl;
+        return std::nullopt;
     }
-    return lambda_re;
+
+    Config config;
+    apply_gpe_options(vm, config.gpe);
+    apply_descent_options(vm, config.descent);
+    apply_inner_options(vm, config.solver);
+    config.level   = vm["level"].as<unsigned>();
+    config.n_eigen = vm["n-eigen"].as<unsigned>();
+    config.tol     = vm["tol-check"].as<double>();
+
+    if (config.gpe.beta != 0.0) {
+        std::cerr << "note: --beta " << config.gpe.beta << " ignored, the check requires beta = 0\n";
+    }
+    config.gpe.beta = 0.0;
+    return config;
 }
 
+struct Eigenpairs
+{
+    std::vector<double>         lambda;
+    std::vector<Vector<double>> u;
+};
 
-//! @brief Scales u to u^T M u = 1 and returns |x^T M u|, which is 1 iff x and u are parallel.
+//! @brief Eigenpairs of A0 u = lambda M u closest to zero, by ARPACK in shift-and-invert mode with shift 0.
+//!
+//! ARPACK finds the largest eigenvalues 1/lambda of A0^{-1} M, i.e. the smallest lambda. @p A_inv applies A0^{-1}.
+template <int dim>
+Eigenpairs smallest_eigenpairs(const GrossPitaevskiiSystem<dim>& system, const InverseOpType& A_inv, unsigned n_eigen)
+{
+    SolverControl control(system.n_dofs(), 1e-12, false, false);
+    // ARPACK requires more than 2 * n_eigen + 1 Arnoldi vectors
+    const ArpackSolver::AdditionalData data(2 * n_eigen + 2, ArpackSolver::largest_magnitude, /*symmetric=*/true);
+    ArpackSolver eigensolver(control, data);
+
+    std::vector<std::complex<double>> lambda(n_eigen);
+    Eigenpairs pairs{{}, std::vector<Vector<double>>(n_eigen, Vector<double>(system.n_dofs()))};
+    eigensolver.solve(system.get_A0(), system.get_M(), A_inv, lambda, pairs.u, n_eigen);
+
+    for (const auto& l : lambda) {
+        pairs.lambda.push_back(l.real());
+    }
+    return pairs;
+}
+
+//! |x^T M u| for u scaled to u^T M u = 1; equal to 1 iff x and u are parallel (for x^T M x = 1).
 template <typename MatrixType>
 double mass_overlap(const MatrixType& M, const Vector<double>& x, Vector<double> u)
 {
     Vector<double> Mu(u.size());
-
     M.vmult(Mu, u);
     u /= std::sqrt(u * Mu);
-
     M.vmult(Mu, u);
     return std::abs(x * Mu);
 }
 
-
 template <int dim>
-bool run_check(GPE_Options options, SolverOptions options_slv, DescentOptions options_gd,
-               unsigned level, unsigned n_eigen, double tol)
+void check_linear_minimizer(CheckReport& report, const Config& config)
 {
-    auto potential_v = potential::get_potential<dim>(options.potential, options.potential_expr);
     auto builder = std::visit([&](auto&& V) {
-        return ModelBuilder<GrossPitaevskiiSystem<dim>>(V, options, level);
-    }, potential_v);
-
+        return ModelBuilder<GrossPitaevskiiSystem<dim>>(V, config.gpe, config.level);
+    }, potential::get_potential<dim>(config.gpe.potential, config.gpe.potential_expr));
     auto& system = builder.get_system();
-    GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>> objective(system, options.beta, options_slv);
+    GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>> objective(system, 0.0, config.solver);
 
-    // 1. Minimize E on the unit mass sphere
-    UnitMassSphere<OperatorType> manifold(objective.get_M());
-    EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(objective, options_slv);
-
+    // Minimize E on the unit mass sphere, starting from a constant
     Vector<double> x(system.n_dofs());
     x = 1.0;
     builder.distribute(x);
     ellipsoid::retract_by_norm(objective.get_M(), x);
 
-    GradientDescent solver(oracle, oracle.get_residual(), manifold, options_gd);
-    ConvergenceTableObserver<CycleInfo> conv_observer;
-    solver.set_observer(conv_observer);
+    const UnitMassSphere<OperatorType> manifold(objective.get_M());
+    EnergyOracle<GrossPitaevskiiSystem<dim>> oracle(objective, config.solver);
+    GradientDescent solver(oracle, oracle.get_residual(), manifold, config.descent);
+    ConvergenceTableObserver<CycleInfo> observer;
+    solver.set_observer(observer);
     solver.cycle(x, std::cout);
 
-    // 2. Independent eigenvalue solve. A = A0 + beta*Mpp equals A0 here, so A_inv applies A0^{-1}.
+    // For beta = 0, A = A0, so A_inv applies A0^{-1}; its accuracy limits that of ARPACK
     auto& A_inv = objective.get_A_inv();
-    A_inv.set_tol(1e-13);  // shift-invert accuracy limits what ARPACK can converge to
+    A_inv.set_tol(1e-13);
+    const Eigenpairs pairs = smallest_eigenpairs<dim>(system, A_inv, config.n_eigen);
+    const auto   i_min     = std::ranges::min_element(pairs.lambda) - pairs.lambda.begin();
+    const double lambda_1  = pairs.lambda[i_min];
 
-    std::vector<Vector<double>> eigenvectors;
-    const auto lambda = smallest_eigenvalues<dim>(system, A_inv, eigenvectors, n_eigen);
-
-    const auto  it       = std::ranges::min_element(lambda);
-    const auto  index    = std::distance(lambda.begin(), it);
-    const double lambda_1 = *it;
-
-    // 3. Compare
     Vector<double> A0x(x.size()), Mx(x.size());
     system.get_A0().vmult(A0x, x);
     system.get_M().vmult(Mx, x);
-
-    const double energy   = objective.value(x);     // 1/2 x^T A0 x for beta = 0
+    const double energy   = objective.value(x);
     const double rayleigh = (x * A0x) / (x * Mx);
-    const double overlap  = mass_overlap(system.get_M(), x, eigenvectors[index]);
-
     const double err_energy   = std::abs(energy - 0.5 * lambda_1) / std::abs(0.5 * lambda_1);
     const double err_rayleigh = std::abs(rayleigh - lambda_1) / std::abs(lambda_1);
 
-    std::cout << "\ndim = " << dim << ", level = " << level << ", n_dofs = " << system.n_dofs() << "\n";
-    std::cout << "eigenvalues (ARPACK):";
-    for (double l : lambda) {
-        std::cout << " " << l;
+    std::string eigenvalues;
+    for (double l : pairs.lambda) {
+        eigenvalues += (eigenvalues.empty() ? "" : ", ") + std::to_string(l);
     }
-    std::cout << "\n\n";
-    std::cout << "  lambda_1                 " << lambda_1        << "\n"
-              << "  Rayleigh quotient of x   " << rayleigh        << "  (rel. err " << err_rayleigh << ")\n"
-              << "  E(x)                     " << energy          << "\n"
-              << "  lambda_1 / 2             " << 0.5 * lambda_1  << "  (rel. err " << err_energy   << ")\n"
-              << "  |<x, u_1>_M|             " << overlap         << "\n\n";
+    report.info("dim " + std::to_string(dim) + ", " + std::to_string(system.n_dofs()) + " DoFs, eigenvalues (ARPACK)",
+                eigenvalues);
+    report.check(err_energy < config.tol, "E(x) equals lambda_1 / 2", "rel. error " + sci(err_energy));
+    report.check(err_rayleigh < config.tol, "x^T A0 x / x^T M x equals lambda_1", "rel. error " + sci(err_rayleigh));
 
-    bool ok = true;
-    for (const auto& [name, err] : {std::pair{"energy", err_energy}, std::pair{"Rayleigh quotient", err_rayleigh}}) {
-        if (!(err < tol)) {
-            std::cerr << "FAIL: " << name << " differs from the ARPACK reference by " << err
-                      << " > " << tol << "\n";
-            ok = false;
-        }
-    }
-    // Reported but not enforced: a degenerate lambda_1 makes the individual eigenvector arbitrary
-    if (std::abs(overlap - 1.0) > 1e-3) {
-        std::cerr << "warning: |<x, u_1>_M| = " << overlap
-                  << " differs from 1; lambda_1 may be degenerate\n";
-    }
-    if (ok) {
-        std::cout << "PASS: minimizer of the linear problem matches the ARPACK eigenpair\n";
-    }
-    return ok;
+    // Not checked: for a multiple eigenvalue lambda_1, the computed eigenvector is arbitrary
+    report.info("|<x, u_1>_M| (1 unless lambda_1 is multiple)", sci(mass_overlap(system.get_M(), x, pairs.u[i_min])));
 }
 
+} // namespace
 #endif // DEAL_II_WITH_ARPACK
 
 
-int main(int argc, char* argv[])
+int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[])
 {
 #ifndef DEAL_II_WITH_ARPACK
-    (void)argc; (void)argv;
     std::cerr << "deal.II was built without ARPACK (DEAL_II_WITH_ARPACK undefined); skipping.\n";
-    return SKIP_TEST;
+    return skip_code;
 #else
-    GPE_Options    options    {};
-    DescentOptions options_gd {};
-    SolverOptions  options_slv{};
-
+    std::optional<Config> config;
     try {
-        po::options_description all("Verification of the linear case (beta = 0) against ARPACK");
-        all.add(gpe_cli_options());
-        all.add(descent_cli_options());
-        all.add(inner_cli_options());
-        all.add_options()
-            ("help", "print this message")
-            ("level", po::value<unsigned>()->default_value(6),
-                "number of global refinements")
-            ("n-eigen", po::value<unsigned>()->default_value(4),
-                "number of eigenvalues to compute")
-            ("tol-check", po::value<double>()->default_value(1e-6),
-                "relative tolerance of the comparison");
-
-        po::variables_map vm;
-        po::store(po::parse_command_line(argc, argv, all), vm);
-        po::notify(vm);
-
-        if (vm.count("help")) {
-            std::cout << all << std::endl;
-            return 0;
-        }
-
-        apply_gpe_options(vm, options);
-        apply_descent_options(vm, options_gd);
-        apply_inner_options(vm, options_slv);
-
-        const auto level     = vm["level"].as<unsigned>();
-        const auto n_eigen   = vm["n-eigen"].as<unsigned>();
-        const auto tol_check = vm["tol-check"].as<double>();
-
-        // The identity being verified only holds for the linear problem
-        if (options.beta != 0.0) {
-            std::cerr << "note: --beta " << options.beta << " ignored, the check requires beta = 0\n";
-        }
-        options.beta = 0.0;
-
-        bool ok = false;
-        with_dimension(options.dimension, [&]<typename T0>(T0)
-        {
-            constexpr int dim = T0::value;
-            ok = run_check<dim>(options, options_slv, options_gd, level, n_eigen, tol_check);
-        });
-        return ok ? 0 : 1;
+        config = parse_options(argc, argv);
     }
-    catch (std::exception& e) {
+    catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
-    catch (...) {
-        std::cerr << "Exception of unknown type!\n";
-        return 1;
+    if (!config) {
+        return 0;
     }
+
+    return run_tests([&](CheckReport& report) {
+        with_dimension(config->gpe.dimension, [&]<typename T0>(T0) {
+            check_linear_minimizer<T0::value>(report, *config);
+        });
+    });
 #endif
 }
