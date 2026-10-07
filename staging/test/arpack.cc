@@ -78,6 +78,7 @@ std::optional<Config> parse_options(int argc, char* argv[])
 
     Config config;
     apply_gpe_options(vm, config.gpe);
+    NumberGenerator::get().seed(config.gpe.seed);
     apply_descent_options(vm, config.descent);
     apply_inner_options(vm, config.solver);
     config.level   = vm["level"].as<unsigned>();

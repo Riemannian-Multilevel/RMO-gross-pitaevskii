@@ -94,6 +94,7 @@ int main(int argc, char** argv)
             return 0;
         }
         apply_gpe_options(vm, options);
+        NumberGenerator::get().seed(options.seed);
         apply_mg_options(vm, options_mg);
 
         with_dimension(options.dimension, [&]<typename T0>(T0)

@@ -43,8 +43,7 @@ void solve(const ProgramOptions& opts)
         }, potential_v);
 
         // Set starting value, sufficiently far from an optimal solution
-        Vector<double> x0(context.n_dofs());
-        x0 = 1.0;
+        Vector<double> x0 = context.initial_value();
         context.distribute(x0);
         // x0 /= OperatorMetric(context.get_M(), MetricKind::MASS).norm(x0);
 
@@ -95,6 +94,7 @@ int main(int argc, char* argv[])
             return 0;
         }
         apply_gpe_options(vm, opts.gpe);
+        NumberGenerator::get().seed(opts.gpe.seed);
         apply_descent_options(vm, opts.descent);
         apply_mg_options(vm, opts.mg);
         apply_inner_options(vm, opts.solver);

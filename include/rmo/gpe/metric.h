@@ -85,8 +85,9 @@ void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>&
                            const double mean = 0.0, const double stddev = 1.0)
 {
     // 1. generate random vector in ambient space
+    // Seed is set globally in rmo::NumberGenerator
     Vector<double> tmp(v.size());
-    normrnd(mean, stddev, tmp);
+    rmo::NumberGenerator::get().normrnd(mean, stddev, tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
     energy::project_onto_tangent_space(A_inv, x, M, tmp, v);
@@ -118,8 +119,9 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
                            double mean = 0.0, double stddev = 1.0)
 {
     // 1. generate random vector in ambient space
+    // Seed is set globally in rmo::NumberGenerator
     Vector<double> tmp(v.size());
-    normrnd(mean, stddev, tmp);
+    rmo::NumberGenerator::get().normrnd(mean, stddev, tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the mass metric
     mass::project_onto_tangent_space(x, M, tmp, v);
@@ -165,8 +167,9 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
                            const double mean = 0.0, const double stddev = 1.0)
 {
     // 1. generate random vector in ambient space
+    // Seed is set globally in rmo::NumberGenerator
     Vector<double> tmp(v.size());
-    normrnd(mean, stddev, tmp);
+    NumberGenerator::get().normrnd(mean, stddev, tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the Frobenius metric
     frobenius::project_onto_tangent_space(x, M, tmp, v);
