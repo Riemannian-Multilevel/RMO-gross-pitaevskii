@@ -7,9 +7,16 @@
 
 /**
  * @file
- * @brief Numerical kernels of the Gross-Pitaevskii oracles: Riemannian gradients on the unit-mass
- * manifold, and value, directional derivative and gradient of the coarse models.
- * The eigenvalue residuals are in residual.h.
+ * @brief Numerical kernels of the Gross-Pitaevskii oracles: Riemannian gradients on the unit-mass sphere, and value,
+ * directional derivative and gradient of the coarse models. The eigenvalue residuals are in residual.h.
+ *
+ * Arguments: the state `x` (coarse models: the variable `zeta`), the mass matrix `M`, the operator
+ * \f$ A = A(x) \f$ and the inverse operators of \f$ M \f$ and \f$ A \f$ (any types with `vmult`), and the result.
+ *
+ * Coarse models: \f$ \Psi(\zeta) = E(\zeta) - \langle w, R_\phi^{-1}(\zeta) \rangle \f$ with the base point
+ * \f$ \phi \f$ (`phi`), the correction \f$ w \f$, the inverse retraction \f$ R_\phi^{-1} \f$ of
+ * ellipsoid::retract_inv_by_norm(), and the inner product of the M-metric (`coarse_mass_*`) or the F-metric
+ * (`coarse_frobenius_*`).
  *
  * Shared by the oracles (oracle.h, oracle_coarse.h), the iterations (iteration.h) and the tests.
  */
@@ -19,22 +26,7 @@ namespace rmo::gpe::kernels
 // -------------------------------------------------------------------------
 // Riemannian gradients (fine level)
 // -------------------------------------------------------------------------
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional \f$E^{GP}(\phi)\f$
- * restricted to the sphere \f$S^{n-1}\f$ with an energy-adaptive metric \f$A_\phi\f$. The mathematical
- * formulation for the Riemannian gradient is:
- * \f[ \grad_{A} E^{GP}(\phi) = \phi-\frac{1}{\phi^\top MA_\phi^{-1} M\phi} A_\phi^{-1}M\phi \f]
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param A_inv The inverse linear operator (\f$A_\phi^{-1}\f$).
- * @param M The mass matrix (\f$M\f$).
- * @param x The current state vector (\f$\phi\f$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
+/** @brief Energy-adaptive Riemannian gradient \f$ \grad_A E(x) = x - \frac{A^{-1} M x}{x^\top M A^{-1} M x} \f$. */
 template <typename MatrixType, typename InverseMatrixType>
 void grad_energy_adaptive(const InverseMatrixType& A_inv, const MatrixType& M,
                           const Vector<double>& x, Vector<double>& output)
@@ -43,23 +35,7 @@ void grad_energy_adaptive(const InverseMatrixType& A_inv, const MatrixType& M,
     metric::energy::project_onto_tangent_space(A_inv, x, M, output);
 }
 
-/**
- * @brief Computes the Riemannian gradient for the Gross-Pitaevskii energy on the unit-mass manifold.
- *
- * This function calculates the gradient of the energy functional \f$E^{GP}(\phi)\f$
- * restricted to the sphere \f$S^{n-1}\f$ with a mass metric \f$M\f$. The mathematical
- * formulation for the Riemannian gradient is:
- * \f[ \nabla_M E^{GP}(\phi) = M^{-1}\big(A_\phi\,\phi - (\phi^\top A_\phi\,\phi)M\phi\big) \f]
- *
- * @tparam MatrixType A matrix-free operator or sparse matrix type providing a `vmult(dst, src)` method.
- * @tparam InverseMatrixType A solver wrapper or inverse operator type providing a `vmult(dst, src)` method.
- *
- * @param Minv The inverse mass operator (\f$M^{-1}\f$).
- * @param A The state-dependent total linear operator (\f$A_\phi\f$).
- * @param M The mass matrix (\f$M\f$).
- * @param x The current state vector (\f$\phi\f$).
- * @param output The vector where the computed Riemannian gradient will be stored.
- */
+/** @brief Riemannian gradient in the M-metric, \f$ \grad_M E(x) = M^{-1} \big( A x - (x^\top A x) M x \big) \f$. */
 template <typename MatrixType, typename InverseMatrixType>
 void grad_mass(const InverseMatrixType& Minv, const MatrixType& A, const MatrixType& M,
                const Vector<double>& x, Vector<double>& output)
@@ -75,10 +51,7 @@ void grad_mass(const InverseMatrixType& Minv, const MatrixType& A, const MatrixT
 }
 
 
-/**
- * @brief Computes the Riemannian gradient in the F-metric.
- * \f[ \grad_{\rm F} E^{\rm GP}(\phi) = A_{\phi}\phi - \frac{\phi^\top M A_{\phi}\phi}{\phi^\top M^2 \phi} M \phi \f]
-*/
+/** @brief Riemannian gradient in the F-metric, \f$ \grad_F E(x) = A x - \frac{x^\top M A x}{x^\top M^2 x} M x \f$. */
 template <typename MatrixType>
 void grad_frobenius(const MatrixType& A, const MatrixType& M,
                     const Vector<double>& x, Vector<double>& output)
@@ -102,19 +75,7 @@ void grad_frobenius(const MatrixType& A, const MatrixType& M,
 // -------------------------------------------------------------------------
 // Coarse models
 // -------------------------------------------------------------------------
-/**
- * @brief Computes the coarse model function value using the mass-weighted metric.
- *
- * Psi(zeta) = E(zeta) - <w, invRet_phi(zeta)>_M
- * = E(zeta) - w^T * M * invRet_phi(zeta)
- *
- * @param[in] zeta The coarse variable (argument of the function).
- * @param[in] phi The base point (fine grid restriction).
- * @param[in] w The restricted gradient/residual.
- * @param[in] M The mass matrix (coarse level).
- * @param[in] energy The energy \f$ E(\zeta) \f$, evaluated by the caller.
- * @return The scalar value of the coarse model.
- */
+/** @brief \f$ \Psi(\zeta) \f$ of the M-metric coarse model; @p energy is \f$ E(\zeta) \f$, evaluated by the caller. */
 template <typename MatrixType>
 double coarse_mass_value(const Vector<double>& zeta,
                          const Vector<double>& phi,
@@ -133,7 +94,7 @@ double coarse_mass_value(const Vector<double>& zeta,
     return energy - correction_term;
 }
 
-// Function value of the Frobenius coarse model
+/** @brief \f$ \Psi(\zeta) \f$ of the F-metric coarse model; @p energy is \f$ E(\zeta) \f$, evaluated by the caller. */
 template <typename MatrixType>
 double coarse_frobenius_value(const Vector<double>& zeta, const Vector<double>& phi,
                               const Vector<double>& w,
@@ -149,6 +110,7 @@ double coarse_frobenius_value(const Vector<double>& zeta, const Vector<double>& 
     return energy - correction_term;
 }
 
+/** @brief \f$ \mathrm{D}\Psi(\zeta)[z] \f$ of the M-metric coarse model, with \f$ A = A(\zeta) \f$. */
 template <typename MatrixTypeA, typename MatrixTypeM>
 double coarse_mass_dir_deriv(const Vector<double>& zeta,
                              const Vector<double>& phi,
@@ -174,6 +136,7 @@ double coarse_mass_dir_deriv(const Vector<double>& zeta,
     return grad * z;
 }
 
+/** @brief \f$ \mathrm{D}\Psi(\zeta)[z] \f$ of the F-metric coarse model, with \f$ A = A(\zeta) \f$. */
 template <typename MatrixTypeA, typename MatrixTypeM>
 double coarse_frobenius_dir_deriv(const Vector<double>& zeta,
                                   const Vector<double>& phi,
@@ -206,17 +169,8 @@ double coarse_frobenius_dir_deriv(const Vector<double>& zeta,
     return grad * z;
 }
 
-/**
- * Computes the coarse gradient update step in the mass-weighted metric.
- * @param M Mass matrix
- * @param M_inv Operator representing M^-1 (must support vmult)
- * @param A Operator representing A_zeta (must support vmult)
- * @param zeta Coarse variable (argument of the function)
- * @param phi Fine grid restriction (base point)
- * @param w Restricted residual
- * @param dst Output vector
- */
 // TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
+/** @brief Riemannian gradient of the M-metric coarse model in the M-metric. */
 template <typename MatrixType, typename InverseMatrixType>
 void coarse_mass_grad(const MatrixType& M,
                       const InverseMatrixType& M_inv,
@@ -240,18 +194,9 @@ void coarse_mass_grad(const MatrixType& M,
     dst.add(-1.0, invRet);
 }
 
-/**
- * Computes the (M-)coarse gradient update step in the energy metric.
- *
- * @param M Mass matrix (M_coarse)
- * @param A_inv Linear operator or InverseMatrix wrapper representing A_zeta^-1
- * @param zeta The coarse approximation (y)
- * @param phi Fine grid restriction (base point)
- * @param w The restricted residual/gradient
- * @param dst Output vector
- */
 // TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
 //       tag- or class-based metric selection
+/** @brief Riemannian gradient of the M-metric coarse model in the energy-adaptive metric. */
 template <typename MatrixType, typename InverseMatrixType>
 void coarse_mass_grad_energy_adaptive(const MatrixType& M, const InverseMatrixType& A_inv,
                                       const Vector<double>& zeta,
@@ -273,6 +218,7 @@ void coarse_mass_grad_energy_adaptive(const MatrixType& M, const InverseMatrixTy
 
 // Frobenius gradient of the Frobenius coarse model
 // TODO: output directional derivative and riemannian gradient separately ("metric-free" line search)
+/** @brief Riemannian gradient of the F-metric coarse model in the F-metric. */
 template <typename MatrixType>
 void coarse_frobenius_grad(const MatrixType& M, const MatrixType& A,
                            const Vector<double>& zeta, const Vector<double>& phi,
@@ -313,6 +259,7 @@ void coarse_frobenius_grad(const MatrixType& M, const MatrixType& A,
 }
 
 // Energy-adaptive gradient of the Frobenius coarse model
+/** @brief Riemannian gradient of the F-metric coarse model in the energy-adaptive metric. */
 template <typename MatrixType, typename InverseMatrixType>
 void coarse_frobenius_grad_energy_adaptive(const MatrixType& M,
                                            const InverseMatrixType& A_inv,

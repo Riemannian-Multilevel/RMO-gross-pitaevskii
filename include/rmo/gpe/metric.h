@@ -4,6 +4,15 @@
 #include <rmo/ropt/manifold.h>
 #include <rmo/util/random.h>
 
+/**
+ * @file
+ * @brief Projections onto the tangent space \f$ T_x \mathcal{S} = \{ v : x^\top M v = 0 \} \f$ of the unit-mass
+ * sphere, orthogonal in the metric of a Riemannian gradient (energy-adaptive \f$ A_x \f$, mass \f$ M \f$, or
+ * Euclidean, the F-metric), and random tangent vectors for tests.
+ *
+ * Arguments: the base point `x` on the sphere, the mass matrix `M`, the vector `v` to project and the result
+ * `output`.
+ */
 namespace rmo::gpe
 {
 
@@ -11,23 +20,9 @@ namespace metric::energy
 {
 
 /**
- * @brief Projects a vector @p v onto the tangent space at @p x using an energy-based metric.
- *
- * This computes the projection orthogonal to the gradient of the energy functional.
- *
- * Formula:
- * \f[
- * \Pi_x(v) = v - \frac{\langle x, v \rangle_M}{\langle x, M A^{-1} M x \rangle} A^{-1} M x
- * \f]
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @tparam InverseMatrixType A solver or operator class representing \f$ A^{-1} \f$.
- * @param[in] A_inv The inverse operator \f$ A^{-1} \f$.
- * @param[in] x The base point.
- * @param[in] M The mass matrix.
- * @param[in] v The vector to be projected.
- * @param[out] output The resulting projected vector.
- * @param ignore_positivity_constraint
+ * @brief \f$ A_x \f$-orthogonal projection onto \f$ T_x \mathcal{S} \f$, with @p A_inv \f$ = A_x^{-1} \f$:
+ * \f[ \mathrm{output} = v - \frac{x^\top M v}{x^\top M A_x^{-1} M x} \, A_x^{-1} M x \f]
+ * @p ignore_positivity_constraint skips the check \f$ x^\top M A_x^{-1} M x > 0 \f$.
  */
 template <typename MatrixType, typename InverseMatrixType>
 void project_onto_tangent_space(const InverseMatrixType& A_inv,
@@ -60,25 +55,8 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv,
 }
 
 /**
- * @brief Projects the base point @p x onto its own tangent space using an energy-based metric.
- *
- * This overload handles the specific case where the vector to be projected is the base point
- * itself (i.e., \f$ v = x \f$).
- *
- * It computes the projection \f$ \Pi_x(x) \f$ relative to the metric induced by
- * the operator \f$ A^{-1} \f$ (specifically \f$ x^T M A^{-1} M x \f$).
- *
- * Formula:
- * \f[
- * \mathrm{output} = x - \frac{1}{\langle x, M A^{-1} M x \rangle} A^{-1} M x
- * \f]
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method.
- * @tparam InverseMatrixType A solver or operator class representing \f$ A^{-1} \f$.
- * @param[in] A_inv The inverse operator \f$ A^{-1} \f$.
- * @param[in] x The base point.
- * @param[in] M The mass matrix.
- * @param[out] output The resulting projected vector.
+ * @brief Projection of @p x itself (\f$ v = x \f$, using \f$ x^\top M x = 1 \f$): the energy-adaptive Riemannian
+ * gradient, see kernels::grad_energy_adaptive().
  */
 template <typename MatrixType, typename InverseMatrixType>
 void project_onto_tangent_space(const InverseMatrixType& A_inv, const Vector<double>& x, const MatrixType& M,
@@ -100,6 +78,7 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv, const Vector<dou
     output.add(-1.0/denom, Ainv_Mx);
 }
 
+/** @brief Random tangent vector: normal entries (@p mean, @p stddev), projected \f$ A_x \f$-orthogonally. */
 template <typename MatrixType, typename InverseMatrixType>
 void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>& x, const MatrixType& M,
                            Vector<double>& v,
@@ -119,24 +98,7 @@ void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>&
 namespace metric::mass
 {
 
-/**
- * @brief Projects a vector @p v onto the tangent space at @p x with respect to the
- * mass-weighted inner product.
- *
- * This function computes the projection
- * \f[
- * \Pi_x(v) = v - \frac{\langle x, v \rangle_M}{\|x\|_M^2} x,
- * \f]
- * assuming the manifold is the sphere defined by the mass matrix @p M. If @p x is
- * already normalized with respect to @p M (i.e., \f$\|x\|_M = 1\f$), this simplifies
- * to \f$ \Pi_x(v) = v - (x^T M v) x \f$.
- *
- * @tparam MatrixType A matrix class type providing a `vmult` method (e.g., SparseMatrix).
- * @param[in] x The base point on the manifold (assumed to be normalized in the M-metric).
- * @param[in] M The mass matrix defining the inner product \f$ \langle u, w \rangle_M = u^T M w \f$.
- * @param[in] v The vector to be projected.
- * @param[out] output The resulting projected vector in the tangent space \f$ T_x \mathcal{M} \f$.
- */
+/** @brief \f$ M \f$-orthogonal projection onto \f$ T_x \mathcal{S} \f$: \f$ \mathrm{output} = v - (x^\top M v) \, x \f$. */
 template <typename MatrixType>
 void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
                                 Vector<double>& output)
@@ -149,6 +111,7 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-xMv, x);
 }
 
+/** @brief Random tangent vector: normal entries (@p mean, @p stddev), projected \f$ M \f$-orthogonally. */
 template <typename MatrixType>
 void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
                            Vector<double>& v,
@@ -168,6 +131,10 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
 namespace metric::frobenius
 {
 
+/**
+ * @brief Euclidean (F-metric) orthogonal projection onto \f$ T_x \mathcal{S} \f$:
+ * \f$ \mathrm{output} = v - \frac{x^\top M v}{x^\top M^2 x} \, M x \f$.
+ */
 template <typename MatrixType>
 void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, const Vector<double>& v,
                                 Vector<double>& output)
@@ -191,6 +158,7 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-nom / denom, Mx);
 }
 
+/** @brief Random tangent vector: normal entries (@p mean, @p stddev), projected Euclidean-orthogonally. */
 template <typename MatrixType>
 void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
                            Vector<double>& v,
@@ -200,7 +168,7 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
     Vector<double> tmp(v.size());
     normrnd(mean, stddev, tmp);
 
-    // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
+    // 2. project orthogonally onto tangent space at x, wrt. the Frobenius metric
     frobenius::project_onto_tangent_space(x, M, tmp, v);
 }
 

@@ -6,6 +6,11 @@
 
 #include <cmath>
 
+/**
+ * @file
+ * @brief Riemannian metrics \f$ g(u, v) = u^\top G v \f$ on the ambient space: MetricBase, OperatorMetric (an
+ * operator \f$ G \f$, e.g. \f$ M \f$ or \f$ A(x) \f$) and EuclideanMetric (the F-metric).
+ */
 namespace rmo
 {
 

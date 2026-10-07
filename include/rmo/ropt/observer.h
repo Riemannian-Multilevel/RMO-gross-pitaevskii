@@ -3,6 +3,10 @@
 
 #include <iosfwd>
 
+/**
+ * @file
+ * @brief Observers of the iteration history of the solvers (IterationObserver, ObservableSolver).
+ */
 namespace rmo
 {
 

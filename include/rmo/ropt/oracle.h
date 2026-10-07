@@ -7,10 +7,17 @@
 
 #include <concepts>
 
+/**
+ * @file
+ * @brief OracleBase: a smooth objective on a manifold for the Riemannian solvers, and the TiltOracle concept.
+ */
 namespace rmo
 {
 
-// Basic oracle interface
+/**
+ * @brief Objective evaluated at the point of the last update(): value, directional derivative, and Riemannian
+ * gradient in the oracle's metric().
+ */
 class OracleBase
 {
 public:

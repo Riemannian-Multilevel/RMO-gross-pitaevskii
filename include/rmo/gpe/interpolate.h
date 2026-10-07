@@ -7,9 +7,17 @@
 
 #include <rmo/fe/interpolate.h>
 
+/**
+ * @file
+ * @brief MassTransfer: grid transfer with the mass-weighted (L2-projection) restriction.
+ */
 namespace rmo::gpe
 {
 
+/**
+ * @brief Grid transfer with the restriction \f$ I_h^H = M_H^{-1} (I_H^h)^\top M_h \f$, the L2 projection onto the
+ * coarse space; the prolongation \f$ I_H^h \f$ is that of @p TransferType (e.g. fe::LinearTransferMG).
+ */
 template <int dim, typename TransferType, typename MatrixType, typename InverseMatrixType>
 class MassTransfer : public LinearTransferBase
 {
@@ -25,9 +33,7 @@ public:
         , _M_inv_coarse(M_inv_coarse)
     {}
 
-    /**
-     * @brief Computes mass-weighted restriction: I_h^H = M_H^{-1} * (I_H^h)^T * M_h
-     */
+    /** @brief \f$ v_H = M_H^{-1} (I_H^h)^\top M_h v_h \f$ */
     void to_coarse_mesh(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
         // 1. Multiply by fine mass matrix: M_h * v_h
@@ -36,31 +42,25 @@ public:
 
         // 2. Apply TRANSPOSE of prolongation: (I_H^h)^T * (M_h * v_h)
         Vector<double> Ih_Mh_v(_transfer.n_coarse());
-        _transfer.Tfine(Mh_v, Ih_Mh_v); // FIXED: Was _transfer.to_coarse_mesh
+        _transfer.Tfine(Mh_v, Ih_Mh_v);
 
         // 3. Apply inverse coarse mass matrix
         _M_inv_coarse.vmult(dst_coarse, Ih_Mh_v);
     }
 
-    /**
-     * @brief Prolongation remains unchanged: I_H^h
-     */
+    /** @brief \f$ v_h = I_H^h v_H \f$ */
     void to_fine_mesh(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
         _transfer.to_fine_mesh(src_coarse, dst_fine);
     }
 
-    /**
-     * @brief Transpose of prolongation remains unchanged: (I_H^h)^T
-     */
+    /** @brief \f$ (I_H^h)^\top v_h \f$ */
     void Tfine(const Vector<double>& src_fine, Vector<double>& dst_coarse) const override
     {
         _transfer.Tfine(src_fine, dst_coarse);
     }
 
-    /**
-     * @brief Transpose of mass-weighted restriction: (I_h^H)^T = M_h * I_H^h * M_H^{-1}
-     */
+    /** @brief Transpose of the restriction, \f$ (I_h^H)^\top v_H = M_h I_H^h M_H^{-1} v_H \f$. */
     void Tcoarse(const Vector<double>& src_coarse, Vector<double>& dst_fine) const override
     {
         // 1. Multiply by inverse coarse mass matrix: M_H^{-1} * v_H
@@ -69,7 +69,7 @@ public:
 
         // 2. Apply FORWARD prolongation: I_H^h * (M_H^{-1} * v_H)
         Vector<double> TIh_MH_inv_v(_transfer.n_fine());
-        _transfer.to_fine_mesh(MH_inv_v, TIh_MH_inv_v); // FIXED: Was _transfer.Tcoarse
+        _transfer.to_fine_mesh(MH_inv_v, TIh_MH_inv_v);
 
         // 3. Multiply by fine mass matrix
         _M_fine.vmult(dst_fine, TIh_MH_inv_v);

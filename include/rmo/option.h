@@ -9,6 +9,10 @@
 #include <ranges>
 #include <string_view>
 
+/**
+ * @file
+ * @brief Command-line options: option descriptions, parsing into the structs of option_types.h, and validation.
+ */
 namespace rmo
 {
 namespace po = boost::program_options;

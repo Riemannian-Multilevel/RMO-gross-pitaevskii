@@ -20,6 +20,11 @@
 #include <optional>
 #include <utility>
 
+/**
+ * @file
+ * @brief FullApproximationScheme: multilevel Riemannian optimization on a hierarchy of manifolds, with a coarse
+ * condition deciding when to take a coarse correction.
+ */
 namespace rmo
 {
 using dealii::MGLevelObject;
@@ -29,9 +34,11 @@ using dealii::MGLevelObject;
 using LevelMetric = std::shared_ptr<const MetricBase>;
 
 
-// Model which creates oracles on the fly, depending on specified types (descent - coarse correction - coarse model)
-// Vector and point transfers are independent (a-priori) of the chosen metric for the coarse model
-// (the FullApproximationScheme constructor is not templated)
+/**
+ * @brief Multilevel Riemannian optimization: descent on each level, with coarse corrections from coarse models
+ * whose oracles are created on the fly in cycle() (the oracle types are template arguments of cycle(), so that
+ * the transfers given to the constructor are independent of the metric of the coarse models).
+ */
 template <typename Functional>
 class FullApproximationScheme : public ObservableSolver<CycleInfo>
 {

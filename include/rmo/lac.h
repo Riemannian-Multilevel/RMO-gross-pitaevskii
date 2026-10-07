@@ -22,6 +22,18 @@
 #include <deal.II/lac/solver_cg.h>     // for symmetric positive definite matrices
 #include <deal.II/lac/solver_minres.h>
 
+/**
+ * @file
+ * @brief Operators and inverse operators for the Krylov solvers.
+ *
+ * All operators provide deal.II's `vmult(dst, src)` and `Tvmult(dst, src)`: LinearCombination (weighted sum
+ * of matrices) and TransposeMatrix. The inverse operators apply \f$ A^{-1} \f$ through the same interface:
+ * InverseMatrix (one Krylov solve per application), PreconditionInverse (solver and preconditioner selected
+ * by SolverOptions) and DiagonalInverse (exact, for lumped mass matrices).
+ *
+ * Inner tolerance of a solve: the absolute tolerance from `set_tol(tol)` if set, otherwise
+ * `SolverOptions::tol_inner` relative to the norm of the right-hand side; capped at SOLVER_MAX_TOL.
+ */
 namespace rmo
 {
 // TODO: use aliases for Trilinos, PETSc, ... matrices
@@ -39,18 +51,16 @@ using dealii::SolverControl;
 
 
 /**
- * @brief A lightweight alternative to dealii::LinearOperator.
+ * @brief Weighted sum of matrices \f$ A = \sum_i w_i M_i \f$, a lightweight alternative to
+ * dealii::LinearOperator.
  *
- * This class represents a linear combination of matrices, effectively computing
- * \f$ A = \sum c_i M_i \f$. The matrices may have different types, e.g. a sparse stiffness
- * matrix combined with a diagonal (lumped) mass matrix. Matrices are stored by pointer, so
- * they must outlive the operator, and they may be reassembled after it is created.
+ * The matrices may have different types, e.g. a sparse stiffness and a diagonal (lumped) mass matrix.
+ * They are stored by pointer: they must outlive the operator, and may be reassembled after it is created.
+ * Each type provides `vmult`, `Tvmult`, `m()`, `n()`, and for diagonal() `diag_element(i)` unless it is a
+ * `DiagonalMatrix`.
  *
- * Each matrix type must provide `vmult`, `Tvmult`, `m()` and `n()`, and for diagonal() either
- * be a `DiagonalMatrix` or provide `diag_element(i)`.
- *
- * @tparam VectorType The type of the vector (e.g., Vector or BlockVector).
- * @tparam MatrixTypes The admissible matrix types (e.g., SparseMatrix, DiagonalMatrix); distinct.
+ * @tparam VectorType Vector type of vmult() and Tvmult().
+ * @tparam MatrixTypes Admissible matrix types, all distinct.
  */
 template <typename VectorType, typename... MatrixTypes>
 class LinearCombination
@@ -58,18 +68,9 @@ class LinearCombination
     static_assert(sizeof...(MatrixTypes) > 0, "LinearCombination requires at least one matrix type");
 
 public:
-    /** @brief Default constructor. */
     LinearCombination() = default;
 
-    /**
-     * @brief Adds a matrix component to the linear combination.
-     * Adds a contribution such that the operator becomes \f$ A \leftarrow A + w \cdot M \f$.
-     *
-     * Components with zero weight are skipped.
-     *
-     * @param weight The scalar coefficient for this matrix.
-     * @param matrix A reference to the matrix to be added; its type must be one of @p MatrixTypes.
-     */
+    /** @brief \f$ A \leftarrow A + w M \f$; components with zero weight are skipped. */
     template <typename MatrixType>
         requires (std::is_same_v<MatrixType, MatrixTypes> || ...)
     void add_component(double weight, const MatrixType &matrix)
@@ -84,37 +85,25 @@ public:
         m_components.push_back({weight, &matrix});
     }
 
-    /** @brief Clears all stored matrix components. */
+    /** @brief Removes all components. */
     void clear()
     {
         m_components.clear();
     }
 
-    /**
-     * @brief Reinitializes the internal temporary vector.
-     * This should be called to ensure the internal scratch space matches
-     * the size of the system, avoiding reallocations during @ref vmult.
-     *
-     * @param size The number of degrees of freedom.
-     */
+    /** @brief Sizes the scratch vector of vmult() and Tvmult(); required before their first use. */
     void reinit(unsigned int size)
     {
         m_vector.reinit(size);
     }
 
-    /**
-     * @brief Reinitializes the internal temporary vector based on an existing vector.
-     * @param vector A vector used as a template for size and structure.
-     */
+    /** @brief Sizes the scratch vector like @p vector. */
     void reinit(const VectorType& vector)
     {
         m_vector.reinit(vector);
     }
 
-    /**
-     * @brief Returns the number of rows in the operator.
-     * @return global_dof_index Number of rows.
-     */
+    /** @brief Number of rows. */
     global_dof_index m() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
@@ -122,10 +111,7 @@ public:
                           m_components.back().second);
     }
 
-    /**
-     * @brief Returns the number of columns in the operator.
-     * @return global_dof_index Number of columns.
-     */
+    /** @brief Number of columns. */
     global_dof_index n() const
     {
         Assert(!m_components.empty(), dealii::ExcMessage("No matrices added"));
@@ -133,29 +119,21 @@ public:
                           m_components.back().second);
     }
 
-    /**
-     * @brief Matrix-vector multiplication: \f$ y = Ax \f$.
-     * @param dst The destination vector.
-     * @param src The source vector.
-     */
+    /** @brief \f$ dst = A \, src \f$ */
     void vmult(VectorType &dst, const VectorType &src) const
     {
         dst = 0.0;
         vmult_add(dst, src);
     }
 
+    /** @brief \f$ dst = A^\top src \f$ */
     void Tvmult(VectorType &dst, const VectorType &src) const
     {
         dst = 0.0;
         Tvmult_add(dst, src);
     }
 
-    /**
-     * @brief Matrix-vector addition: \f$ y = y + Ax \f$.
-     * Loops over all stored components and adds their contributions to @p dst.
-     * @param dst The destination vector to which the result is added.
-     * @param src The source vector.
-     */
+    /** @brief \f$ dst \mathrel{+}= A \, src \f$ */
     void vmult_add(VectorType &dst, const VectorType &src) const
     {
         for (const auto& [weight, matrix] : m_components)
@@ -165,6 +143,7 @@ public:
         }
     }
 
+    /** @brief \f$ dst \mathrel{+}= A^\top src \f$ */
     void Tvmult_add(VectorType &dst, const VectorType &src) const
     {
         for (const auto& [weight, matrix] : m_components)
@@ -174,6 +153,7 @@ public:
         }
     }
 
+    /** @brief Diagonal \f$ \sum_i w_i \operatorname{diag}(M_i) \f$. */
     Vector<double> diagonal() const
     {
         Vector<double> diag(m());
@@ -202,21 +182,16 @@ private:
         diag.add(weight, matrix.get_vector());
     }
 
-    /** @brief Collection of weights and matrix pointers. */
+    /** @brief Weights and matrices. */
     std::vector<std::pair<double, std::variant<const MatrixTypes*...>>> m_components;
 
-    /**
-     * @brief Temporary scratch vector to prevent frequent allocations.
-     * Marked mutable to allow use within const @ref vmult methods.
-     */
+    /** @brief Scratch vector of the (const) vmult() and Tvmult(), hence mutable. */
     mutable VectorType m_vector;
     // TODO: not thread-safe
 };
 
 
-// Operator which implements the transpose of a matrix or linear operator
-// vmult(), vmult_add()   <-  Tvmult(), Tvmult_add()
-// Tvmult(), Tvmult_add() <-  vmult(), vmult_add()
+/** @brief Transpose \f$ A^\top \f$ of an operator: vmult() applies its Tvmult() and vice versa. */
 template <typename OperatorType, typename VectorType>
 class TransposeMatrix
 {
@@ -261,40 +236,17 @@ private:
 
 
 /**
- * @brief A wrapper class that represents the inverse of a linear operator.
+ * @brief Inverse \f$ A^{-1} \f$ of an operator: vmult() runs one Krylov solve (CG, MINRES or GMRES).
  *
- * This class encapsulates a `deal.II` iterative Krylov solver (such as CG, MINRES,
- * or GMRES) and a preconditioner. It acts mathematically as the inverse operator
- * \f$A^{-1}\f$, meaning that calling `vmult(dst, src)` executes the iterative solver
- * to find `dst` such that \f$A \cdot dst = src\f$.
- *
- * ### Architectural Role
- * By wrapping the solver in this interface, it can be passed into other algorithms
- * (like Riemannian Gradient Descent) exactly as if it were a standard matrix.
- * It strictly separates the action of the operator from the construction of the
- * preconditioner.
- *
- * @tparam OperatorType The forward linear operator \f$A\f$. This is typically a
- * matrix-free abstraction (e.g., @ref LinearCombination) that computes matrix-vector
- * products on the fly. The only strict requirement is that it provides a
- * `vmult(VectorType&, const VectorType&)` method.
- *
- * @tparam PrecondType The preconditioner applied to accelerate the Krylov
- * solver (e.g., `dealii::SparseILU`, `dealii::PreconditionJacobi`). Note that while
- * this preconditioner is often constructed from an explicitly assembled `MatrixType`
- * before being passed to this class, the `InverseMatrix` only requires it to be
- * invocable by the solver.
+ * @tparam OperatorType Operator \f$ A \f$ with `vmult(dst, src)`, e.g. LinearCombination; stored by reference.
+ * @tparam PrecondType Preconditioner accepted by the deal.II solvers; stored by reference.
  */
 template <typename OperatorType, typename PrecondType = dealii::PreconditionIdentity>
 class InverseMatrix
 {
 public:
-    /**
-     * @brief Constructor.
-     * @param matrix The matrix to be inverted (solved).
-     * @param options Options for the iterative solver (preconditioner, iteration count, tolerance)
-     * @param precond The preconditioner passed to the Krylov solver.
-     */
+    /** @brief Stores @p matrix and @p precond by reference; @p options gives the solver method, maximum number of
+     *  iterations and relative tolerance. */
     InverseMatrix(const OperatorType& matrix,
                   const SolverOptions options,
                   const PrecondType&  precond)
@@ -306,18 +258,12 @@ public:
         , m_control(m_max_iter, SOLVER_MAX_TOL)
     {}
 
-    // Set absolute tolerance for vmult() step
+    /** @brief Absolute tolerance of the following solves; 0 selects the relative tolerance. */
     void set_tol(double tol) const { m_tol = tol; }
 
     /**
-     * @brief Performs the system solve: \f$ dst = M^{-1} \cdot rhs \f$.
-     * This method initializes the solver and control parameters based on the
-     * norm of the @p rhs vector and the specified relative tolerance.
-     *
-     * @param matrix The operator to solve with.
-     * @param dst The solution vector.
-     * @param rhs The right-hand side vector.
-     * @throws std::invalid_argument If an unsupported SolverMethod is provided.
+     * @brief Solves \f$ matrix \cdot dst = rhs \f$, starting from zero.
+     * @throws std::invalid_argument for an unknown SolverMethod.
      */
     template <typename VectorType>
     void vmult(const OperatorType& matrix, VectorType &dst, const VectorType &rhs) const
@@ -352,12 +298,14 @@ public:
         }
     }
 
+    /** @brief \f$ dst = A^{-1} rhs \f$ */
     template <typename VectorType>
     void vmult(VectorType& dst, const VectorType& rhs) const
     {
         vmult(m_matrix, dst, rhs);
     }
 
+    /** @brief \f$ dst = A^{-\top} rhs \f$ */
     template <typename VectorType>
     void Tvmult(VectorType& dst, const VectorType& rhs) const
     {
@@ -365,7 +313,7 @@ public:
         vmult(TransposeMatrix(m_matrix), dst, rhs);
     }
 
-    /** @brief Returns the solver control object used in the last solve. */
+    /** @brief Solver statistics of the last solve. */
     const SolverControl& control() const { return m_control; }
 
 
@@ -385,22 +333,13 @@ private:
 
 
 /**
- * @brief An orchestrator for linear solvers and preconditioners.
+ * @brief Inverse \f$ A^{-1} \f$ with the Krylov solver and preconditioner selected by SolverOptions.
  *
- * This class isolates the deal.II Krylov solver template dispatching from the
- * physical problem definition. It handles both static preconditioners (built once)
- * and dynamic preconditioners (rebuilt when the non-linear density changes).
+ * Preconditioners: ILU of an assembled matrix (built once, update_static()), damped Jacobi (rebuilt with
+ * the operator, update_dynamic()), or none.
  *
- * ### Template Parameter Contracts
- * @tparam OperatorType Represents the linear operator \f$A\f$. This does **not** need
- * to be an explicitly assembled matrix. It can be any matrix-free class (such as
- * @ref LinearCombination) as long as it provides a `vmult(dst, src)` method for
- * the Krylov solver to compute matrix-vector products.
- *
- * @tparam MatrixType Represents an explicitly assembled sparse matrix
- * (e.g., `dealii::SparseMatrix<double>`). This strict requirement exists because
- * preconditioners like ILU must directly access explicit matrix elements
- * during the setup phase.
+ * @tparam OperatorType Operator \f$ A \f$ with `vmult(dst, src)`, e.g. LinearCombination; stored by reference.
+ * @tparam MatrixType Assembled matrix for the ILU preconditioner, e.g. `SparseMatrix<double>`.
  */
 // TODO pass on additional data to preconditioner, instead of fixed parameters
 template <typename OperatorType, typename MatrixType>
@@ -409,11 +348,8 @@ class PreconditionInverse
 public:
     using VectorType = Vector<double>;
 
-    /**
-     * @brief Constructs the generic preconditioned solver.
-     * @param matrix The operator to be inverted (solved); stored by reference.
-     * @param options Options for the iterative solver (method, preconditioner, iteration count, tolerance)
-     */
+    /** @brief Stores @p matrix by reference; @p options gives the solver method, preconditioner, maximum number of
+     *  iterations and relative tolerance. */
     PreconditionInverse(const OperatorType& matrix, SolverOptions options)
         : m_op(matrix)
         , m_method(options.solver)
@@ -423,8 +359,8 @@ public:
     {}
 
     /**
-     * @brief Builds preconditioners that only need to be set up once.
-     * e.g., ILU or AMG on the stationary matrix A0.
+     * @brief Builds the ILU preconditioner of @p static_matrix (Precondition::SPARSE_ILU only).
+     * @throws std::invalid_argument for Precondition::AMG, which is not implemented.
      */
     void update_static(const MatrixType& static_matrix)
     {
@@ -437,10 +373,8 @@ public:
     }
 
     /**
-     * @brief Rebuilds dynamic preconditioners using the latest assembled matrix.
-     * To minimize storage usage and avoid copies of large matrix objects, we
-     * assume a diagonal preconditioner. The diagonal can arise from the
-     * preconditioned matrix itself, or from mass lumping.
+     * @brief Rebuilds the Jacobi preconditioner \f$ 0.6 \operatorname{diag}(d)^{-1} \f$ from @p diag
+     * (Precondition::DIAGONAL only); entries with \f$ |d_i| \le 10^{-14} \f$ are replaced by 1.
      */
     void update_dynamic(const Vector<double>& diag)
     {
@@ -461,6 +395,7 @@ public:
         }
     }
 
+    /** @brief Solves \f$ matrix \cdot dst = src \f$ with the configured solver and preconditioner. */
     void vmult(const OperatorType& matrix, VectorType& dst, const VectorType& src) const
     {
         // Type erasure: select solve_with template argument, based on preconditioner argument
@@ -479,21 +414,22 @@ public:
         }
     }
 
-    /** @brief Solves op * dst = src. */
+    /** @brief \f$ dst = A^{-1} src \f$ */
     void vmult(VectorType& dst, const VectorType& src) const
     {
         vmult(m_op, dst, src);
     }
 
-    /** @brief Solves transpose(op) * dst = src. */
+    /** @brief \f$ dst = A^{-\top} src \f$ */
     void Tvmult(VectorType& dst, const VectorType& src) const
     {
         vmult(TransposeMatrix(m_op), dst, src);
     }
 
-    /** @brief Returns the solver control object used in the last solve. */
+    /** @brief Solver statistics of the last solve. */
     const SolverControl& control() const { return m_control; }
 
+    /** @brief Absolute tolerance of the following solves; 0 selects the relative tolerance. */
     void set_tol(double tol) const { m_tol = tol; }
 
 
@@ -526,8 +462,8 @@ private:
 /**
  * @brief Exact inverse of a diagonal operator, with the interface of PreconditionInverse.
  *
- * Used for lumped mass matrices: vmult() scales by the inverse diagonal, without solver
- * iterations (control() reports zero steps), and set_tol() has no effect.
+ * For lumped mass matrices: vmult() scales by the inverse diagonal, control() reports zero iterations,
+ * and set_tol() has no effect.
  */
 class DiagonalInverse
 {
@@ -535,10 +471,8 @@ public:
     using VectorType = Vector<double>;
 
     /**
-     * @brief Inverts the diagonal of @p op.
-     * @tparam OperatorType A diagonal operator providing `diagonal()`, e.g. a LinearCombination
-     * of `DiagonalMatrix` components.
-     * @param op The diagonal operator to be inverted.
+     * @brief Inverts `op.diagonal()`, e.g. of a LinearCombination of `DiagonalMatrix` components.
+     * The unused SolverOptions keep the constructor signature of PreconditionInverse.
      */
     template <typename OperatorType>
     DiagonalInverse(const OperatorType& op, SolverOptions /*options*/)
@@ -564,9 +498,10 @@ public:
     /** @brief Applies the transpose inverse, which equals the inverse. */
     void Tvmult(VectorType& dst, const VectorType& src) const { m_inv.vmult(dst, src); }
 
-    /** @brief Solver statistics of the last application (no iterations). */
+    /** @brief Zero iterations, as for a converged solve. */
     const SolverControl& control() const { return m_control; }
 
+    /** @brief No effect: the inverse is exact. */
     void set_tol(double /*tol*/) const {}
 
 private:
@@ -574,6 +509,7 @@ private:
     SolverControl m_control;
 };
 
+//! Operator and inverse of the consistent (sparse) Gross-Pitaevskii system.
 using OperatorType  = LinearCombination<Vector<double>, SparseMatrix<double>>;
 using InverseOpType = PreconditionInverse<OperatorType, SparseMatrix<double>>;
 
