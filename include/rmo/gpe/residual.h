@@ -26,7 +26,7 @@ namespace kernels
  *
  * \f[ r = A x - g - \lambda M x, \qquad \lambda = \frac{x^\top (A x - g)}{x^\top M x} \f]
  *
- * The tilt @p g is the linear term of a coarse model (the pulled-back coarse correction).
+ * The tilt @p g is the linear term of a coarse model, see GrossPitaevskiiCoarseResidual.
  *
  * @param A The state-dependent total linear operator (\f$A_x\f$).
  * @param M The mass matrix (\f$M\f$).
@@ -76,6 +76,7 @@ Vector<double> eigen_residual(const MatrixType& A, const MatrixType& M, const Ve
 } // namespace kernels
 
 
+/** @brief M-norm of kernels::eigen_residual() with the operators \f$ A(x) \f$ and \f$ M \f$ of the functional. */
 template <typename System>
 class GrossPitaevskiiResidual : public ResidualBase
 {
@@ -108,6 +109,11 @@ private:
 };
 
 
+/**
+ * @brief M-norm of the residual of the tilted coarse problem, kernels::eigen_residual() with the tilt
+ * \f$ g = G u \f$, where \f$ u = \mathrm{D}R_y^{-1}(x)^* w \f$ (ellipsoid::retract_inv_diff_by_norm_adjoint()) and
+ * \f$ G \f$ is the metric of the coarse model.
+ */
 template <typename System>
 class GrossPitaevskiiCoarseResidual : public ResidualBase
 {

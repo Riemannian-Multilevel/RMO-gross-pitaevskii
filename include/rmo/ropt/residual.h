@@ -3,6 +3,10 @@
 
 #include <rmo/lac.h>
 
+/**
+ * @file
+ * @brief ResidualBase: the residual of the problem on one level, the solvers' stopping criterion.
+ */
 namespace rmo
 {
 

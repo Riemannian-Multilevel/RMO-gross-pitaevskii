@@ -87,17 +87,15 @@ add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
 enable_testing()
 
 add_rmo_executable(test_arpack SOURCE test/arpack.cc LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_descent SOURCE test/descent.cc LINK_LIBS fmt::fmt)
 add_rmo_executable(test_gradient SOURCE test/gradient.cc LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(test_matrix_free SOURCE test/matrix_free.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(test_energy SOURCE test/energy.cc)
 add_rmo_executable(test_operator SOURCE test/operator.cc)
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
 set_tests_properties(arpack PROPERTIES SKIP_RETURN_CODE 77)
 
-add_test(descent test_descent COMMAND test_descent)
 add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
          --boundary dirichlet --order cuthill_mckee)
-add_test(NAME matrix_free COMMAND test_matrix_free --min-level 4 --max-level 6 --trials 20)
+add_test(NAME energy COMMAND test_energy)
 add_test(NAME operator COMMAND test_operator)

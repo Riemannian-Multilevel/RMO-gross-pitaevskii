@@ -14,6 +14,10 @@
 #include <string>
 #include <type_traits>
 
+/**
+ * @file
+ * @brief ConvergenceTableObserver: iteration history as one convergence table per level.
+ */
 namespace rmo
 {
 

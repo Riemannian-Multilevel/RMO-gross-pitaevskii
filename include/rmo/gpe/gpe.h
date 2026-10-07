@@ -24,9 +24,30 @@
 #include <type_traits>
 #include <variant>
 
+/**
+ * @file
+ * @brief Discretization of the Gross-Pitaevskii energy
+ * \f$ E(u) = \frac12 \int_\Omega |\nabla u|^2 + V u^2 \, dx + \frac\beta4 \int_\Omega u^4 \, dx \f$,
+ * minimized on the unit-mass sphere \f$ x^\top M x = 1 \f$.
+ *
+ * - potentials \f$ V \f$ (namespace potential);
+ * - the matrices \f$ A_0 = S + M_V \f$, \f$ M \f$ and the non-linear term \f$ M_{\phi\phi}(x) \f$, consistent
+ *   (GrossPitaevskiiSystem);
+ * - mesh, element, mapping, quadrature and DoFs (GrossPitaevskiiPackage);
+ * - the energy, its Euclidean gradient \f$ A(x) x \f$ with \f$ A(x) = A_0 + \beta M_{\phi\phi}(x) \f$, and the
+ *   inverse operators of \f$ M \f$ and \f$ A(x) \f$ (GrossPitaevskiiFunctional).
+ *
+ * Systems refer to the DoFHandler, mapping, quadrature and constraints of their package, and functionals to
+ * their system; both must outlive them.
+ */
 namespace rmo::gpe
 {
 
+/**
+ * @brief External potentials \f$ V \f$, functors `double(const Point<dim>&)`: Zero, Constant, Square
+ * (\f$ |x|^2 \f$), OpticalLattice (\f$ \sum_d \frac12 x_d^2 + \nu \sin^2(\pi x_d / 2) \f$) and Expression;
+ * get_potential() selects one at runtime.
+ */
 namespace potential
 {
 template <int dim>
@@ -56,14 +77,7 @@ private:
     double const m_a;
 };
 
-/**
- * @brief Functor computing the square of the Euclidean norm of a point.
- *
- * Computes \f$ f(p) = \sum_{d=0}^{dim-1} p_d^2 \f$.
- * Used primarily for initializing test cases or potentials.
- *
- * @tparam dim The spatial dimension of the point.
- */
+/** @brief Harmonic potential \f$ V(x) = |x|^2 \f$. */
 template <int dim>
 class Square
 {
@@ -106,8 +120,7 @@ private:
 /**
  * @brief Potential given as an expression in the coordinates x[,y[,z]], e.g. "0.5*(x^2+y^2)".
  *
- * dealii::FunctionParser is neither copyable nor movable, so it is held through a shared_ptr to
- * keep this functor a value type: PVar is returned by value and forwarded into ModelBuilder.
+ * The parser (neither copyable nor movable) is shared, so that the functor is a value type like the others.
  */
 template <int dim>
 class Expression
@@ -128,9 +141,11 @@ private:
 };
 
 
+//! Any of the potentials.
 template <int dim>
 using PVar = std::variant<Zero<dim>, Constant<dim>, Square<dim>, OpticalLattice<dim>, Expression<dim>>;
 
+//! Potential of type @p potential_t; @p expr is the expression of Potential::EXPRESSION.
 template <int dim>
 PVar<dim>
 get_potential(Potential potential_t, const std::string& expr = "") {
@@ -158,13 +173,9 @@ get_potential(Potential potential_t, const std::string& expr = "") {
 
 
 /**
- * @brief Matrices and operators of a Gross-Pitaevskii system (GrossPitaevskiiSystem).
+ * @brief Storage of \f$ A_0 \f$, \f$ M \f$ and \f$ M_{\phi\phi} \f$, and LinearCombination operators of them;
+ * derived classes assemble the matrices and implement `assemble_nonlinear_term(x)`.
  *
- * Stores the time-independent part \f$ A_0 \f$ (stiffness and potential), the mass matrix \f$ M \f$
- * and the non-linear term \f$ M_{\phi\phi} \f$, and builds LinearCombination operators from them.
- * Derived classes assemble the matrices and implement `assemble_nonlinear_term(x)`.
- *
- * @tparam dim The spatial dimension of the problem.
  * @tparam MassMatrixType Storage of \f$ M \f$ and \f$ M_{\phi\phi} \f$, e.g. `SparseMatrix<double>`.
  */
 template <int dim, typename MassMatrixType>
@@ -181,7 +192,7 @@ public:
     // Since LinearCombination stores pointers to matrices, these functions are lazy;
     // the (non-linear) terms can be assembled after calling this function.
     // TODO: rename to operator_A() or similar, since this creates a new object? (potential lifetime issues)
-    /** @brief Operator \f$ w_{A_0} A_0 + w_{M_{\phi\phi}} M_{\phi\phi} \f$. */
+    /** @brief Operator \f$ w_{A_0} A_0 + w_{M_{\phi\phi}} M_{\phi\phi} \f$; refers to the current \f$ M_{\phi\phi} \f$. */
     Operator get_operator_A(const double weight_Mpp, const double weight_A0 = 1.0) const
     {
         // Note: We pass pointers to our internal matrices.
@@ -205,22 +216,22 @@ public:
         return Mop;
     }
 
-    /** @brief Returns the linear operator \f$ A_0 \f$. */
+    /** @brief State-independent part \f$ A_0 = S + M_V \f$. */
     const SparseMatrix<double>& get_A0() const { return A0; }
 
-    /** @brief Returns the mass matrix \f$ M \f$. */
+    /** @brief Mass matrix \f$ M \f$. */
     const MassMatrix& get_M() const { return M; }
 
-    /** @brief Returns the non-linear mass matrix \f$ M_{\phi\phi} \f$. */
+    /** @brief Non-linear term \f$ M_{\phi\phi} \f$ of the last assemble_nonlinear_term(). */
     const MassMatrix& get_Mpp() const { return Mpp; }
 
     unsigned int n_dofs() const { return dof_handler.n_dofs(); }  // A0.m()
 
-    /** @brief Returns the linear constraints the operators were assembled with. */
+    /** @brief Constraints the matrices were assembled with. */
     const dealii::AffineConstraints<double>& get_constraints() const { return constraints; }
 
 protected:
-    /** @brief Sets up the sparsity pattern and sizes \f$ A_0 \f$; derived classes assemble. */
+    /** @brief Sets up the sparsity pattern and sizes \f$ A_0 \f$. */
     GrossPitaevskiiSystemBase(const dealii::DoFHandler<dim>& dofs,
                               const dealii::AffineConstraints<double>& cstr)
         : dof_handler(dofs)
@@ -235,24 +246,15 @@ protected:
     const dealii::AffineConstraints<double>& constraints;
 
     SparsityPattern sparsity_pattern;  ///< Declared before the matrices, which refer to it.
-    SparseMatrix<double> A0;           ///< Constant part of the operator (Laplacian + Potential).
-    MassMatrix M;                      ///< Mass matrix.
-
-    /** @brief Non-linear term (changes every iteration).
-     * In the GPE, \f$ M_{pp} \f$ must be recomputed whenever the solution
-     * density \f$ |\phi|^2 \f$ changes.
-     */
-    MassMatrix Mpp;
+    SparseMatrix<double> A0;           ///< \f$ A_0 = S + M_V \f$
+    MassMatrix M;                      ///< \f$ M \f$
+    MassMatrix Mpp;                    ///< \f$ M_{\phi\phi} \f$, reassembled for each state
 };
 
 
 /**
- * @brief Handles the assembly and storage of matrices for the Gross-Pitaevskii equation.
- * This class manages the linear and non-linear operators resulting from the discretization
- * of the GPE. It stores the time-independent parts (stiffness and potential) separately
- * from the non-linear term that depends on the current solution density.
- *
- * @tparam dim The spatial dimension of the problem.
+ * @brief Consistent matrices: \f$ A_0 = S + M_V \f$, \f$ M \f$ and
+ * \f$ (M_{\phi\phi})_{ij} = \int_\Omega u_h^2 \phi_i \phi_j \, dx \f$ for the state \f$ u_h \f$.
  */
 template <int dim>
 class GrossPitaevskiiSystem : public GrossPitaevskiiSystemBase<dim, SparseMatrix<double>>
@@ -260,19 +262,7 @@ class GrossPitaevskiiSystem : public GrossPitaevskiiSystemBase<dim, SparseMatrix
     using Base = GrossPitaevskiiSystemBase<dim, SparseMatrix<double>>;
 
 public:
-    /**
-     * @brief Constructor that initializes sparsity patterns and assembles linear matrices.
-     * Computes the initial system matrices:
-     * - \f$ A_0 = S + M_V \f$ (Stiffness + Potential mass matrix)
-     * - \f$ M \f$ (Standard mass matrix)
-     *
-     * @tparam Potential A functional or class representing the external potential \f$ V(x) \f$.
-     * @param dofs The Degree of Freedom handler.
-     * @param quad The quadrature formula for integration.
-     * @param map The mapping from reference to real cells.
-     * @param cstr Linear constraints (e.g., Dirichlet boundary conditions).
-     * @param V The external potential object.
-     */
+    /** @brief Assembles \f$ A_0 \f$ and \f$ M \f$ with quadrature @p quad, condensed with the constraints @p cstr. */
     template <typename Potential>
     GrossPitaevskiiSystem(const dealii::DoFHandler<dim>& dofs,
                           const dealii::Quadrature<dim>& quad,
@@ -294,13 +284,7 @@ public:
         this->Mpp.reinit(this->sparsity_pattern);
     }
 
-    /**
-     * @brief Assembles the non-linear matrix term \f$ M_{\phi\phi} \f$ based on a solution.
-     * In the GPE, the non-linearity usually takes the form \f$ \beta |\psi|^2 \f$.
-     * This method updates the internal @c Mpp matrix (see get_Mpp()) using the values in @p x.
-     *
-     * @param x The current solution vector.
-     */
+    /** @brief Assembles \f$ M_{\phi\phi} \f$ for the state @p x. */
     // TODO: keep this method non-const so evaluative methods (e.g. value, gradient, ...) cannot accidentally
     //       call a matrix assembly. Future versions should implement a state pattern
     void assemble_nonlinear_term(const Vector<double>& x)
@@ -315,25 +299,18 @@ private:
 
 
 /**
- * @brief Factory class to discretize a domain and produce a @ref GrossPitaevskiiSystem.
- * This class handles the setup phase:
- * 1. Generates the mesh (Simplex or Hypercube).
- * 2. Selects appropriate Finite Elements and Quadrature rules.
- * 3. Manages DoF distribution and boundary constraints.
+ * @brief Mesh, finite element, mapping, quadrature and DoFs of a problem, and factory of its systems.
  *
- * @tparam dim The spatial dimension.
+ * Quadrilateral meshes use `FE_Q(p)` with `MappingQ1` and `QGauss(p + 1)`; simplex meshes use `FE_SimplexP(1)`,
+ * or `FE_SimplexP_Bubbles(p)` for \f$ p > 1 \f$, with a linear `MappingFE` and `QGaussSimplex(p + 1)`.
  */
 template <int dim>
 class GrossPitaevskiiPackage
 {
 public:
     /**
-     * @brief Constructs the package and prepares the triangulation and FE space.
-     * Branches logic based on @p options to handle either Simplicial or Quadrilateral
-     * geometry. It performs the global mesh refinement and sets up DoFs.
-     *
-     * @param options Configuration options including degree, mesh type, and BCs.
-     * @param n_levels Number of global refinement steps for the mesh.
+     * @param options Mesh kind, degree, radius, DoF ordering and boundary condition.
+     * @param n_levels Number of mesh levels, i.e. `n_levels - 1` global refinements (see fe::HyperCube::refine()).
      */
     GrossPitaevskiiPackage(const GPE_Options& options, unsigned int n_levels)
         : grid(options.radius, options.mesh_kind == MeshKind::SIMPLEX)
@@ -346,7 +323,8 @@ public:
             mapping    = std::make_unique<dealii::MappingFE<dim>>(*mapping_fe);
 
             if (options.degree > 1) {
-                // FE_SimplexP_Bubbles provides nodal quadrature nodes for mass lumping
+                // FE_SimplexP_Bubbles has positive row sums of the mass matrix (unlike FE_SimplexP(2)),
+                // as required for mass lumping
                 element = std::make_unique<dealii::FE_SimplexP_Bubbles<dim>>(options.degree);
             } else {
                 element = std::make_unique<dealii::FE_SimplexP<dim>>(options.degree);
@@ -373,12 +351,7 @@ public:
         space.setup_constraints(options.bc);
     }
 
-    /**
-     * @brief Generates a problem instance for a specific potential.
-     * @tparam System GrossPitaevskiiSystem (default), or a system with the same constructor signature.
-     * @tparam Potential Type of the potential function.
-     * @param V The potential function.
-     */
+    /** @brief Assembles a system (GrossPitaevskiiSystem) for the potential @p V. */
     template <typename System = GrossPitaevskiiSystem<dim>, typename Potential>
     System system(Potential&& V) const
     {
@@ -393,23 +366,13 @@ public:
         constraints.distribute(x);
     }
 
-    /** @brief Access the underlying Finite Element space. */
     const fe::FeSpace<dim>& get_space() const { return space; }
-
-    /** @brief Access the DoF handler. */
     const dealii::DoFHandler<dim>& get_dofs() const { return space.get_dofs(); }
-
-    /** @brief Access the number of degrees of freedom. */
     [[nodiscard]] unsigned int n_dofs() const { return space.get_dofs().n_dofs(); }
-
-    /** @brief Access the constraints. */
     [[nodiscard]] const dealii::AffineConstraints<double>& get_constraints() const { return space.get_constraints(); }
-
-    /** @brief Access the geometry/grid object. */
     const fe::HyperCube<dim>& get_grid() const { return grid; }
-
-    /** @brief Access the geometric mapping (reference cell to real cell). */
     const dealii::Mapping<dim>& get_mapping() const { return *mapping; }
+    const dealii::Quadrature<dim>& get_quadrature() const { return *quadrature; }
 
 private:
     fe::HyperCube<dim>    grid;    ///< The geometry and triangulation.
@@ -424,9 +387,10 @@ private:
 
 
 /**
- * @brief The smooth objective function E(x) in ambient Euclidean space.
+ * @brief Energy \f$ E(x) \f$ in ambient space, its Euclidean gradient \f$ A(x) x \f$, and the inverse operators of
+ * \f$ M \f$ and \f$ A(x) \f$.
  *
- * @tparam System GrossPitaevskiiSystem.
+ * update() reassembles \f$ M_{\phi\phi} \f$ of the system; all other members refer to the state of the last update.
  */
 template <typename System>
 class GrossPitaevskiiFunctional
@@ -454,7 +418,7 @@ public:
         M_inv.update_dynamic(M.diagonal());
     }
 
-    // Assembly of the non-linear matrix for value() / directional_derivative()
+    /** @brief Reassembles \f$ M_{\phi\phi}(x) \f$ and the Jacobi preconditioner of \f$ A(x) \f$. */
     void update(const Vector<double>& x)
     {
         // Updates A, M as references to system
@@ -464,13 +428,7 @@ public:
         A_inv.update_dynamic(A.diagonal());
     }
 
-    /**
-     * @brief Evaluates the energy functional for the Gross-Pitaevskii equation.
-     * Computes the energy value:
-     * \f[
-     * E(x) = \frac{1}{2} x^T A_0 x + \frac{beta}{4} x^T M_{\phi\phi}(x) x
-     * \f]
-     */
+    /** @brief \f$ E(x) = \frac12 x^\top A_0 x + \frac\beta4 x^\top M_{\phi\phi}(x) x \f$ */
     double value(const Vector<double>& x) const
     {
         auto A_eval = system.get_operator_A(beta*0.25, 0.5);
@@ -481,6 +439,7 @@ public:
         return x * Ax;
     }
 
+    /** @brief \f$ (A(x) x)^\top z \f$ */
     double directional_derivative(const Vector<double>& x, const Vector<double>& z) const
     {
         Vector<double> Ax(x.size());
@@ -489,6 +448,7 @@ public:
         return Ax * z;
     }
 
+    /** @brief Euclidean gradient \f$ A(x) x \f$. */
     void gradient(const Vector<double>& x, Vector<double>& output) const
     {
         A.vmult(output, x);

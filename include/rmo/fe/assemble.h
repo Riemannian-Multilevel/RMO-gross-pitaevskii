@@ -31,8 +31,7 @@ using dealii::numbers::invalid_unsigned_int;
  *
  * On each cell, `assemble_cell(fe_values, cell_matrix, local_dof_indices)` computes the cell matrix,
  * which is then distributed with @p constraints. The caller constructs @p fe_values (quadrature,
- * mapping, update flags); a kernel that needs a second quadrature rule can reinitialize its own
- * `FEValues` with `fe_values.get_cell()`.
+ * mapping, update flags).
  *
  * @p system_matrix must have the size of the DoF space (on @p level), and is zeroed first if
  * @p reinit is set.
