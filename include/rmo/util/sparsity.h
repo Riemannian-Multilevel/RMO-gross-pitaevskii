@@ -13,22 +13,15 @@
 #include <deal.II/multigrid/mg_constrained_dofs.h>
 #include <deal.II/multigrid/mg_tools.h>
 
+/**
+ * @file
+ * @brief Sparsity patterns of the active and multigrid level matrices, and Gnuplot output of DoF and vertex
+ * locations for debugging.
+ */
 namespace rmo
 {
-/**
- * @brief Writes the physical locations of all degrees of freedom to a file.
- *
- * This function computes the support points for all DoFs using the specified mapping
- * and writes them to a file in a format suitable for Gnuplot. This is useful for
- * visual debugging of finite element node distributions, especially for high-order
- * or isoparametric elements.
- *
- * @tparam dim The spatial dimension.
- * @param[in] dof_handler The DoFHandler managing the degrees of freedom.
- * @param[in] filename The output filename.
- * @param[in] mapping The mapping to use for computing real-world coordinates from
- * reference cell points (defaults to Q1 mapping).
- */
+
+/** @brief Writes the support points of all DoFs, mapped with @p mapping, to @p filename (Gnuplot format). */
 template <int dim>
 void write_dof_locations(const dealii::DoFHandler<dim>& dof_handler,
                          const std::string& filename,
@@ -44,19 +37,8 @@ void write_dof_locations(const dealii::DoFHandler<dim>& dof_handler,
 }
 
 /**
- * @brief Visualizes the geometric distribution of vertices on a specific mesh level.
- *
- * Iterates over all cells on the given refinement level and extracts the vertex locations.
- * This is primarily used to visualize the grid hierarchy in Multigrid contexts.
- *
- * @note This function explicitly requires that the Finite Element matches the vertices
- * (i.e., linear Lagrange elements, FE_Q(1)). It will throw an exception if used with
- * higher-order elements.
- *
- * @tparam dim The spatial dimension.
- * @param[in] dof_handler The DoFHandler.
- * @param[in] level The mesh refinement level to visualize.
- * @param[in] filename The output filename.
+ * @brief Writes the vertices of the cells on mesh @p level to @p filename.
+ * Requires DoFs at the vertices only, i.e. `FE_Q(1)`; throws otherwise.
  */
 template <int dim>
 void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
@@ -84,18 +66,8 @@ void write_level_vertex_points(const dealii::DoFHandler<dim> &dof_handler,
 }
 
 /**
- * @brief Constructs a dynamic sparsity pattern for the active system matrix.
- *
- * Helper function that initializes a `DynamicSparsityPattern` with the correct size
- * and coupling information derived from the DoFHandler and constraints.
- *
- * @tparam dim The spatial dimension.
- * @param[in] dof_handler The DoFHandler.
- * @param[in] constraints Constraints object (used to determine entries for hanging nodes).
- * @param[in] keep_constrained_dofs If true, entries are kept in the sparsity pattern
- * even for constrained DoFs. This is usually required if you plan to write a constant on the
- * diagonal and 0.0 off-diagonal for constrained rows.
- * @return An initialized DynamicSparsityPattern.
+ * @brief Sparsity pattern of the matrices on the active mesh, condensed with @p constraints;
+ * @p keep_constrained_dofs keeps the entries of constrained rows and columns.
  */
 template <int dim>
 dealii::DynamicSparsityPattern
@@ -112,17 +84,8 @@ make_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
 }
 
 /**
- * @brief Constructs a sparsity pattern for a specific Multigrid level matrix.
- *
- * Used to build the level matrices (smoothers) in geometric multigrid. It uses
- * `MGTools` to account for the specific connectivity on a single level of the hierarchy.
- *
- * @tparam dim The spatial dimension.
- * @param[in] dof_handler The DoFHandler.
- * @param[in] mg_constrained_dofs The MG constraint handler (provides level-specific constraints).
- * @param[in] level The multigrid level index.
- * @param[in] keep_constrained_dofs Whether to keep entries for constrained DoFs.
- * @return An initialized DynamicSparsityPattern for the specified level.
+ * @brief Sparsity pattern of the matrices on multigrid @p level, condensed with its level constraints;
+ * @p keep_constrained_dofs keeps the entries of constrained rows and columns.
  */
 template <int dim>
 dealii::DynamicSparsityPattern
@@ -140,19 +103,7 @@ make_sparsity_pattern_mg(const dealii::DoFHandler<dim>& dof_handler,
     return dsp;
 }
 
-/**
- * @brief Constructs a sparsity pattern for the interface between multigrid levels.
- *
- * This is required for flux-correction or edge matrices in complex Multigrid schemes.
- * It determines the sparsity pattern required to couple DoFs at the interface of
- * refined and unrefined cells.
- *
- * @tparam dim The spatial dimension.
- * @param[in] dof_handler The DoFHandler.
- * @param[in] mg_constrained_dofs The MG constraint handler.
- * @param[in] level The multigrid level index.
- * @return An initialized DynamicSparsityPattern for the interface.
- */
+/** @brief Sparsity pattern of the interface (edge) matrices of multigrid @p level, for local refinement. */
 template <int dim>
 dealii::DynamicSparsityPattern
 make_interface_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,

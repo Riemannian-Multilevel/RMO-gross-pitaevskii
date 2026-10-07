@@ -20,6 +20,11 @@
 #include <rmo/ropt/descent.h>
 
 
+/**
+ * @file
+ * @brief Single-level Riemannian gradient descent (GradientDescent) with its descent step (cycle_smooth()) and
+ * evaluation (cycle_eval()), and the record CycleInfo that all solvers report per iterate.
+ */
 namespace rmo
 {
 
@@ -46,6 +51,7 @@ BOOST_DESCRIBE_STRUCT(CycleInfo, (),
 
 
 
+//! Solver run by cycle() on an initial guess @p x, which it overwrites with the result.
 class SolverBase : public ObservableSolver<CycleInfo>
 {
 public:
@@ -58,7 +64,8 @@ public:
 };
 
 
-// Implementation of smoothing steps
+//! One descent step along @p eta from @p x: Armijo line search or fixed step size (options_gd.line_search). Updates
+//! @p x and the oracle to the new point, and returns the step size and the elapsed time.
 template <typename Oracle>
 CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
                        Vector<double>& x, const Vector<double>& eta,
@@ -119,6 +126,7 @@ cycle_eval(const Oracle& O, const ResidualBase& R, const Vector<double>& y, Iter
 }
 
 
+//! Riemannian gradient descent on one level; stops when the residual is below options_gd.tol_residual.
 class GradientDescent : public SolverBase
 {
 public:

@@ -7,9 +7,17 @@
 
 #include <rmo/lac.h>
 
+/**
+ * @file
+ * @brief LinearTransferBase: linear transfer between a coarse and a fine discretization.
+ */
 namespace rmo
 {
 
+/**
+ * @brief Restriction \f$ I_h^H \f$ (to_coarse_mesh()) and prolongation \f$ I_H^h \f$ (to_fine_mesh()) between a
+ * coarse and a fine discretization, with optional transposes; arguments are (source, destination).
+ */
 class LinearTransferBase
 {
 public:

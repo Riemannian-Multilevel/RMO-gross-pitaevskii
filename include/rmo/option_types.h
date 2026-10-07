@@ -7,6 +7,11 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief Option types of the solvers and the Gross-Pitaevskii problem: enums and option structs, filled from the
+ * command line by option.h.
+ */
 namespace rmo
 {
 

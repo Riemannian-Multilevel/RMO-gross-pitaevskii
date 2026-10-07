@@ -24,9 +24,16 @@
  * overwritten), the DoFHandler, the quadrature rule and mapping, the constraints applied when
  * distributing cell matrices, and an optional multigrid level (default: active cells).
  *
- * The `*_lumped` variants assemble diagonal matrices into a `DiagonalMatrix` or a `SparseMatrix`.
- * They require a lumpable element (\f$ \int_K \phi_i > 0 \f$, e.g. `FE_Q`, `FE_SimplexP(1)`,
- * `FE_SimplexP_Bubbles(2)`) and no hanging-node constraints.
+ * The `*_lumped` variants assemble diagonal matrices (row-sum lumping) into a `DiagonalMatrix` or a
+ * `SparseMatrix`. They require positive row sums of the mass matrix, \f$ \int_\Omega \phi_i > 0 \f$
+ * (e.g. `FE_Q`, `FE_SimplexP(1)`, `FE_SimplexP_Bubbles(2)`, but not `FE_SimplexP(2)`), and no
+ * hanging-node constraints.
+ *
+ * General (non-affine) cells: the lumped matrices are integrals of \f$ \hat\phi_i |J| \f$ over the
+ * reference cell, so the quadrature must integrate these exactly. With `MappingQ1` on quadrilaterals,
+ * \f$ |J| \f$ is bilinear and `QGauss(p + 1)` suffices, also on general quadrilaterals. A nodal rule
+ * (quadrature points at the support points) instead gives \f$ \hat w_i |J(\hat a_i)| \f$, which agrees
+ * only on affine cells, where \f$ |J| \f$ is constant.
  */
 namespace rmo::fe
 {
@@ -34,43 +41,11 @@ using dealii::types::global_dof_index;
 using dealii::numbers::invalid_unsigned_int;
 
 /**
- * @brief Nodal quadrature rule of @p fe, for mass lumping.
- *
- * The points are the unit support points and the weights are \f$ \hat w_i = \int_{\hat K} \hat\phi_i \f$,
- * so mass-type matrices assembled with this rule are diagonal. For `FE_Q(p)` with its default
- * Gauss-Lobatto support points, the rule equals `QGaussLobatto<dim>(p + 1)` (up to point order).
- *
- * Throws if @p fe is not a scalar element with support points, or has a non-positive weight
- * (e.g. `FE_SimplexP(2)`).
- */
-template <int dim>
-dealii::Quadrature<dim> make_nodal_quadrature(const dealii::FiniteElement<dim>& fe)
-{
-    AssertThrow(fe.n_components() == 1 && fe.has_support_points(),
-        dealii::ExcMessage("nodal quadrature requires a scalar finite element with support points"));
-
-    // Exact for the integrals of the shape functions (fe.degree includes bubbles)
-    const auto q_exact = fe.reference_cell().template get_gauss_type_quadrature<dim>(fe.degree + 1);
-    std::vector<double> w(fe.n_dofs_per_cell(), 0.0);
-
-    for (unsigned q = 0; q < q_exact.size(); ++q) {
-        for (unsigned i = 0; i < w.size(); ++i) {
-            w[i] += fe.shape_value(i, q_exact.point(q)) * q_exact.weight(q);
-        }
-    }
-    for (double wi : w) {
-        AssertThrow(wi > 0, dealii::ExcMessage("element not lumpable (non-positive nodal weight)"));
-    }
-    return dealii::Quadrature<dim>(fe.get_unit_support_points(), w);
-}
-
-/**
  * @brief Generic assembly loop over the active cells, or the cells of multigrid @p level.
  *
  * On each cell, `assemble_cell(fe_values, cell_matrix, local_dof_indices)` computes the cell matrix,
  * which is then distributed with @p constraints. The caller constructs @p fe_values (quadrature,
- * mapping, update flags); a kernel that needs a second quadrature rule can reinitialize its own
- * `FEValues` with `fe_values.get_cell()`.
+ * mapping, update flags).
  *
  * @p system_matrix must have the size of the DoF space (on @p level), and is zeroed first if
  * @p reinit is set. A `DiagonalMatrix` keeps only the diagonal entries.
@@ -159,7 +134,8 @@ void assemble_mass(GlobalMatrix& system_matrix,
 /**
  * @brief Lumped mass matrix \f$ (M_L)_{ii} = \int_\Omega \phi_i \, dx \f$, the row sums of \f$ M \f$.
  *
- * @p quadrature must integrate the shape functions exactly; Gauss and nodal rules give the same result.
+ * @p quadrature must integrate \f$ \hat\phi_i |J| \f$ exactly on each cell (see the file documentation),
+ * e.g. the rule used for the stiffness matrix.
  */
 template <int dim, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
 void assemble_mass_lumped(GlobalMatrix& system_matrix,
@@ -249,37 +225,6 @@ void assemble_mass_weighted(GlobalMatrix& system_matrix,
 }
 
 /**
- * @brief Lumped potential-weighted mass matrix \f$ M_{V,L} \f$.
- *
- * With the nodal rule, \f$ (M_{V,L})_{ii} = V(a_i) \, (M_L)_{ii} \f$, consistent with the lumped
- * \f$ M \f$ and \f$ M_{\phi\phi} \f$. With a Gauss rule, \f$ (M_{V,L})_{ii} \approx \int_\Omega V \phi_i \, dx \f$.
- */
-template <int dim, typename Function, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
-void assemble_mass_lumped_weighted(GlobalMatrix& system_matrix,
-                                   Function&& V,
-                                   const dealii::DoFHandler<dim>& dof_handler,
-                                   const dealii::Quadrature<dim>& quadrature,
-                                   const dealii::Mapping<dim>& mapping,
-                                   const dealii::AffineConstraints<double>& constraints,
-                                   unsigned int level = invalid_unsigned_int)
-{
-    dealii::FEValues<dim> fe_values(mapping, dof_handler.get_fe(), quadrature,
-        dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
-
-    auto f_mass_weighted = [&V](const dealii::FEValues<dim>& fe_values, dealii::FullMatrix<double>& cell_matrix, auto&&...)
-    {
-        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
-            const double V_JxW = V(fe_values.quadrature_point(q_index)) * fe_values.JxW(q_index);
-
-            for (const unsigned int j : fe_values.dof_indices()) {
-                cell_matrix(j, j) += fe_values.shape_value(j, q_index) * V_JxW;
-            }
-        }
-    };
-    assemble_system(system_matrix, dof_handler, fe_values, f_mass_weighted, constraints, level, true);
-}
-
-/**
  * @brief Linear part of the Gross-Pitaevskii operator, \f$ A_0 = S + M_V \f$.
  */
 template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
@@ -317,28 +262,32 @@ void assemble_A0(GlobalMatrix& system_matrix,
 /**
  * @brief Linear part of the Gross-Pitaevskii operator with lumped potential, \f$ A_0 = S + M_{V,L} \f$.
  *
- * @p quadrature is used for \f$ S \f$ and must integrate gradients accurately (e.g. `QGauss(p + 1)`);
- * @p quadrature_mass is used for \f$ M_{V,L} \f$ and should be the nodal rule.
+ * The potential is evaluated at the support points \f$ a_i \f$: \f$ (M_{V,L})_{ii} = V(a_i) \, (M_L)_{ii} \f$,
+ * with \f$ M_L \f$ as assembled by assemble_mass_lumped() with the same @p quadrature. On affine cells
+ * this equals the nodal quadrature of \f$ \int_\Omega V \phi_i \phi_j \f$.
  */
 template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
 void assemble_A0_lumped(GlobalMatrix& system_matrix,
                         Function&& V,
                         const dealii::DoFHandler<dim>& dof_handler,
                         const dealii::Quadrature<dim>& quadrature,
-                        const dealii::Quadrature<dim>& quadrature_mass,
                         const dealii::Mapping<dim>& mapping,
                         const dealii::AffineConstraints<double>& constraints,
                         unsigned int level = invalid_unsigned_int)
 {
-    const auto& element = dof_handler.get_fe();
-    dealii::FEValues<dim> fe_values(mapping, element, quadrature,
-        dealii::update_gradients | dealii::update_JxW_values);
-    dealii::FEValues<dim> fe_values_mass(mapping, element, quadrature_mass,
-        dealii::update_values | dealii::update_JxW_values | dealii::update_quadrature_points);
+    dealii::FEValues<dim> fe_values(mapping, dof_handler.get_fe(), quadrature,
+        dealii::update_values | dealii::update_gradients | dealii::update_JxW_values);
+    std::vector<double> V_support(dof_handler.get_fe().n_dofs_per_cell());
 
-    auto f_A0 = [&V, &fe_values_mass](const dealii::FEValues<dim>& fe_values, dealii::FullMatrix<double>& cell_matrix, auto&&...)
+    auto f_A0 = [&V, &mapping, &V_support](const dealii::FEValues<dim>& fe_values,
+                                            dealii::FullMatrix<double>& cell_matrix, auto&&...)
     {
-        // Stiffness term
+        for (const unsigned int j : fe_values.dof_indices()) {
+            const auto a_j = mapping.transform_unit_to_real_cell(fe_values.get_cell(),
+                                                                 fe_values.get_fe().unit_support_point(j));
+            V_support[j] = V(a_j);
+        }
+
         for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
             const auto JxW = fe_values.JxW(q_index);
 
@@ -346,17 +295,7 @@ void assemble_A0_lumped(GlobalMatrix& system_matrix,
                 for (const unsigned int j : fe_values.dof_indices()) {
                     cell_matrix(i, j) += fe_values.shape_grad(i, q_index) * fe_values.shape_grad(j, q_index) * JxW;
                 }
-            }
-        }
-
-        // Lumped potential term, with the mass quadrature on the same cell
-        fe_values_mass.reinit(fe_values.get_cell());
-
-        for (const unsigned int q_index : fe_values_mass.quadrature_point_indices()) {
-            const double V_JxW = V(fe_values_mass.quadrature_point(q_index)) * fe_values_mass.JxW(q_index);
-
-            for (const unsigned int j : fe_values_mass.dof_indices()) {
-                cell_matrix(j, j) += fe_values_mass.shape_value(j, q_index) * V_JxW;
+                cell_matrix(i, i) += V_support[i] * fe_values.shape_value(i, q_index) * JxW;
             }
         }
     };
@@ -406,7 +345,7 @@ void assemble_mass_phiphi(GlobalMatrix& matrix,
  *
  * \f$ M_{\phi\phi,L}(u)\,u \f$ is the exact gradient of the lumped energy
  * \f$ \tfrac14 \sum_i (M_L)_{ii} u_i^4 \f$, so value and gradient of the functional are consistent.
- * Any quadrature that integrates \f$ \phi_i \f$ exactly gives the same result.
+ * @p quadrature has the same requirement as for assemble_mass_lumped().
  */
 template <int dim, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
 void assemble_mass_phiphi_lumped(GlobalMatrix& matrix,

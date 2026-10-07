@@ -1,60 +1,48 @@
-//
-// Checks that A0 = S + M_{V,L} is an M-matrix with mass lumping. Then A_u = A0 + beta Mpp(u) has a
-// non-negative inverse, and the energy-adaptive step A_u^{-1} M u preserves positivity.
-//
-// A0 is symmetric positive definite, so non-positive off-diagonal entries suffice; the non-negative
-// inverse is also checked directly on a few columns. Dirichlet rows and columns are excluded.
-//
-// Required: degree 1 (2d Q1, 2d P1 on the simplex mesh, 3d Q1). Reported as INFO, since they are no
-// M-matrices: consistent A0, Q2, P2-bubble, 3d P1 on the simplex mesh.
-//
+/**
+ * @file
+ * @brief Checks that the lumped \f$ A_0 = S + M_{V,L} \f$ is an M-matrix for elements of degree 1 (2d Q1, 2d P1, 3d Q1).
+ *
+ * Then \f$ A_u = A_0 + \beta M_{\phi\phi}(u) \f$ has a non-negative inverse, and the energy-adaptive step
+ * \f$ A_u^{-1} M u \f$ preserves positivity. \f$ A_0 \f$ is symmetric positive definite, so non-positive
+ * off-diagonal entries suffice; the non-negative inverse is also checked directly on a few columns. Dirichlet rows
+ * and columns are excluded. The consistent \f$ A_0 \f$, and elements of higher degree, give no M-matrix.
+ */
+#include "check.h"
+
 #include <rmo/gpe/gpe.h>
 
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 
-#include <iomanip>
-#include <iostream>
-#include <sstream>
+#include <algorithm>
 #include <string>
 
 using namespace rmo;
 using namespace rmo::gpe;
+using namespace rmo::test;
 using namespace dealii;
 
 namespace
 {
-unsigned n_failed = 0;
 
-void check(bool ok, const std::string& name, const std::string& detail = "")
-{
-    std::cout << (ok ? "PASS  " : "FAIL  ") << name;
-    if (!detail.empty()) {
-        std::cout << "  (" << detail << ")";
-    }
-    std::cout << "\n";
-    n_failed += !ok;
-}
-
-std::string fmt_double(double x)
-{
-    std::ostringstream ss;
-    ss << std::scientific << std::setprecision(2) << x;
-    return ss.str();
-}
-
+//! Signs of the entries of a matrix in the unconstrained rows and columns, relative to max |A_ij|.
 struct SignPattern
 {
     unsigned n_positive_offdiag = 0;  ///< off-diagonal entries > 0
-    double   max_positive       = 0;  ///< largest one, relative to max |A_ij|
-    double   min_diagonal       = 0;  ///< smallest diagonal entry, relative to max |A_ij|
+    double   max_positive       = 0;  ///< largest of them
+    double   min_diagonal       = 1;  ///< smallest diagonal entry
+
+    [[nodiscard]] std::string str() const
+    {
+        return std::to_string(n_positive_offdiag) + " positive off-diagonal entries (max " + sci(max_positive)
+             + "), min diagonal " + sci(min_diagonal);
+    }
 };
 
 SignPattern sign_pattern(const SparseMatrix<double>& A, const AffineConstraints<double>& constraints)
 {
     SignPattern sp;
     const double scale = A.linfty_norm();
-    sp.min_diagonal = 1.0;
 
     for (unsigned i = 0; i < A.m(); ++i) {
         if (constraints.is_constrained(i)) {
@@ -74,10 +62,12 @@ SignPattern sign_pattern(const SparseMatrix<double>& A, const AffineConstraints<
     return sp;
 }
 
-//! Smallest entry of A^{-1} e_i over a few unconstrained columns i, relative to the largest entry.
+//! Smallest entry of A^{-1} e_i over 5 unconstrained columns i, relative to the largest entry of the column.
 double min_inverse_entry(const SparseMatrix<double>& A, const AffineConstraints<double>& constraints)
 {
     const unsigned n = A.m();
+    PreconditionJacobi<SparseMatrix<double>> jacobi;
+    jacobi.initialize(A);
     double min_rel = 1.0;
 
     for (unsigned k = 1; k <= 5; ++k) {
@@ -90,8 +80,6 @@ double min_inverse_entry(const SparseMatrix<double>& A, const AffineConstraints<
 
         SolverControl control(10 * n, 1e-14);
         SolverCG<Vector<double>> cg(control);
-        PreconditionJacobi<SparseMatrix<double>> jacobi;
-        jacobi.initialize(A);
         cg.solve(A, y, e, jacobi);
 
         for (unsigned j = 0; j < n; ++j) {
@@ -104,7 +92,7 @@ double min_inverse_entry(const SparseMatrix<double>& A, const AffineConstraints<
 }
 
 template <int dim>
-void test_config(MeshKind mesh, int degree, unsigned n_levels, const std::string& name, bool required)
+GPE_Options make_options(MeshKind mesh, int degree)
 {
     GPE_Options options{};
     options.dimension = dim;
@@ -115,30 +103,23 @@ void test_config(MeshKind mesh, int degree, unsigned n_levels, const std::string
     options.bc        = BoundaryCondition::DIRICHLET;
     options.mesh_kind = mesh;
     options.potential = Potential::SQUARE;
+    return options;
+}
 
-    GrossPitaevskiiPackage<dim> package(options, n_levels);
+template <int dim>
+void check_lumped_A0(CheckReport& report, MeshKind mesh, unsigned n_levels, const std::string& name)
+{
+    const GrossPitaevskiiPackage<dim> package(make_options<dim>(mesh, 1), n_levels);
     const auto& constraints = package.get_constraints();
-    const potential::Square<dim> V;
+    const auto  lumped      = package.template system<GrossPitaevskiiLumpedSystem<dim>>(potential::Square<dim>());
 
-    // The consistent potential term adds positive off-diagonal entries
-    const auto consistent = package.template system<GrossPitaevskiiSystem<dim>>(V);
-    const SignPattern sp_c = sign_pattern(consistent.get_A0(), constraints);
-    std::cout << "INFO  " << name << ", consistent A0: " << sp_c.n_positive_offdiag
-              << " positive off-diagonal entries (max " << fmt_double(sp_c.max_positive) << ")\n";
-
-    const auto lumped = package.template system<GrossPitaevskiiLumpedSystem<dim>>(V);
     const SignPattern sp = sign_pattern(lumped.get_A0(), constraints);
-    const std::string detail = std::to_string(sp.n_positive_offdiag) + " positive off-diagonal entries (max "
-                             + fmt_double(sp.max_positive) + "), min diagonal " + fmt_double(sp.min_diagonal);
-
-    if (!required) {
-        std::cout << "INFO  " << name << ", lumped A0: " << detail << "\n";
-        return;
-    }
-    check(sp.n_positive_offdiag == 0 && sp.min_diagonal > 0, name + ": lumped A0 is a Z-matrix with positive diagonal", detail);
+    report.check(sp.n_positive_offdiag == 0 && sp.min_diagonal > 0, name + ": lumped A0 is a Z-matrix with positive diagonal",
+                 sp.str());
 
     const double min_inv = min_inverse_entry(lumped.get_A0(), constraints);
-    check(min_inv > -1e-10, name + ": lumped A0^{-1} is non-negative (5 columns)", "min relative entry " + fmt_double(min_inv));
+    report.check(min_inv > -1e-10, name + ": lumped A0^{-1} is non-negative (5 columns)",
+                 "min relative entry " + sci(min_inv));
 }
 
 } // namespace
@@ -146,23 +127,11 @@ void test_config(MeshKind mesh, int degree, unsigned n_levels, const std::string
 
 int main()
 {
-    std::cerr.setstate(std::ios::failbit);  // silence mesh statistics printed by GrossPitaevskiiPackage
+    std::cerr.setstate(std::ios::failbit);  // silence the mesh statistics of GrossPitaevskiiPackage
 
-    try {
-        test_config<2>(MeshKind::QUADRILATERAL, 1, 5, "2d Q1 (squares)", true);
-        test_config<2>(MeshKind::SIMPLEX,       1, 4, "2d P1 (simplex mesh)", true);
-        test_config<3>(MeshKind::QUADRILATERAL, 1, 3, "3d Q1 (cubes)", true);
-
-        test_config<2>(MeshKind::QUADRILATERAL, 2, 4, "2d Q2 (squares)", false);
-        test_config<2>(MeshKind::SIMPLEX,       2, 3, "2d P2-bubble (simplex mesh)", false);
-        test_config<3>(MeshKind::SIMPLEX,       1, 3, "3d P1 (simplex mesh)", false);
-    }
-    catch (const std::exception& exc) {
-        std::cerr.clear();
-        std::cerr << "Exception: " << exc.what() << std::endl;
-        return 1;
-    }
-
-    std::cout << (n_failed ? std::to_string(n_failed) + " check(s) failed" : "all checks passed") << std::endl;
-    return n_failed ? 1 : 0;
+    return run_tests([](CheckReport& report) {
+        check_lumped_A0<2>(report, MeshKind::QUADRILATERAL, 5, "2d Q1");
+        check_lumped_A0<2>(report, MeshKind::SIMPLEX, 4, "2d P1");
+        check_lumped_A0<3>(report, MeshKind::QUADRILATERAL, 3, "3d Q1");
+    });
 }
