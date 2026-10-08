@@ -54,7 +54,7 @@ template <int dim>
 class Zero
 {
 public:
-    double operator()(const Point<dim>& p) const
+    double operator()(const Point<dim>&) const
     {
         return 0.0;
     }
@@ -68,7 +68,7 @@ public:
         : m_a(a)
     {}
 
-    double operator()(const Point<dim>& p) const
+    double operator()(const Point<dim>&) const
     {
         return m_a;
     }

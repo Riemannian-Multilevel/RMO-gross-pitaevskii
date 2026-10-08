@@ -100,7 +100,7 @@ struct Systems
     [[nodiscard]] unsigned n_dofs() const { return package.n_dofs(); }
 
     const std::string name;
-    const potential::Square<dim> V;
+    const potential::Square<dim> V{};
     GrossPitaevskiiPackage<dim> package;
     GrossPitaevskiiSystem<dim> consistent;
     GrossPitaevskiiLumpedSystem<dim> lumped;

@@ -124,7 +124,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         O_fine.update(x);
     }
 
-    return {.step = step_size, .elapsed = timer.cpu_time()};
+    return {.step = step_size, .elapsed = timer.cpu_time(), .extra = {}};
 }
 
 
