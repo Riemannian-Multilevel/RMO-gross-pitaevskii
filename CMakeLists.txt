@@ -81,7 +81,8 @@ endfunction()
 add_rmo_executable(main LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_matrix LINK_LIBS Boost::program_options fmt::fmt)
+
 add_rmo_executable(main_m_matrix SOURCE staging/main_m_matrix.cc LINK_LIBS Boost::program_options)
 
 # --- Create targets for tests
@@ -92,7 +93,6 @@ add_rmo_executable(test_gradient SOURCE staging/test/gradient.cc LINK_LIBS Boost
 add_rmo_executable(test_energy SOURCE staging/test/energy.cc)
 add_rmo_executable(test_operator SOURCE staging/test/operator.cc)
 add_rmo_executable(test_lumping SOURCE staging/test/lumping.cc)
-add_rmo_executable(test_m_matrix SOURCE staging/test/m_matrix.cc)  # OBSOLETE: superseded by main_m_matrix
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
@@ -103,7 +103,6 @@ add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
 add_test(NAME energy COMMAND test_energy)
 add_test(NAME operator COMMAND test_operator)
 add_test(NAME lumping COMMAND test_lumping)
-add_test(NAME m_matrix COMMAND test_m_matrix)  # OBSOLETE: superseded by the main_m_matrix tests below
 
 # Irreducible M-matrix property of the lumped A0 = S + M_{V,L} (Taussky's theorem, tex/taussky_theorem.tex);
 # its off-diagonal entries and matrix graph are those of the stiffness matrix S

@@ -9,9 +9,10 @@
 // treated as zero. Exit code: 0 if all hypotheses hold on every level, 1 otherwise, 2 on errors.
 //
 #include <rmo/fe/assemble.h>
+#include <rmo/fe/util.h>
+
 #include <rmo/gpe/gpe.h>
 #include <rmo/option.h>
-#include <rmo/util/sparsity.h>
 #include <rmo/util/util.h>
 
 #include <deal.II/lac/precondition.h>
@@ -234,7 +235,7 @@ bool check_level(const GPE_Options& options, const CheckOptions& opts, unsigned 
 
     if (opts.matrix == "stiffness") {
         SparsityPattern sparsity;
-        sparsity.copy_from(make_sparsity_pattern(dofs, constraints));
+        sparsity.copy_from(fe::make_sparsity_pattern(dofs, constraints));
         SparseMatrix<double> S(sparsity);
         fe::assemble_stiffness(S, dofs, package.get_quadrature(), package.get_mapping(), constraints);
         return check(S);

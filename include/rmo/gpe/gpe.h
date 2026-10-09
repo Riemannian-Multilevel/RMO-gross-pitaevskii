@@ -10,8 +10,7 @@
 #include <rmo/fe/assemble.h>
 #include <rmo/fe/grid.h>
 #include <rmo/fe/space.h>
-
-#include <rmo/util/sparsity.h>
+#include <rmo/fe/util.h>
 
 #include <deal.II/base/function_parser.h>
 #include <deal.II/fe/fe_simplex_p.h>
@@ -239,7 +238,7 @@ protected:
         : dof_handler(dofs)
         , constraints(cstr)
     {
-        auto dsp = make_sparsity_pattern(dof_handler, constraints);
+        auto dsp = fe::make_sparsity_pattern(dof_handler, constraints);
         sparsity_pattern.copy_from(dsp);
         A0.reinit(sparsity_pattern);
     }
@@ -414,10 +413,12 @@ public:
     }
 
     /** @brief Assembles a system (GrossPitaevskiiSystem or GrossPitaevskiiLumpedSystem) for the potential @p V. */
+    // TODO: turn this into a free function
     template <typename System = GrossPitaevskiiSystem<dim>, typename Potential>
     System system(Potential&& V) const
     {
         static_assert(System::dimension == dim, "System dimension must match the package");
+
         return System(space.get_dofs(), *quadrature, *mapping, space.get_constraints(), std::forward<Potential>(V));
     }
 
@@ -544,4 +545,63 @@ private:
 };
 
 } // namespace rmo::gpe
+
+
+// Convenience overloads for assemble.h functions
+namespace rmo::fe
+{
+
+template <int dim, typename GlobalMatrix = dealii::SparseMatrix<double>>
+void assemble_mass(GlobalMatrix& system_matrix, const gpe::GrossPitaevskiiPackage<dim>& context,
+                   unsigned int level = invalid_unsigned_int)
+{
+    assemble_mass(system_matrix, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
+void assemble_mass_lumped(GlobalMatrix& system_matrix, const gpe::GrossPitaevskiiPackage<dim>& context,
+                          unsigned int level = invalid_unsigned_int)
+{
+    assemble_mass_lumped(system_matrix, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
+void assemble_mass_weighted(GlobalMatrix& system_matrix, Function&& V,
+                            const gpe::GrossPitaevskiiPackage<dim>& context,
+                            unsigned int level = invalid_unsigned_int)
+{
+    assemble_mass_weighted(system_matrix, V, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename GlobalMatrix = dealii::SparseMatrix<double>>
+void assemble_stiffness(GlobalMatrix& system_matrix, const gpe::GrossPitaevskiiPackage<dim>& context,
+                        unsigned int level = invalid_unsigned_int)
+{
+    assemble_stiffness(system_matrix, context.get_dofs(), context.get_quadrature(),
+                context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
+void assemble_A0(GlobalMatrix& system_matrix, Function&& V,
+                 const gpe::GrossPitaevskiiPackage<dim>& context,
+                 unsigned int level = invalid_unsigned_int)
+{
+    assemble_A0(system_matrix, V, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+template <int dim, typename Function, typename GlobalMatrix = dealii::SparseMatrix<double>>
+void assemble_A0_lumped(GlobalMatrix& system_matrix, Function&& V,
+                        const gpe::GrossPitaevskiiPackage<dim>& context,
+                        unsigned int level = invalid_unsigned_int)
+{
+    assemble_A0_lumped(system_matrix, V, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
+} // namespace rmo::fe
+
 #endif //RMO_GPE_GPE_H
