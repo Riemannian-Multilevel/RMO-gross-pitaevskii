@@ -11,7 +11,4 @@ Makefile
 interpolate_test/
 __pycache__/
 *.swp
-
-# Build output of the CMake presets; machine paths (emacs-cpp README).
-/build/
-CMakeUserPresets.json
+build/
