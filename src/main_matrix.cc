@@ -46,6 +46,7 @@ class MatrixGraph
 public:
 
 private:
+
 };
 
 // Requirements:
@@ -61,7 +62,8 @@ template <int dim, typename MassMatrix>
 class MatrixExperiment
 {
 public:
-    MatrixExperiment(const GPE_Options& options, unsigned int n_levels)
+    template <typename Potential>
+    MatrixExperiment(Potential&& V, const GPE_Options& options, unsigned int n_levels)
     // discretization
         : m_context(options, n_levels)
     // problem parameters
@@ -73,16 +75,20 @@ public:
     // stiffness matrix
         S.reinit(m_sparsity);
         fe::assemble_stiffness(S, m_context);
-    // mass matrix
+    // mass and A0 matrix
         if constexpr (is_diagonal_matrix_v<MassMatrix>) {
             // lumped system: diagonal matrix
             M.get_vector().reinit(m_context.n_dofs());
             fe::assemble_mass_lumped(M, m_context);
+            A0.reinit(m_sparsity);
+            fe::assemble_A0_lumped(A0, V, m_context);
         }
         else {
             // system: sparse matrix with same sparsity as S
             M.reinit(m_sparsity);
             fe::assemble_mass(M, m_context);
+            A0.reinit(m_sparsity);
+            fe::assemble_A0(A0, V, m_context);
         }
     }
 
@@ -143,6 +149,7 @@ private:
     SparsityPattern m_sparsity;
 
     SparseMatrix<double> S;
+    SparseMatrix<double> A0;
     MassMatrix M;
 };
 
@@ -184,9 +191,12 @@ int main(int argc, char** argv)
 
             with_system<T0::value>(opts.gpe.mass_lumping, [&]<typename System>()
             {
+                auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
+
                 for (unsigned int level: opts.mg.v_levels) {
-                    MatrixExperiment<dim, typename System::MassMatrix>
-                    Analysis(opts.gpe, level+1);
+                    auto Analysis = std::visit([&](auto&& arg) {
+                        return MatrixExperiment<dim, typename System::MassMatrix>(arg, opts.gpe, level+1);
+                    }, potential_v);
 
                     // TODO: conditional write (ProgramOptions::domain, ProgramOptions::matrix_market)
                     Analysis.write_domain("domain", level);

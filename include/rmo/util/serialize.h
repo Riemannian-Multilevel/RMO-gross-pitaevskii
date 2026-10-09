@@ -117,7 +117,7 @@ inline void write_solution(const dealii::Vector<double>& solution, const std::st
  * @param A `SparseMatrix` to be serialized.
  * @param filename Output file name.
  */
-inline void write_matrix_market(const SparseMatrix<double>& A, const std::string& filename)
+inline void write_matrix_market(const dealii::SparseMatrix<double>& A, const std::string& filename)
 {
     std::ofstream out(filename + ".mtx");
     AssertThrow(out, dealii::ExcMessage("could not open " + filename));
@@ -132,6 +132,20 @@ inline void write_matrix_market(const SparseMatrix<double>& A, const std::string
         for (auto it = A.begin(i); it != A.end(i); ++it) {
             out << i + 1 << " " << it->column() + 1 << " " << it->value() << "\n";
         }
+    }
+}
+
+inline void write_matrix_market(const dealii::DiagonalMatrix<Vector<double>>& A, const std::string& filename)
+{
+    std::ofstream out(filename + ".mtx");
+    AssertThrow(out, dealii::ExcMessage("could not open " + filename));
+
+    out << "%%MatrixMarket matrix coordinate real general\n"
+        << A.m() << " " << A.n() << " " << A.get_vector().size() << "\n"
+        << std::setprecision(16);
+
+    for (unsigned i = 0; i < A.m(); ++i) {
+        out << i + 1 << " " << i + 1 << " " << A(i, i) << "\n";
     }
 }
 
