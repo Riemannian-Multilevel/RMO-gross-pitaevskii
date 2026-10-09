@@ -225,6 +225,7 @@ inline void apply_output_options(const po::variables_map& vm, OutputOptions& opt
     if (options_out.output_bin) {
         options_out.bin_filename = vm["output-bin"].as<std::string>();
     }
+
     options_out.output_vtk = vm.contains("output-vtk");
     if (options_out.output_vtk) {
         options_out.vtk_filename = vm["output-vtk"].as<std::string>();

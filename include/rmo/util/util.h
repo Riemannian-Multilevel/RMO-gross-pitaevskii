@@ -67,42 +67,6 @@ decltype(auto) with_system(bool mass_lumping, F&& f)
     return f.template operator()<gpe::GrossPitaevskiiSystem<dim>>();
 }
 
-//! Writes @p solution (named "psi") to @p filename in @p format.
-template <int dim>
-void output_results(const dealii::Vector<double>& solution, const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::DataOutBase::OutputFormat format, const std::string& filename)
-{
-    dealii::DataOut<dim> data_out;
-    data_out.attach_dof_handler(dof_handler);
-    data_out.add_data_vector(solution, "psi");
-    data_out.build_patches(dof_handler.get_fe().degree);
-
-    std::ofstream output(filename);
-    data_out.write(output, format);
-}
-
-//! Writes the final iterate to `basename.vtk` and, if @p every > 0, also every k-th and the final iterate to
-//! `basename_iter<i>.vtk`, which ParaView reads as one time series.
-template <int dim>
-void output_vtk(const std::vector<dealii::Vector<double>>& history, const dealii::DoFHandler<dim>& dof_handler,
-                const std::string& basename, unsigned every)
-{
-    AssertThrow(!history.empty(), dealii::ExcMessage("no iterates to write"));
-
-    output_results(history.back(), dof_handler, dealii::DataOutBase::vtk, basename + ".vtk");
-    if (every == 0) {
-        return;
-    }
-
-    const std::size_t last = history.size() - 1;
-    for (std::size_t i = 0; i <= last; ++i) {
-        if (i == last || i % every == 0) {
-            output_results(history[i], dof_handler, dealii::DataOutBase::vtk,
-                           basename + "_iter" + std::to_string(i) + ".vtk");
-        }
-    }
-}
-
 //! Upper-case copy of @p s.
 inline std::string upper(std::string s) {
     std::ranges::transform(s, s.begin(),

@@ -122,15 +122,6 @@ struct OutputOptions
     unsigned output_every;        // also write every k-th and the final iterate as a VTK series (0: final iterate only)
 };
 
-// Fields for gradient computation with inner solver
-// TODO: move to descent.h?
-struct GradInfo
-{
-    double residual;
-    unsigned num_iter;
-    double tolerance;
-    double elapsed_time;
-};
 
 
 

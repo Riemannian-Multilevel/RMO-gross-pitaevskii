@@ -1,45 +1,17 @@
 #ifndef RMO_ROPT_DESCENT_H
 #define RMO_ROPT_DESCENT_H
 
-#include <rmo/ropt/oracle.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/lac.h>
 #include <rmo/option_types.h>
 
-#include <deal.II/base/convergence_table.h>
-#include <deal.II/base/timer.h>
-
 /**
  * @file
- * @brief Armijo line search on a manifold, and solver status types.
+ * @brief Armijo line search on a manifold.
  */
+
 namespace rmo
 {
-using dealii::ConvergenceTable::RateMode::reduction_rate;
-using dealii::ConvergenceTable::RateMode::reduction_rate_log2;
-
-// TODO: use in GradientDescent::cycle()
-enum class SolverStatus {
-    CONVERGED,          // iterative method, converged for given tolerance
-    NOT_CONVERGED,      // iterative method, not converged for given tolerance
-    SOLUTION,           // non-iterative method
-    ERROR               // solver error
-};
-
-// TODO: use in Oracle::run() (package of value(), update() and gradient())
-struct SolverInfo {
-    SolverStatus status;
-    size_t num_iter;
-    Vector<double> solution;
-    size_t elapsed_time;
-};
-
-// enum class SolverNorm {
-//     L1,
-//     L2,
-//     LINF,
-//     UNKNOWN
-// };
 
 /**
  * @brief Armijo backtracking line search for @p oracle along the descent direction @p eta at @p x.

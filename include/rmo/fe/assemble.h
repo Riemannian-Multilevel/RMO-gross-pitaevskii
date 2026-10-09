@@ -224,6 +224,53 @@ void assemble_mass_weighted(GlobalMatrix& system_matrix,
     assemble_system(system_matrix, dof_handler, fe_values, f_mass_weighted, constraints, level, true);
 }
 
+//! Values of @p V at the support points \f$ a_j \f$ of the cell that @p fe_values was last reinitialized on.
+template <int dim, typename Function>
+void potential_at_support_points(Function& V, const dealii::Mapping<dim>& mapping,
+                                 const dealii::FEValues<dim>& fe_values, std::vector<double>& V_support)
+{
+    for (const unsigned int j : fe_values.dof_indices()) {
+        V_support[j] = V(mapping.transform_unit_to_real_cell(fe_values.get_cell(),
+                                                             fe_values.get_fe().unit_support_point(j)));
+    }
+}
+
+/**
+ * @brief Lumped potential-weighted mass matrix \f$ (M_{V,L})_{ii} = V(a_i) \, (M_L)_{ii} \f$.
+ *
+ * The potential part of assemble_A0_lumped(): \f$ V \f$ is evaluated at the support points \f$ a_i \f$,
+ * with \f$ M_L \f$ as assembled by assemble_mass_lumped() with the same @p quadrature.
+ */
+template <int dim, typename Function, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
+void assemble_mass_weighted_lumped(GlobalMatrix& system_matrix,
+                                   Function&& V,
+                                   const dealii::DoFHandler<dim>& dof_handler,
+                                   const dealii::Quadrature<dim>& quadrature,
+                                   const dealii::Mapping<dim>& mapping,
+                                   const dealii::AffineConstraints<double>& constraints,
+                                   unsigned int level = invalid_unsigned_int)
+{
+    dealii::FEValues<dim> fe_values(mapping, dof_handler.get_fe(), quadrature,
+        dealii::update_values | dealii::update_JxW_values);
+
+    std::vector<double> V_support(dof_handler.get_fe().n_dofs_per_cell());
+
+    auto f_mass_weighted = [&V, &mapping, &V_support](const dealii::FEValues<dim>& fe_values,
+                                                       dealii::FullMatrix<double>& cell_matrix, auto&&...)
+    {
+        potential_at_support_points(V, mapping, fe_values, V_support);
+
+        for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
+            const auto JxW = fe_values.JxW(q_index);
+
+            for (const unsigned int j : fe_values.dof_indices()) {
+                cell_matrix(j, j) += V_support[j] * fe_values.shape_value(j, q_index) * JxW;
+            }
+        }
+    };
+    assemble_system(system_matrix, dof_handler, fe_values, f_mass_weighted, constraints, level, true);
+}
+
 /**
  * @brief Linear part of the Gross-Pitaevskii operator, \f$ A_0 = S + M_V \f$.
  */
@@ -282,11 +329,7 @@ void assemble_A0_lumped(GlobalMatrix& system_matrix,
     auto f_A0 = [&V, &mapping, &V_support](const dealii::FEValues<dim>& fe_values,
                                             dealii::FullMatrix<double>& cell_matrix, auto&&...)
     {
-        for (const unsigned int j : fe_values.dof_indices()) {
-            const auto a_j = mapping.transform_unit_to_real_cell(fe_values.get_cell(),
-                                                                 fe_values.get_fe().unit_support_point(j));
-            V_support[j] = V(a_j);
-        }
+        potential_at_support_points(V, mapping, fe_values, V_support);
 
         for (const unsigned int q_index : fe_values.quadrature_point_indices()) {
             const auto JxW = fe_values.JxW(q_index);

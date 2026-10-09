@@ -81,7 +81,7 @@ endfunction()
 add_rmo_executable(main LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
-add_rmo_executable(main_sparsity LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_matrix LINK_LIBS Boost::program_options fmt::fmt)
 
 # --- Create targets for tests
 enable_testing()

@@ -5,50 +5,14 @@
 #ifndef RMO_GPE_ITERATION_H
 #define RMO_GPE_ITERATION_H
 
-#include <rmo/lac.h>
+#include <rmo/ropt/oracle.h>
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/kernels.h>
 #include <rmo/gpe/residual.h>
-#include <rmo/ropt/manifold.h>
-#include <rmo/ropt/transport.h>
 
 #include <deal.II/base/timer.h>
 
-#include <utility>
-
-
-/**
- * @file
- * @brief Iterations: oracles with the evaluation point fixed at construction, for the Gross-Pitaevskii functional
- * with the Riemannian gradient in the M-metric (MassIteration), the energy-adaptive metric (EnergyIteration) or
- * the F-metric (FrobeniusIteration).
- */
-namespace rmo::gpe
-{
-
-/** @brief Oracle interface with the evaluation point fixed at construction (shared ownership). */
-class IterationBase
-{
-public:
-    virtual ~IterationBase() = default;
-
-    // Shared pointer to ensure lifetime of evaluation point, when IterationBase object relies on it
-    IterationBase(std::shared_ptr<const Vector<double>> x_ptr)
-        : x_ptr(std::move(x_ptr))
-    {}
-
-    [[nodiscard]] virtual double value()    const = 0;
-    [[nodiscard]] virtual double residual() const = 0;
-    [[nodiscard]] virtual double directional_derivative(const Vector<double> &z) const = 0;
-
-    virtual GradInfo gradient(Vector<double>& dst) const = 0;
-
-    [[nodiscard]] unsigned n_dofs() const { return x_ptr->size(); }
-
-protected:
-    std::shared_ptr<const Vector<double>> x_ptr;
-};
-
+namespace rmo::gpe {
 
 /**
  * @brief Shared part of the iterations of a @p System: updates the functional at the point, and evaluates value,
