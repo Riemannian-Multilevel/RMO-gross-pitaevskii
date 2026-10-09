@@ -18,7 +18,8 @@
  * @brief Program to evaluate properties of finite element matrices (mass, stiffness).
  * This includes
  * - Printing the sparsity pattern for various orderings of degrees-of-freedom.
- * - Exporting the mass and stiffness matrices to MatrixMarket files.
+ * - Exporting the mass, stiffness and potential-weighted mass matrices M, S, M_V to MatrixMarket files,
+ *   so that callers can form A0 = S + M_V and analyze M_V on its own.
  * - Analyzing the graph induced by the stiffness matrix. (TODO)
  * - Analyzing the numerical properties of the stiffness matrix. (TODO)
  */
@@ -37,7 +38,6 @@ struct ProgramOptions
     bool domain;
     bool matrix_market;
     bool matrix_props;
-    std::string mm_filename;
 };
 
 template <int MatrixType>
@@ -75,20 +75,20 @@ public:
     // stiffness matrix
         S.reinit(m_sparsity);
         fe::assemble_stiffness(S, m_context);
-    // mass and A0 matrix
+    // mass and potential-weighted mass matrix
         if constexpr (is_diagonal_matrix_v<MassMatrix>) {
             // lumped system: diagonal matrix
             M.get_vector().reinit(m_context.n_dofs());
             fe::assemble_mass_lumped(M, m_context);
-            A0.reinit(m_sparsity);
-            fe::assemble_A0_lumped(A0, V, m_context);
+            M_V.get_vector().reinit(m_context.n_dofs());
+            fe::assemble_mass_weighted_lumped(M_V, V, m_context);
         }
         else {
             // system: sparse matrix with same sparsity as S
             M.reinit(m_sparsity);
             fe::assemble_mass(M, m_context);
-            A0.reinit(m_sparsity);
-            fe::assemble_A0(A0, V, m_context);
+            M_V.reinit(m_sparsity);
+            fe::assemble_mass_weighted(M_V, V, m_context);
         }
     }
 
@@ -109,6 +109,7 @@ public:
 
         rmo::write_matrix_market(M, base + "_M");
         rmo::write_matrix_market(S, base + "_S");
+        rmo::write_matrix_market(M_V, base + "_MV");
     }
 
 private:
@@ -149,8 +150,7 @@ private:
     SparsityPattern m_sparsity;
 
     SparseMatrix<double> S;
-    SparseMatrix<double> A0;
-    MassMatrix M;
+    MassMatrix M, M_V;
 };
 
 // ("matrix-market", po::value<std::string>()->implicit_value(""),
@@ -170,6 +170,12 @@ int main(int argc, char** argv)
         all.add(mg_cli_options());
         all.add(output_cli_options());
 
+        all.add_options()
+            ("domain", po::bool_switch(),
+                "write the grid (2D), degrees of freedom and sparsity pattern")
+            ("matrix-market", po::bool_switch(),
+                "export the mass, stiffness and potential-weighted mass matrices M, S, M_V in .mtx format");
+
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, all), vm);
         po::notify(vm);
@@ -184,6 +190,9 @@ int main(int argc, char** argv)
         apply_mg_options(vm, opts.mg);
         apply_output_options(vm, opts.output);
 
+        opts.domain = vm["domain"].as<bool>();
+        opts.matrix_market = vm["matrix-market"].as<bool>();
+
         // Main loop
         with_dimension(opts.gpe.dimension, [&]<typename T0>(T0)
         {
@@ -195,12 +204,15 @@ int main(int argc, char** argv)
 
                 for (unsigned int level: opts.mg.v_levels) {
                     auto Analysis = std::visit([&](auto&& arg) {
-                        return MatrixExperiment<dim, typename System::MassMatrix>(arg, opts.gpe, level+1);
+                        return MatrixExperiment<dim, typename System::MassMatrix>(arg, opts.gpe, level);
                     }, potential_v);
 
-                    // TODO: conditional write (ProgramOptions::domain, ProgramOptions::matrix_market)
-                    Analysis.write_domain("domain", level);
-                    Analysis.write_matrix_market("matrix", level);
+                    if (opts.domain) {
+                        Analysis.write_domain("domain", level);
+                    }
+                    if (opts.matrix_market) {
+                        Analysis.write_matrix_market("matrix", level);
+                    }
                 }
             });
         });

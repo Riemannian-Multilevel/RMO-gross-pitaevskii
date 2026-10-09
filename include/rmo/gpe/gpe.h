@@ -576,6 +576,15 @@ void assemble_mass_weighted(GlobalMatrix& system_matrix, Function&& V,
         context.get_mapping(), context.get_constraints(), level);
 }
 
+template <int dim, typename Function, typename GlobalMatrix = dealii::DiagonalMatrix<dealii::Vector<double>>>
+void assemble_mass_weighted_lumped(GlobalMatrix& system_matrix, Function&& V,
+                                   const gpe::GrossPitaevskiiPackage<dim>& context,
+                                   unsigned int level = invalid_unsigned_int)
+{
+    assemble_mass_weighted_lumped(system_matrix, V, context.get_dofs(), context.get_quadrature(),
+        context.get_mapping(), context.get_constraints(), level);
+}
+
 template <int dim, typename GlobalMatrix = dealii::SparseMatrix<double>>
 void assemble_stiffness(GlobalMatrix& system_matrix, const gpe::GrossPitaevskiiPackage<dim>& context,
                         unsigned int level = invalid_unsigned_int)
