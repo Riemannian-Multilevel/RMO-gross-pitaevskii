@@ -52,8 +52,8 @@ private:
 // Requirements:
 // - [OK] GrossPitaevskiiPackage (discretization)
 // - [OK] Sparsity pattern
-// - [OK] Assembled mass and stiffness matrices
-//   performed inside this class; GrossPitaevskiiSystem assembles A0 = S + M_V; potential not needed
+// - [OK] Assembled mass (lumped, consistent) and stiffness matrices
+//   performed inside this class; GrossPitaevskii{,Lumped}System assemble A0 = S + M_V; potential not needed
 // - [OK] Matrix market export
 // - Adjacency matrix to (undirected) graph -> boost graph library
 // - Connected components
@@ -76,10 +76,20 @@ public:
         S.reinit(m_sparsity);
         fe::assemble_stiffness(S, m_context);
     // mass and potential-weighted mass matrix
-        M.reinit(m_sparsity);
-        fe::assemble_mass(M, m_context);
-        M_V.reinit(m_sparsity);
-        fe::assemble_mass_weighted(M_V, V, m_context);
+        if constexpr (is_diagonal_matrix_v<MassMatrix>) {
+            // lumped system: diagonal matrix
+            M.get_vector().reinit(m_context.n_dofs());
+            fe::assemble_mass_lumped(M, m_context);
+            M_V.get_vector().reinit(m_context.n_dofs());
+            fe::assemble_mass_weighted_lumped(M_V, V, m_context);
+        }
+        else {
+            // system: sparse matrix with same sparsity as S
+            M.reinit(m_sparsity);
+            fe::assemble_mass(M, m_context);
+            M_V.reinit(m_sparsity);
+            fe::assemble_mass_weighted(M_V, V, m_context);
+        }
     }
 
     void write_domain(const std::string& prefix, unsigned int level) const
@@ -187,22 +197,23 @@ int main(int argc, char** argv)
         {
             constexpr int dim = T0::value;
 
-            using System = GrossPitaevskiiSystem<dim>;
+            with_system<T0::value>(opts.gpe.mass_lumping, [&]<typename System>()
+            {
+                auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
 
-            auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
+                for (unsigned int level: opts.mg.v_levels) {
+                    auto Analysis = std::visit([&](auto&& arg) {
+                        return MatrixExperiment<dim, typename System::MassMatrix>(arg, opts.gpe, level);
+                    }, potential_v);
 
-            for (unsigned int level: opts.mg.v_levels) {
-                auto Analysis = std::visit([&](auto&& arg) {
-                    return MatrixExperiment<dim, typename System::MassMatrix>(arg, opts.gpe, level);
-                }, potential_v);
-
-                if (opts.domain) {
-                    Analysis.write_domain("domain", level);
+                    if (opts.domain) {
+                        Analysis.write_domain("domain", level);
+                    }
+                    if (opts.matrix_market) {
+                        Analysis.write_matrix_market("matrix", level);
+                    }
                 }
-                if (opts.matrix_market) {
-                    Analysis.write_matrix_market("matrix", level);
-                }
-            }
+            });
         });
     }
     catch (std::exception& e) {
