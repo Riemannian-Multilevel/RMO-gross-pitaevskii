@@ -75,6 +75,30 @@ inline void write_solution(const dealii::Vector<double>& solution, const std::st
     out.write(reinterpret_cast<const char*>(solution.begin()), n_dofs * sizeof(double));
 }
 
+/**
+ * @brief Writes a sparse matrix to a file in the MatrixMarket (coordinate real general) format.
+ *
+ * @param A `SparseMatrix` to be serialized.
+ * @param filename Output file name.
+ */
+inline void write_matrix_market(const SparseMatrix<double>& A, const std::string& filename)
+{
+    std::ofstream out(filename + ".mtx");
+    AssertThrow(out, dealii::ExcMessage("could not open " + filename));
+
+    out << "%%MatrixMarket matrix coordinate real general\n"
+        << A.m() << " " << A.n() << " " << A.n_nonzero_elements() << "\n"
+        << std::setprecision(16);
+
+    // Iterate over the row indices, and then access each row by column-index. This approach is recommended
+    // for performance; see the documentation of SparseMatrixIterators::Iterator.
+    for (unsigned i = 0; i < A.m(); ++i) {
+        for (auto it = A.begin(i); it != A.end(i); ++it) {
+            out << i + 1 << " " << it->column() + 1 << " " << it->value() << "\n";
+        }
+    }
+}
+
 } // namespace rmo
 
 #endif //RMO_UTIL_SERIALIZE_H
