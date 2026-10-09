@@ -1,9 +1,9 @@
 //
-// Created by Ferdinand Vanmaele on 12.01.26.
+// Created by Ferdinand Vanmaele on 09.10.26.
 //
 
-#ifndef RMO_UTIL_SPARSITY_H
-#define RMO_UTIL_SPARSITY_H
+#ifndef RMO_FE_UTIL_H
+#define RMO_FE_UTIL_H
 
 #include <deal.II/lac/sparsity_pattern.h>
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
@@ -18,7 +18,7 @@
  * @brief Sparsity patterns of the active and multigrid level matrices, and Gnuplot output of DoF and vertex
  * locations for debugging.
  */
-namespace rmo
+namespace rmo::fe
 {
 
 /** @brief Writes the support points of all DoFs, mapped with @p mapping, to @p filename (Gnuplot format). */
@@ -117,6 +117,6 @@ make_interface_sparsity_pattern(const dealii::DoFHandler<dim>& dof_handler,
     return dsp;
 }
 
-} // namespace rmo
+} // namespace rmo::fe
 
-#endif //RMO_UTIL_SPARSITY_H
+#endif //RMO_FE_UTIL_H

@@ -122,15 +122,6 @@ struct OutputOptions
     unsigned output_every;        // also write every k-th and the final iterate as a VTK series (0: final iterate only)
 };
 
-// Fields for gradient computation with inner solver
-// TODO: move to descent.h?
-struct GradInfo
-{
-    double residual;
-    unsigned num_iter;
-    double tolerance;
-    double elapsed_time;
-};
 
 
 
@@ -151,6 +142,7 @@ enum class Potential
 enum class InitialValue
 {
     CONSTANT,   // x = value (default 1)
+    COSINE,     // cosine bump of radius r (default: domain radius), see CosineBump
     RANDOM      // uniform in [0.5, 1.5]
 };
 
@@ -167,7 +159,7 @@ struct GPE_Options
     Potential potential;    // used potential V for matrix M_V
     std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
     InitialValue initial;   // type of starting point
-    std::optional<double> initial_arg;  // value (CONSTANT); empty: default
+    std::optional<double> initial_arg;  // value (CONSTANT) or radius (COSINE); empty: default
     unsigned seed;          // seed of NumberGenerator
 };
 

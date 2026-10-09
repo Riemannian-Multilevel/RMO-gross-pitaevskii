@@ -28,6 +28,29 @@
 namespace rmo
 {
 
+// TODO: use in GradientDescent::cycle()
+enum class SolverStatus {
+    CONVERGED,          // iterative method, converged for given tolerance
+    NOT_CONVERGED,      // iterative method, not converged for given tolerance
+    SOLUTION,           // non-iterative method
+    ERROR               // solver error
+};
+
+// TODO: use in Oracle::run() (package of value(), update() and gradient())
+struct SolverInfo {
+    SolverStatus status;
+    size_t num_iter;
+    Vector<double> solution;
+    size_t elapsed_time;
+};
+
+// enum class SolverNorm {
+//     L1,
+//     L2,
+//     LINF,
+//     UNKNOWN
+// };
+
 //! One evaluated iterate of a (multilevel) descent method. The described fields are reported by
 //! every solver; optional values go into `extra`.
 struct CycleInfo

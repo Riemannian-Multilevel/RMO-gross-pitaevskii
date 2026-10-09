@@ -7,8 +7,10 @@
 
 #include <rmo/ropt/solver.h>
 #include <rmo/ropt/observer_table.h>
+
 #include <rmo/option.h>
 #include <rmo/util/util.h>
+#include <rmo/util/serialize.h>
 
 #include <iostream>
 #include <fmt/format.h>
@@ -31,7 +33,7 @@ struct ProgramOptions
 
 // Gradient descent on each level of --levels, for the system type selected by --mass-lumping
 template <typename System>
-void solve(const ProgramOptions& opts)
+static void solve(const ProgramOptions& opts)
 {
     constexpr int dim = System::dimension;
     auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
@@ -45,12 +47,13 @@ void solve(const ProgramOptions& opts)
         // Set starting value, sufficiently far from an optimal solution
         Vector<double> x0 = context.initial_value();
         context.distribute(x0);
-        // x0 /= OperatorMetric(context.get_M(), MetricKind::MASS).norm(x0);
 
         // Define objective in ambient space
         auto gp = context.get_eval(opts.gpe.beta, opts.solver);
+
         // Define manifold
         auto manifold = UnitMassSphere<typename System::MassMatrix>(context.get_M());
+
         // Define Riemannian metric
         EnergyOracle<System> oracle(gp, opts.solver);
 
@@ -63,9 +66,11 @@ void solve(const ProgramOptions& opts)
         solver.cycle(x, std::cout);
 
         if (opts.output.output_vtk) {
-            const std::string name = opts.output.vtk_filename.empty() ? fmt::format("solution_{}d", dim) : opts.output.vtk_filename;
-            output_vtk(solver.history(), context.get_package().get_dofs(), fmt::format("{}_lvl{}", name, level),
-                       opts.output.output_every);
+            const std::string name = opts.output.vtk_filename.empty()
+                ? fmt::format("solution_{}d", dim) : opts.output.vtk_filename;
+
+            output_vtk(solver.history(), context.get_package().get_dofs(),
+                fmt::format("{}_lvl{}", name, level), opts.output.output_every);
         }
     }
 }
