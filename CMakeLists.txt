@@ -83,8 +83,6 @@ add_rmo_executable(main_bench LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_coarse LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(main_matrix LINK_LIBS Boost::program_options fmt::fmt)
 
-add_rmo_executable(main_m_matrix SOURCE staging/main_m_matrix.cc LINK_LIBS Boost::program_options)
-
 # --- Create targets for tests
 enable_testing()
 
@@ -103,9 +101,3 @@ add_test(NAME gradient COMMAND test_gradient --level 6 --trials 10
 add_test(NAME energy COMMAND test_energy)
 add_test(NAME operator COMMAND test_operator)
 add_test(NAME lumping COMMAND test_lumping)
-
-# Irreducible M-matrix property of the lumped A0 = S + M_{V,L} (Taussky's theorem, tex/taussky_theorem.tex);
-# its off-diagonal entries and matrix graph are those of the stiffness matrix S
-add_test(NAME m_matrix_q1_2d COMMAND main_m_matrix --dimension 2 --boundary dirichlet --levels 5 --matrix A0 --mass-lumping)
-add_test(NAME m_matrix_p1_2d COMMAND main_m_matrix --dimension 2 --mesh simplex --boundary dirichlet --levels 4 --matrix A0 --mass-lumping)
-add_test(NAME m_matrix_q1_3d COMMAND main_m_matrix --dimension 3 --boundary dirichlet --levels 3 --matrix A0 --mass-lumping)
