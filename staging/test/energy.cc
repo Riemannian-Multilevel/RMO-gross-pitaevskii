@@ -61,10 +61,13 @@ void check_energy(CheckReport& report, MeshKind mesh, int degree, const std::str
     auto system = package.system(potential::Square<dim>());
     GrossPitaevskiiFunctional<GrossPitaevskiiSystem<dim>> func(system, beta, SolverOptions{});
 
+    Engine engine(default_seed);
+    NormalDistribution normal(engine);
+
     double max_diff = 0.0;
     for (unsigned trial = 0; trial < 5; ++trial) {
         Vector<double> x(package.n_dofs()), A0x(package.n_dofs());
-        ellipsoid::random_point(x, func.get_M());
+        ellipsoid::random_point(x, func.get_M(), normal);
         package.distribute(x);
         func.update(x);
 

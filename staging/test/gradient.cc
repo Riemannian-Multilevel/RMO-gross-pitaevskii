@@ -69,7 +69,6 @@ std::optional<Config> parse_options(int argc, char* argv[])
 
     Config config;
     apply_gpe_options(vm, config.gpe);
-    NumberGenerator::get().seed(config.gpe.seed);
     config.level     = vm["level"].as<unsigned>();
     config.n_trials  = vm["trials"].as<unsigned>();
     config.slope_tol = vm["slope-tol"].as<double>();
@@ -162,22 +161,24 @@ template <int dim>
 class GradientCheck
 {
 public:
-    GradientCheck(ConstrainedSphere<dim>& sphere, GradientProblem& problem) : sphere(sphere), problem(problem) {}
+    GradientCheck(ConstrainedSphere<dim>& sphere, GradientProblem& problem, DistributionBase<double>& dist)
+        : sphere(sphere), problem(problem), dist(dist)
+    {}
 
     TrialResult trial()
     {
         const unsigned n = sphere.n_dofs();
         TrialResult r{};
-        problem.sample_parameters();
+        problem.sample_parameters(dist);
 
         Vector<double> x(n);
-        problem.random_point(x);
+        problem.random_point(x, dist);
         sphere.make_admissible(x);
         sphere.update(x);
 
         // Tangent vector with |v|_x = 1; the constraints move v off the tangent space, so project afterwards
         Vector<double> v_ambient(n), v(n);
-        problem.random_tangent_vector(x, v_ambient);
+        problem.random_tangent_vector(x, v_ambient, dist);
         sphere.distribute(v_ambient);
         problem.project(x, v_ambient, v);
         v /= problem.metric().norm(v);
@@ -217,6 +218,7 @@ private:
 
     ConstrainedSphere<dim>& sphere;
     GradientProblem& problem;
+    DistributionBase<double>& dist;  // of the random points and tangent vectors
 };
 
 /** @brief Table of the trials, and the Taylor error of each trial in `<prefix>_<trial>.dat` (`<prefix>.dat` for one). */
@@ -258,7 +260,10 @@ template <int dim>
 void check_problem(CheckReport& report, ConstrainedSphere<dim>& sphere, GradientProblem&& problem,
                    const std::string& name, const Config& config)
 {
-    GradientCheck<dim> check(sphere, problem);
+    // Own engine per problem: its trials do not depend on the draws of other problems
+    Engine engine(config.gpe.seed);
+    NormalDistribution normal(engine);
+    GradientCheck<dim> check(sphere, problem, normal);
     TrialLog log(fmt::format("checkgradient_{}_{}d", name, dim), config.n_trials);
     double slope_min =  std::numeric_limits<double>::infinity();
     double slope_max = -std::numeric_limits<double>::infinity();
