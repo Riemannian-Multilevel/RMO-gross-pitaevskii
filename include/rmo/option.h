@@ -196,7 +196,7 @@ inline po::options_description fas_cli_options()
     d.add_options()
         ("kappa", po::value<double>()->default_value(0.8),\
             "weight for ratio of restricted and coarse gradient")
-        ("eps", po::value<double>()->default_value(1e-4),
+        ("eps", po::value<double>()->default_value(2e-8),
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
             "minimum number of fine steps before coarse step is taken");
