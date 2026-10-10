@@ -2,7 +2,7 @@
 #define RMO_GPE_KERNELS_H
 
 #include <rmo/lac.h>
-#include <rmo/gpe/manifold.h>
+#include 1<rmo/gpe/manifold.h>
 #include <rmo/gpe/metric.h>
 
 /**
@@ -22,6 +22,7 @@
  */
 namespace rmo::gpe::kernels
 {
+// TODO: add different namespaces for difference (GP-related) objectives/gradients
 
 // -------------------------------------------------------------------------
 // Riemannian gradients (fine level)
@@ -67,7 +68,7 @@ void grad_frobenius(const MatrixType& A, const MatrixType& M,
     const double Mx_sq = Mx * Mx; // x^T M^2 x
     const double num = Mx * Ax; // x^T M A x
 
-    output = Ax;
+    output = std::move(Ax);
     output.add(-num / Mx_sq, Mx);
 }
 

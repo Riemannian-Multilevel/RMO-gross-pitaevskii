@@ -1,6 +1,9 @@
 #ifndef RMO_GPE_MANIFOLD_H
 #define RMO_GPE_MANIFOLD_H
 
+#include <deal.II/base/exception_macros.h>
+#include <deal.II/base/exceptions.h>
+
 #include <rmo/ropt/manifold.h>
 #include <rmo/util/random.h>
 
@@ -12,9 +15,9 @@
  * @brief The unit-mass sphere \f$ \mathcal{S} = \{ x : \|x\|_M = 1 \} \f$, \f$ \|x\|_M^2 = x^\top M x \f$:
  * retractions, their inverses and differentials (namespace ellipsoid), and the manifold UnitMassSphere.
  *
- * Arguments in ellipsoid: the mass matrix `M` (any type with `vmult`), the base point `x` on the sphere, the
- * vector `v` to retract or lift, and the step factor \f$ h \f$ (`factor`). Retractions overwrite `x`, inverse
- * retractions overwrite `v`.
+ * Arguments in ellipsoid: the mass matrix `M` (any type with `vmult`), the base point `x` on the
+ * sphere, the vector `v` to retract or lift, and the step factor \f$ h \f$ (`factor`). Retractions
+ * overwrite `x`, inverse retractions overwrite `v`.
  */
 namespace rmo::gpe
 {
@@ -25,8 +28,7 @@ namespace ellipsoid
 
 /** @brief Random point on the sphere: entries drawn from @p dist, normalized in the M-norm. */
 template <typename MatrixType>
-void random_point(Vector<double>& x, const MatrixType& M,
-                  DistributionBase<double>& dist)
+void random_point(Vector<double>& x, const MatrixType& M, DistributionBase<double>& dist)
 {
     dist.fill(x);
 
@@ -75,9 +77,9 @@ void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<do
 
 // TODO: use x as output vector as with other functions
 /**
- * @brief Differential of retract_by_norm() at \f$ v \f$ in the direction \f$ w \in T_x \mathcal{S} \f$, with
- * \f$ y = x + v \f$ and using \f$ x^\top M w = 0 \f$:
- * \f[ \mathrm{dst} = \mathrm{D} R_x(v)[w] = \frac{1}{\|y\|_M} \Big( w - \frac{v^\top M w}{\|y\|_M^2} \, y \Big) \f]
+ * @brief Differential of retract_by_norm() at \f$ v \f$ in the direction \f$ w \in T_x \mathcal{S}
+ * \f$, with \f$ y = x + v \f$ and using \f$ x^\top M w = 0 \f$: \f[ \mathrm{dst} = \mathrm{D}
+ * R_x(v)[w] = \frac{1}{\|y\|_M} \Big( w - \frac{v^\top M w}{\|y\|_M^2} \, y \Big) \f]
  */
 template <typename MatrixType>
 void retract_diff_by_norm(const MatrixType& M,
@@ -151,8 +153,8 @@ void retract_inv_diff_by_norm(const MatrixType& M,
 
 // TODO: verify adjoint property
 /**
- * @brief M-adjoint of retract_inv_diff_by_norm(), taken as that differential with \f$ x \f$ and \f$ \zeta \f$
- * swapped (not yet verified, see the TODO).
+ * @brief M-adjoint of retract_inv_diff_by_norm(), taken as that differential with \f$ x \f$ and \f$
+ * \zeta \f$ swapped (not yet verified, see the TODO).
  */
 template <typename MatrixType>
 void retract_inv_diff_by_norm_adjoint(const MatrixType& M,
@@ -227,8 +229,8 @@ void retract_by_exp(const MatrixType& M, const Vector<double>& v, Vector<double>
 }
 
 /**
- * @brief Logarithmic map, the inverse of retract_by_exp(), with \f$ c = x^\top M v \f$:
- * \f$ v \leftarrow \frac{\arccos c}{\sqrt{1 - c^2}} (v - c \, x) \f$ (factor 1 in the limit \f$ v \to x \f$).
+ * @brief Logarithmic map, the inverse of retract_by_exp(), with \f$ c = x^\top M v \f$: \f$ v
+ * \leftarrow \frac{\arccos c}{\sqrt{1 - c^2}} (v - c \, x) \f$ (factor 1 in the limit \f$ v \to x \f$).
  */
 template <typename MatrixType>
 void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
@@ -256,6 +258,113 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace ellipsoid
 
 
+namespace ellipsoid_positive
+{
+/* @brief default threshold for intersection of the ellipsoid with the positive orthant. */
+inline constexpr double eps_def = 1e-9;
+
+inline Vector<double>
+density_map(const Vector<double>& x)
+{
+    throw dealii::ExcNotImplemented();
+}
+
+inline Vector<double>
+density_map_diff(const Vector<double>& x, const Vector<double>& v, Vector<double>& dst)
+{
+    throw dealii::ExcNotImplemented();
+}
+
+// TODO: using this function requires specifying the threshold in every kernel.
+// This can be remedied by using a manifold class later on (such as PosUnitMassSphere).
+void threshold(Vector<double>& x, const double eps = eps_def)
+{
+    for (double& a: x) {
+        a = std::max(eps, a);
+    }
+}
+
+template <typename MatrixType, double eps = eps_def>
+void random_point(Vector<double>& x, const MatrixType& D, DistributionBase<double>& dist)
+{
+    dist.fill(x);
+    threshold(x, eps);
+    
+    Vector<double> Dx(x.size());
+    D.vmult(Dx, x);
+}
+
+// TODO: investigate cases in which ret**2 is strictly positive, i.e. x_i + 2v_i > 0
+//       use destination vector like diff/inverse retraction
+template <typename MatrixType>
+void retract_by_density(const Vector<double>& v, Vector<double>& x,
+                        const double factor = 1.0)
+{
+    // TODO: tangent vector debug check
+    Assert(std::all_of(x.begin(), x.end(), [](double a) {
+        return a > 0;
+    }), "Point has negative component");
+    
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+    
+    Vector<double> tmp(n);
+
+    for (unsigned i = 0; i < n; i++) {
+        tmp[i] = x[i]*x[i] + 2*x[i]*v[i];
+    }
+
+    AssertThrow(std::all_of(tmp.begin(), tmp.end(), [](double a) {
+        return a > 0;
+    }), "Retraction is undefined");
+
+    for (unsigned i = 0; i < n; i++) {
+        x[i] = std::sqrt(tmp[i]);
+    }
+}
+
+template <typename MatrixType>
+void retract_inv_by_density(Vector<double>& v, const Vector<double>& x)
+{
+    // TODO: tangent vector debug check
+    Assert(std::all_of(x.begin(), x.end(), [](double a) {
+        return a > 0;
+    }), "Point has negative component");
+
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+
+    Vector<double> tmp(n);
+
+    for (unsigned i = 0; i < n; i++) {
+        tmp[i] = (x[i]*x[i] - v[i]*v[i]) / 2*v[i];
+    }
+}
+
+template <typename MatrixType>
+void retract_diff_by_density(const Vector<double>& x, const Vector<double>& v,
+                             Vector<double>& dst)
+{
+    throw dealii::ExcNotImplemented();
+}
+
+template <typename MatrixType>
+void retract_inv_diff_by_density(const Vector<double>& x, const Vector<double>& v,
+                                 Vector<double>& dst)
+{
+    throw dealii::ExcNotImplemented();
+}
+
+template <typename MatrixType>
+void retract_inv_diff_by_density_adjoint(const Vector<double>& x, const Vector<double>& v,
+                                         Vector<double>& dst)
+{
+    throw dealii::ExcNotImplemented();
+}
+
+} // namespace ellipsoid_positive
+
+
 /** @brief The unit-mass sphere as ManifoldBase, with retraction by normalization (see ellipsoid). */
 template <typename MatrixType>
 class UnitMassSphere : public ManifoldBase
@@ -269,7 +378,8 @@ public:
         ellipsoid::retract_by_norm(M, z, x, factor);
     }
 
-    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
+    void retract(const Vector<double>& z, const Vector<double>& x,
+                 Vector<double>& output, double factor) const override
     {
         output = x;
         retract(z, output, factor);
@@ -292,7 +402,8 @@ public:
         ellipsoid::retract_inv_diff_by_norm(M, x, zeta, u, output);
     }
 
-    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta,
+                                  const Vector<double>& u,
                                   Vector<double>& output) const override
     {
         ellipsoid::retract_inv_diff_by_norm_adjoint(M, x, zeta, u, output);
@@ -304,6 +415,58 @@ public:
 private:
     const MatrixType& M;
 };
+
+
+template <typename MatrixType>
+class PosUnitMassSphere : public ManifoldBase
+{
+public:
+    explicit PosUnitMassSphere(const MatrixType& D) : D(D) {}
+
+    /** @brief Retraction by normalization, see ellipsoid_positive::retract_by_density(). */
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid_positive::retract_by_density(D, z, x, factor);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x,
+                 Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    void retract_diff(const Vector<double>& x, const Vector<double>& v, const Vector<double>& w,
+                      Vector<double>& output) const override
+    {
+        ellipsoid_positive::retract_diff_by_density(D, x, v, w, output);
+    }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid_positive::retract_inv_by_density(D, v, x);
+    }
+
+    void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                          Vector<double>& output) const override
+    {
+        ellipsoid_positive::retract_inv_diff_by_density(D, x, zeta, u, output);
+    }
+
+    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta,
+                                  const Vector<double>& u,
+                                  Vector<double>& output) const override
+    {
+        ellipsoid_positive::retract_inv_diff_by_density_adjoint(D, x, zeta, u, output);
+    }
+
+    // Accessors
+    const auto& get_D() const { return D; }
+
+private:
+    const MatrixType& D;
+};
+
 
 } // namespace rmo::gpe
 
