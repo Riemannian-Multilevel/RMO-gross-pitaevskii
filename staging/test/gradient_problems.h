@@ -81,9 +81,9 @@ public:
         metric::energy::project_onto_tangent_space(f.get_A_inv(), x, f.get_M(), v, v_proj);
     }
 
-    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v, DistributionBase<double>& dist) const
     {
-        metric::energy::random_tangent_vector(f.get_A_inv(), x, f.get_M(), v);
+        metric::energy::random_tangent_vector(f.get_A_inv(), x, f.get_M(), v, dist);
     }
 
     void gradient(const Vector<double>& x, Vector<double>& g) const
@@ -111,9 +111,9 @@ public:
         metric::mass::project_onto_tangent_space(x, f.get_M(), v, v_proj);
     }
 
-    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v, DistributionBase<double>& dist) const
     {
-        metric::mass::random_tangent_vector(x, f.get_M(), v);
+        metric::mass::random_tangent_vector(x, f.get_M(), v, dist);
     }
 
     void gradient(const Vector<double>& x, Vector<double>& g) const
@@ -141,9 +141,9 @@ public:
         metric::frobenius::project_onto_tangent_space(x, f.get_M(), v, v_proj);
     }
 
-    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v, DistributionBase<double>& dist) const
     {
-        metric::frobenius::random_tangent_vector(x, f.get_M(), v);
+        metric::frobenius::random_tangent_vector(x, f.get_M(), v, dist);
     }
 
     void gradient(const Vector<double>& x, Vector<double>& g) const
@@ -240,10 +240,10 @@ public:
     virtual ~GradientProblem() = default;
 
     //! Draws new parameters before each trial (coarse models: base point and correction).
-    virtual void sample_parameters() {}
+    virtual void sample_parameters(DistributionBase<double>& /*dist*/) {}
 
     //! Random point on the sphere.
-    virtual void random_point(Vector<double>& x) const = 0;
+    virtual void random_point(Vector<double>& x, DistributionBase<double>& dist) const = 0;
 
     //! Value at @p x, which must be the point of the last ConstrainedSphere::update().
     [[nodiscard]] virtual double value(const Vector<double>& x) const = 0;
@@ -253,7 +253,8 @@ public:
     [[nodiscard]] virtual const MetricBase& metric() const = 0;
     //! Orthogonal projection onto the tangent space at @p x, in metric().
     virtual void project(const Vector<double>& x, const Vector<double>& v, Vector<double>& v_proj) const = 0;
-    virtual void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const = 0;
+    virtual void random_tangent_vector(const Vector<double>& x, Vector<double>& v,
+                                       DistributionBase<double>& dist) const = 0;
 };
 
 
@@ -271,9 +272,9 @@ public:
         metric_kernels.project(x, v, v_proj);
     }
 
-    void random_tangent_vector(const Vector<double>& x, Vector<double>& v) const final
+    void random_tangent_vector(const Vector<double>& x, Vector<double>& v, DistributionBase<double>& dist) const final
     {
-        metric_kernels.random_tangent_vector(x, v);
+        metric_kernels.random_tangent_vector(x, v, dist);
     }
 
 protected:
@@ -289,9 +290,9 @@ class FineProblem final : public MetricProblem<dim, Metric>
 public:
     using MetricProblem<dim, Metric>::MetricProblem;
 
-    void random_point(Vector<double>& x) const override
+    void random_point(Vector<double>& x, DistributionBase<double>& dist) const override
     {
-        ellipsoid::random_point(x, this->sphere.functional().get_M());
+        ellipsoid::random_point(x, this->sphere.functional().get_M(), dist);
     }
 
     [[nodiscard]] double value(const Vector<double>& x) const override { return this->sphere.functional().value(x); }
@@ -319,18 +320,18 @@ public:
         , w(w.size())
     {}
 
-    void sample_parameters() override
+    void sample_parameters(DistributionBase<double>& dist) override
     {
-        ellipsoid::random_point(phi, this->sphere.functional().get_M());
+        ellipsoid::random_point(phi, this->sphere.functional().get_M(), dist);
         this->sphere.make_admissible(phi);
         model.correction(phi, w_ambient, w);
     }
 
     //! \f$ R_\phi(v) \f$ for a random unit tangent vector \f$ v \f$ at \f$ \phi \f$, so that the point is near \f$ \phi \f$.
-    void random_point(Vector<double>& x) const override
+    void random_point(Vector<double>& x, DistributionBase<double>& dist) const override
     {
         Vector<double> v(x.size());
-        this->metric_kernels.random_tangent_vector(phi, v);
+        this->metric_kernels.random_tangent_vector(phi, v, dist);
         v /= this->metric_kernels.metric().norm(v);
         this->sphere.retract(phi, v, x);
     }

@@ -99,7 +99,6 @@ int main(int argc, char* argv[])
             return 0;
         }
         apply_gpe_options(vm, opts.gpe);
-        NumberGenerator::get().seed(opts.gpe.seed);
         apply_descent_options(vm, opts.descent);
         apply_mg_options(vm, opts.mg);
         apply_inner_options(vm, opts.solver);

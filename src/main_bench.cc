@@ -68,7 +68,6 @@ int main(int argc, char* argv[])
         }
 
         apply_gpe_options(vm, options);
-        NumberGenerator::get().seed(options.seed);
         apply_descent_options(vm, options_gd);
         apply_inner_options(vm, options_slv);
 

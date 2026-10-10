@@ -160,7 +160,7 @@ struct GPE_Options
     std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
     InitialValue initial;   // type of starting point
     std::optional<double> initial_arg;  // value (CONSTANT) or radius (COSINE); empty: default
-    unsigned seed;          // seed of NumberGenerator
+    unsigned seed;          // seed of the random engines, e.g. of initial_value()
 };
 
 enum class Transport
