@@ -23,13 +23,12 @@ namespace rmo::gpe
 namespace ellipsoid
 {
 
-/** @brief Random point on the sphere: normal entries (@p mean, @p stddev), normalized in the M-norm. */
+/** @brief Random point on the sphere: entries drawn from @p dist, normalized in the M-norm. */
 template <typename MatrixType>
 void random_point(Vector<double>& x, const MatrixType& M,
-                  double mean = 0.0, double stddev = 1.0)
+                  DistributionBase<double>& dist)
 {
-    // Seed is set globally in rmo::NumberGenerator
-    rmo::NumberGenerator::get().normrnd(mean, stddev, x);
+    dist.fill(x);
 
     Vector<double> Mx(x.size());
     M.vmult(Mx, x);

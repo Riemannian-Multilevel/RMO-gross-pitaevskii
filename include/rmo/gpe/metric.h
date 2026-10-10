@@ -78,16 +78,14 @@ void project_onto_tangent_space(const InverseMatrixType& A_inv, const Vector<dou
     output.add(-1.0/denom, Ainv_Mx);
 }
 
-/** @brief Random tangent vector: normal entries (@p mean, @p stddev), projected \f$ A_x \f$-orthogonally. */
+/** @brief Random tangent vector: entries drawn from @p dist, projected \f$ A_x \f$-orthogonally. */
 template <typename MatrixType, typename InverseMatrixType>
 void random_tangent_vector(const InverseMatrixType& A_inv, const Vector<double>& x, const MatrixType& M,
-                           Vector<double>& v,
-                           const double mean = 0.0, const double stddev = 1.0)
+                           Vector<double>& v, DistributionBase<double>& dist)
 {
     // 1. generate random vector in ambient space
-    // Seed is set globally in rmo::NumberGenerator
     Vector<double> tmp(v.size());
-    rmo::NumberGenerator::get().normrnd(mean, stddev, tmp);
+    dist.fill(tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the energy-based metric
     energy::project_onto_tangent_space(A_inv, x, M, tmp, v);
@@ -112,16 +110,14 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-xMv, x);
 }
 
-/** @brief Random tangent vector: normal entries (@p mean, @p stddev), projected \f$ M \f$-orthogonally. */
+/** @brief Random tangent vector: entries drawn from @p dist, projected \f$ M \f$-orthogonally. */
 template <typename MatrixType>
 void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
-                           Vector<double>& v,
-                           double mean = 0.0, double stddev = 1.0)
+                           Vector<double>& v, DistributionBase<double>& dist)
 {
     // 1. generate random vector in ambient space
-    // Seed is set globally in rmo::NumberGenerator
     Vector<double> tmp(v.size());
-    rmo::NumberGenerator::get().normrnd(mean, stddev, tmp);
+    dist.fill(tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the mass metric
     mass::project_onto_tangent_space(x, M, tmp, v);
@@ -160,16 +156,14 @@ void project_onto_tangent_space(const Vector<double>& x, const MatrixType& M, co
     output.add(-nom / denom, Mx);
 }
 
-/** @brief Random tangent vector: normal entries (@p mean, @p stddev), projected Euclidean-orthogonally. */
+/** @brief Random tangent vector: entries drawn from @p dist, projected Euclidean-orthogonally. */
 template <typename MatrixType>
 void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
-                           Vector<double>& v,
-                           const double mean = 0.0, const double stddev = 1.0)
+                           Vector<double>& v, DistributionBase<double>& dist)
 {
     // 1. generate random vector in ambient space
-    // Seed is set globally in rmo::NumberGenerator
     Vector<double> tmp(v.size());
-    NumberGenerator::get().normrnd(mean, stddev, tmp);
+    dist.fill(tmp);
 
     // 2. project orthogonally onto tangent space at x, wrt. the Frobenius metric
     frobenius::project_onto_tangent_space(x, M, tmp, v);

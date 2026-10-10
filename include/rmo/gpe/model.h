@@ -96,9 +96,12 @@ public:
                 dealii::VectorTools::interpolate(package.get_mapping(), package.get_dofs(),
                                                  CosineBump<dim>(options.initial_arg.value_or(options.radius)), x0);
                 break;
-            case InitialValue::RANDOM:
-                NumberGenerator::get().unifrnd(0.5, 1.5, x0);
+            case InitialValue::RANDOM: {
+                Engine engine(options.seed);
+                UniformDistribution dist(engine, 0.5, 1.5);
+                dist.fill(x0);
                 break;
+            }
         }
         return x0;
     }
