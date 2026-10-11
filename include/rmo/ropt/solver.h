@@ -7,12 +7,14 @@
 
 #include <boost/describe.hpp>
 
+#include <cstdint>
 #include <iosfwd>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <deal.II/numerics/data_postprocessor.h>
+#include <deal.II/base/timer.h>
 
 #include <rmo/ropt/observer.h>
 #include <rmo/ropt/oracle.h>
@@ -29,7 +31,7 @@ namespace rmo
 {
 
 // TODO: use in GradientDescent::cycle()
-enum class SolverStatus {
+enum class SolverStatus : std::uint8_t {
     CONVERGED,          // iterative method, converged for given tolerance
     NOT_CONVERGED,      // iterative method, not converged for given tolerance
     SOLUTION,           // non-iterative method
@@ -109,7 +111,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         step_size = armijo_line_search(O_fine, manifold, x, eta, Ex, dir_deriv, options_gd);
 
         if (step_size == 0.0) {
-            std::cerr << "  -> Step rejected by line search." << std::endl;
+            std::cerr << "  -> Step rejected by line search." << '\n';
         }
     }
     else {

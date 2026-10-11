@@ -22,6 +22,7 @@
  */
 namespace rmo::gpe::kernels
 {
+// TODO: separate namespaces for the different (GP-related) objectives and gradients
 
 // -------------------------------------------------------------------------
 // Riemannian gradients (fine level)
@@ -67,7 +68,7 @@ void grad_frobenius(const MatrixType& A, const MatrixType& M,
     const double Mx_sq = Mx * Mx; // x^T M^2 x
     const double num = Mx * Ax; // x^T M A x
 
-    output = Ax;
+    output = std::move(Ax);
     output.add(-num / Mx_sq, Mx);
 }
 

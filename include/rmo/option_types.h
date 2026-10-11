@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 /**
  * @file
@@ -19,7 +20,7 @@ namespace rmo
 
 // TODO: consistent naming of classes
 // Every ordering should be compatible to (geometric) multigrid
-enum class Ordering
+enum class Ordering : std::uint8_t
 {
     DEFAULT,
     RANDOM,
@@ -28,26 +29,26 @@ enum class Ordering
     MIN_DEG
 };
 
-enum class BoundaryCondition
+enum class BoundaryCondition : std::uint8_t
 {
     NEUMANN,
     DIRICHLET
 };
 
-enum class MeshKind
+enum class MeshKind : std::uint8_t
 {
     QUADRILATERAL,
     SIMPLEX
 };
 
-enum class SolverMethod
+enum class SolverMethod : std::uint8_t
 {
     GMRES,
     MINRES,
     CG
 };
 
-enum class Precondition
+enum class Precondition : std::uint8_t
 {
     NONE,
     DIAGONAL,
@@ -57,7 +58,7 @@ enum class Precondition
 
 // TODO: Merge CoarseMetric + SmoothKind -> MetricKind
 //       -> use two instances for smoother metric and coarse metric
-enum class MetricKind
+enum class MetricKind : std::uint8_t
 {
     NONE,   // Galerkin condition not fulfilled
     FROBENIUS,
@@ -123,13 +124,11 @@ struct OutputOptions
 };
 
 
-
-
 // ---------- Gross-Pitaevskii problem ----------
 namespace gpe
 {
 
-enum class Potential
+enum class Potential : std::uint8_t
 {
     ZERO,
     CONSTANT,
@@ -139,11 +138,25 @@ enum class Potential
 };
 
 // Starting value of the iteration, see ModelBuilder::initial_value()
-enum class InitialValue
+enum class InitialValue : std::uint8_t
 {
     CONSTANT,   // x = value (default 1)
     COSINE,     // cosine bump of radius r (default: domain radius), see CosineBump
     RANDOM      // uniform in [0.5, 1.5]
+};
+
+enum class Transport : std::uint8_t
+{
+    FROBENIUS,            // Version IV  (orth. proj. Frobenius)
+    MASS,                 // Version IV  (orth. proj. Mass)
+    DIFFERENTIAL,         // Version VI  (Mixed)
+    ADJOINT_RESTRICTION,  // Version V
+    ADJOINT_DIFFERENTIAL, // Version III
+    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION, same as FROBENIUS
+    ADJOINT_DIFFERENTIAL_FROBENIUS, // Frobenius-metric counterpart of ADJOINT_DIFFERENTIAL
+    DIFFERENTIAL_FROBENIUS,         // Frobenius-metric counterpart of DIFFERENTIAL
+    // DIFFERENTIAL_MASS,
+    // ADJOINT_DIFFERENTIAL_MASS,
 };
 
 struct GPE_Options
@@ -162,21 +175,6 @@ struct GPE_Options
     std::optional<double> initial_arg;  // value (CONSTANT) or radius (COSINE); empty: default
     unsigned seed;          // seed of the random engines, e.g. of initial_value()
 };
-
-enum class Transport
-{
-    FROBENIUS,            // Version IV  (orth. proj. Frobenius)
-    MASS,                 // Version IV  (orth. proj. Mass)
-    DIFFERENTIAL,         // Version VI  (Mixed)
-    ADJOINT_RESTRICTION,  // Version V
-    ADJOINT_DIFFERENTIAL, // Version III
-    ADJOINT_RESTRICTION_FROBENIUS,  // Frobenius-metric counterpart of ADJOINT_RESTRICTION, same as FROBENIUS
-    ADJOINT_DIFFERENTIAL_FROBENIUS, // Frobenius-metric counterpart of ADJOINT_DIFFERENTIAL
-    DIFFERENTIAL_FROBENIUS,         // Frobenius-metric counterpart of DIFFERENTIAL
-    // DIFFERENTIAL_MASS,
-    // ADJOINT_DIFFERENTIAL_MASS,
-};
-
 
 // Selection of the multilevel components for the GP problem (main_coarse.cc)
 // TODO: MetricKind is still defined in rmo (used by MetricBase::kind)
