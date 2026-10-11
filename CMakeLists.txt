@@ -93,6 +93,7 @@ add_rmo_executable(test_energy SOURCE staging/test/energy.cc)
 add_rmo_executable(test_operator SOURCE staging/test/operator.cc)
 add_rmo_executable(test_lumping SOURCE staging/test/lumping.cc)
 add_rmo_executable(test_positive SOURCE staging/test/positive.cc)
+add_rmo_executable(test_positive_transfer SOURCE staging/test/positive_transfer.cc LINK_LIBS fmt::fmt)
 
 # ARPACK is optional in deal.II; the test reports 77 (skip) when it is unavailable
 add_test(NAME arpack COMMAND test_arpack --dimension 2 --level 5 --radius 8 --tol-residual 1e-10)
@@ -104,3 +105,4 @@ add_test(NAME energy COMMAND test_energy)
 add_test(NAME operator COMMAND test_operator)
 add_test(NAME lumping COMMAND test_lumping)
 add_test(NAME positive COMMAND test_positive)
+add_test(NAME positive_transfer COMMAND test_positive_transfer)
