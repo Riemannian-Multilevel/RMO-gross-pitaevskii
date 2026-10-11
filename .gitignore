@@ -12,3 +12,9 @@ interpolate_test/
 __pycache__/
 *.swp
 build/
+build-*/
+# Editor autosaves
+\#*#
+.#*
+# Notes and reports (kept locally)
+tex/
