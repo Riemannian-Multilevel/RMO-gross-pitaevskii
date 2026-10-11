@@ -64,6 +64,14 @@ enum class MetricKind : std::uint8_t
     ENERGY_ADAPTIVE
 };
 
+enum class ManifoldKind : std::uint8_t
+{
+    MASS_UNIT_SPHERE,
+    MASS_UNIT_SPHERE_POSITIVE,
+    SIMPLEX, // TODO
+    POSITIVE_ORTHANT // TODO
+};
+
 // ----- Option structures
 struct DescentOptions
 {
@@ -171,6 +179,7 @@ struct GPE_Options
     Potential potential;    // used potential V for matrix M_V
     std::string potential_expr;  // expression for Potential::EXPRESSION, in the coordinates x[,y[,z]]
     InitialValue initial;   // type of starting point
+    ManifoldKind manifold;  // type of manifold
     std::optional<double> initial_arg;  // value (CONSTANT) or radius (COSINE); empty: default
     unsigned seed;          // seed of the random engines, e.g. of initial_value()
 };

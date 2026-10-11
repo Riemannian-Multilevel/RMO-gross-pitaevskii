@@ -461,6 +461,7 @@ int main(int argc, char* argv[])
         }
 
         apply_gpe_options(vm, opts.gpe);
+        require_default_manifold(opts.gpe);
         apply_descent_options(vm, opts.descent);
         apply_mg_options(vm, opts.mg);
         apply_inner_options(vm, opts.solver);

@@ -1,16 +1,22 @@
 #ifndef RMO_GPE_MANIFOLD_H
 #define RMO_GPE_MANIFOLD_H
 
+#include <deal.II/base/exception_macros.h>
+#include <deal.II/base/exceptions.h>
+
+#include <rmo/lac_traits.h>
 #include <rmo/ropt/manifold.h>
 #include <rmo/util/random.h>
 
 #include <cmath>
+#include <limits>
 #include <algorithm>
 
 /**
  * @file
  * @brief The unit-mass sphere \f$ \mathcal{S} = \{ x : \|x\|_M = 1 \} \f$, \f$ \|x\|_M^2 = x^\top M x \f$:
- * retractions, their inverses and differentials (namespace ellipsoid), and the manifold UnitMassSphere.
+ * retractions, their inverses and differentials (namespace ellipsoid), and the manifold UnitMassSphere; its
+ * intersection with the positive orthant for a lumped mass matrix (namespace ellipsoid_positive, PosUnitMassSphere).
  *
  * Arguments in ellipsoid: the mass matrix `M` (any type with `vmult`), the base point `x` on the sphere, the
  * vector `v` to retract or lift, and the step factor \f$ h \f$ (`factor`). Retractions overwrite `x`, inverse
@@ -256,6 +262,140 @@ void retract_inv_by_exp(const MatrixType& M, Vector<double>& v, const Vector<dou
 } // namespace ellipsoid
 
 
+/**
+ * @brief The positive unit-mass sphere \f$ \mathcal{S}^+ = \{ x > 0 : x^\top D x = 1 \} \f$ of a diagonal (lumped)
+ * mass matrix \f$ D \f$: density map, density retraction and its inverse (the lifting).
+ *
+ * For \f$ x^\top D v = 0 \f$, the density retraction stays on the sphere, since
+ * \f$ \sum_i d_i (x_i^2 + 2 x_i v_i) = x^\top D x + 2 x^\top D v = 1 \f$; this requires \f$ D \f$ to be diagonal.
+ * Arguments as in ellipsoid.
+ */
+namespace ellipsoid_positive
+{
+
+//! Default lower bound of threshold()
+inline constexpr double eps_def = 1e-9;
+
+/** @brief Density map \f$ p = \pi(x) \f$, \f$ p_i = d_i x_i^2 \f$ (@p D diagonal). */
+template <typename MatrixType>
+void density_map(const MatrixType& D, const Vector<double>& x, Vector<double>& p)
+{
+    Vector<double> x_sq(x);
+    x_sq.scale(x);
+
+    p.reinit(x.size(), true);
+    D.vmult(p, x_sq);
+}
+
+/** @brief Differential of density_map(), \f$ \mathrm{dst} = J_x v = 2 D \operatorname{diag}(x) v \f$. */
+template <typename MatrixType>
+void density_map_diff(const MatrixType& D, const Vector<double>& x, const Vector<double>& v, Vector<double>& dst)
+{
+    AssertDimension(x.size(), v.size());
+    Vector<double> xv(x);
+    xv.scale(v);
+    xv *= 2.0;
+
+    dst.reinit(x.size(), true);
+    D.vmult(dst, xv);
+}
+
+/** @brief Componentwise \f$ x_i \leftarrow \max(\varepsilon, x_i) \f$; changes the M-norm of @p x. */
+// TODO: using this function requires specifying the threshold in every kernel.
+// This can be remedied by using a manifold class later on (such as PosUnitMassSphere).
+inline void threshold(Vector<double>& x, const double eps = eps_def)
+{
+    for (double& a: x) {
+        a = std::max(eps, a);
+    }
+}
+
+/** @brief Random point on the positive sphere: entries drawn from @p dist, thresholded and normalized in the D-norm. */
+template <typename MatrixType>
+void random_point(Vector<double>& x, const MatrixType& D, DistributionBase<double>& dist, const double eps = eps_def)
+{
+    dist.fill(x);
+    threshold(x, eps);
+
+    Vector<double> Dx(x.size());
+    D.vmult(Dx, x);
+    x /= std::sqrt(x * Dx);
+}
+
+/**
+ * @brief Density retraction \f$ x_i \leftarrow \sqrt{x_i^2 + 2 h x_i v_i} \f$, defined for
+ * \f$ x_i^2 + 2 h x_i v_i > 0 \f$; @p x is unchanged if it is not.
+ */
+// TODO: investigate cases in which ret**2 is strictly positive, i.e. x_i + 2v_i > 0
+//       use destination vector like diff/inverse retraction
+inline void retract_by_density(const Vector<double>& v, Vector<double>& x, const double factor = 1.0)
+{
+    // TODO: tangent vector debug check
+    Assert(std::all_of(x.begin(), x.end(), [](double a) {
+        return a > 0;
+    }), dealii::ExcMessage("Point has non-positive component"));
+
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+
+    Vector<double> tmp(n);
+
+    for (unsigned i = 0; i < n; i++) {
+        tmp[i] = x[i]*x[i] + 2*factor*x[i]*v[i];
+    }
+
+    AssertThrow(std::all_of(tmp.begin(), tmp.end(), [](double a) {
+        return a > 0;
+    }), dealii::ExcMessage("Retraction is undefined"));
+
+    for (unsigned i = 0; i < n; i++) {
+        x[i] = std::sqrt(tmp[i]);
+    }
+}
+
+/**
+ * @brief Lifting, the inverse of retract_by_density(): \f$ v_i \leftarrow (v_i^2 - x_i^2) / (2 x_i) \f$ for a point
+ * \f$ v \f$ on the positive sphere, which is overwritten with a tangent vector at @p x.
+ */
+inline void retract_inv_by_density(Vector<double>& v, const Vector<double>& x)
+{
+    // TODO: tangent vector debug check
+    Assert(std::all_of(x.begin(), x.end(), [](double a) {
+        return a > 0;
+    }), dealii::ExcMessage("Point has non-positive component"));
+
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+
+    for (unsigned i = 0; i < n; i++) {
+        v[i] = (v[i]*v[i] - x[i]*x[i]) / (2*x[i]);
+    }
+}
+
+/**
+ * @brief Supremum of the step sizes \f$ h \f$ for which retract_by_density() of \f$ h v \f$ at @p x is defined:
+ * \f$ h_{\max} = \min_{v_i < 0} x_i / (2 |v_i|) \f$, the step at which the first density
+ * \f$ x_i^2 + 2 h x_i v_i \f$ reaches zero; infinity if no component decreases.
+ */
+inline double max_step(const Vector<double>& x, const Vector<double>& v)
+{
+    AssertDimension(x.size(), v.size());
+    double h_max = std::numeric_limits<double>::infinity();
+
+    for (unsigned i = 0; i < x.size(); i++) {
+        if (v[i] < 0) {
+            h_max = std::min(h_max, x[i] / (-2 * v[i]));
+        }
+    }
+    return h_max;
+}
+
+
+
+
+} // namespace ellipsoid_positive
+
+
 /** @brief The unit-mass sphere as ManifoldBase, with retraction by normalization (see ellipsoid). */
 template <typename MatrixType>
 class UnitMassSphere : public ManifoldBase
@@ -304,6 +444,79 @@ public:
 private:
     const MatrixType& M;
 };
+
+
+/**
+ * @brief The positive unit-mass sphere as ManifoldBase, with the density retraction (see ellipsoid_positive). The
+ * mass matrix must be diagonal (lumped), see ellipsoid_positive.
+ */
+template <typename MatrixType>
+class PosUnitMassSphere : public ManifoldBase
+{
+    static_assert(is_diagonal_matrix_v<MatrixType>,
+                  "the density retraction stays on the sphere only for a diagonal (lumped) mass matrix");
+
+public:
+    explicit PosUnitMassSphere(const MatrixType& D) : D(D) {}
+
+    /**
+     * @brief Density retraction, see ellipsoid_positive::retract_by_density(), followed by a normalization in the
+     * D-norm. For a tangent @p z, the normalization is the identity in exact arithmetic. It removes the drift of
+     * rounding errors: the density retraction preserves \f$ x^\top D x \f$ but does not restore it, and the M-gradient
+     * is tangent only on the sphere, so that \f$ x^\top D x - 1 \f$ would grow by \f$ 1 + 2h \, x^\top A(x) x \f$ per
+     * step.
+     */
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid_positive::retract_by_density(z, x, factor);
+        ellipsoid::retract_by_norm(D, x);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x,
+                 Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    // TODO: differentials of the density retraction and the lifting, needed by the coarse models
+    void retract_diff(const Vector<double>& /*x*/, const Vector<double>& /*v*/, const Vector<double>& /*w*/,
+                      Vector<double>& /*output*/) const override
+    {
+        throw dealii::ExcNotImplemented();
+    }
+
+    /** @brief Step at which the density retraction becomes undefined, see ellipsoid_positive::max_step(). */
+    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
+    {
+        return ellipsoid_positive::max_step(x, v);
+    }
+
+    /** @brief Lifting, see ellipsoid_positive::retract_inv_by_density(). */
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid_positive::retract_inv_by_density(v, x);
+    }
+
+    void retract_inv_diff(const Vector<double>& /*x*/, const Vector<double>& /*zeta*/, const Vector<double>& /*u*/,
+                          Vector<double>& /*output*/) const override
+    {
+        throw dealii::ExcNotImplemented();
+    }
+
+    void retract_inv_diff_adjoint(const Vector<double>& /*x*/, const Vector<double>& /*zeta*/,
+                                  const Vector<double>& /*u*/, Vector<double>& /*output*/) const override
+    {
+        throw dealii::ExcNotImplemented();
+    }
+
+    // Accessors
+    const auto& get_D() const { return D; }
+
+private:
+    const MatrixType& D;
+};
+
 
 } // namespace rmo::gpe
 

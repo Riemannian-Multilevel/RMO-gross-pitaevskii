@@ -14,6 +14,7 @@
 
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <fmt/format.h>
 
 using namespace rmo;
@@ -33,12 +34,33 @@ struct ProgramOptions
 };
 
 
+// Manifold of --manifold, with the mass matrix @p M of the system
+template <typename System>
+static std::unique_ptr<ManifoldBase>
+make_manifold(ManifoldKind manifold_t, const typename System::MassMatrix& M)
+{
+    using MassMatrix = typename System::MassMatrix;
+
+    if (manifold_t == ManifoldKind::MASS_UNIT_SPHERE_POSITIVE) {
+        // PosUnitMassSphere requires a lumped mass matrix (see apply_gpe_options())
+        if constexpr (is_diagonal_matrix_v<MassMatrix>) {
+            return std::make_unique<PosUnitMassSphere<MassMatrix>>(M);
+        }
+        else {
+            throw std::invalid_argument("--manifold mass_unit_sphere_positive requires --mass-lumping");
+        }
+    }
+    return std::make_unique<UnitMassSphere<MassMatrix>>(M);
+}
+
+
 // Gradient descent on each level of --levels, for the system type selected by --mass-lumping
 template <typename System>
 static void solve(const ProgramOptions& opts)
 {
     constexpr int dim = System::dimension;
     auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
+    const bool is_positive = (opts.gpe.manifold == ManifoldKind::MASS_UNIT_SPHERE_POSITIVE);
 
     for (unsigned int level : opts.mg.v_levels) {
         // Set up the grid (Package) and finite element space
@@ -49,18 +71,23 @@ static void solve(const ProgramOptions& opts)
         // Set starting value, sufficiently far from an optimal solution
         Vector<double> x0 = context.initial_value();
         context.distribute(x0);
+        if (is_positive) {
+            // The density retraction preserves the D-norm, but does not normalize: start on the sphere
+            ellipsoid_positive::threshold(x0);
+            ellipsoid::retract_by_norm(context.get_M(), x0);
+        }
 
         // Define objective in ambient space
         auto gp = context.get_eval(opts.gpe.beta, opts.solver);
 
         // Define manifold
-        auto manifold = UnitMassSphere<typename System::MassMatrix>(context.get_M());
+        auto manifold = make_manifold<System>(opts.gpe.manifold, context.get_M());
 
         // Define Riemannian metric
         auto oracle = make_oracle<System>(gp, opts.metric_smooth, opts.solver);
 
         // Termination criterion for gradient descent
-        GradientDescent solver(*oracle, oracle->get_residual(), manifold, opts.descent);
+        GradientDescent solver(*oracle, oracle->get_residual(), *manifold, opts.descent);
         ConvergenceTableObserver<CycleInfo> conv_observer;
         solver.set_observer(conv_observer);
 

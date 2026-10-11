@@ -68,6 +68,7 @@ int main(int argc, char* argv[])
         }
 
         apply_gpe_options(vm, options);
+        require_default_manifold(options);
         apply_descent_options(vm, options_gd);
         apply_inner_options(vm, options_slv);
 

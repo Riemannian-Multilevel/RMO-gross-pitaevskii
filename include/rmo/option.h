@@ -38,6 +38,7 @@ BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE);
+BOOST_DESCRIBE_ENUM(ManifoldKind, MASS_UNIT_SPHERE, MASS_UNIT_SPHERE_POSITIVE, SIMPLEX, POSITIVE_ORTHANT);
 
 
 // ---------- MG_Options ----------
@@ -246,7 +247,7 @@ namespace gpe
 {
 
 BOOST_DESCRIBE_STRUCT(GPE_Options, (),
-    (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping, initial, initial_arg, seed));
+    (dimension, degree, radius, beta, order, bc, mesh_kind, mass_lumping, manifold, initial, initial_arg, seed));
 BOOST_DESCRIBE_ENUM(Potential, ZERO, CONSTANT, SQUARE, OPTICAL_LATTICE, EXPRESSION);
 BOOST_DESCRIBE_ENUM(InitialValue, CONSTANT, COSINE, RANDOM);
 BOOST_DESCRIBE_STRUCT(CoarseModelOptions, (),
@@ -281,6 +282,9 @@ inline po::options_description gpe_cli_options() {
         ("mass-lumping", po::value<bool>()->default_value(false)->implicit_value(true),
             "use lumped (diagonal) mass matrices; requires a lumpable element "
             "(quadrilateral, or simplex with degree <= 2)")
+        ("manifold", po::value<std::string>()->default_value("mass_unit_sphere"),
+            "used manifold (mass_unit_sphere|mass_unit_sphere_positive); "
+            "mass_unit_sphere_positive requires --mass-lumping and --boundary neumann")
         ("initial", po::value<std::string>()->default_value("constant"),
             "initial value (constant|cosine|random)")
         ("initial-arg", po::value<std::string>()->default_value(""),
@@ -297,15 +301,30 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     const auto potential_str= upper(vm["potential"].as<std::string>());
     const auto initial_str  = upper(vm["initial"].as<std::string>());
     const auto initial_arg_str = vm["initial-arg"].as<std::string>();
+    const auto manifold_str = upper(vm["manifold"].as<std::string>());
 
     options.order     = string_to_enum<Ordering>(order_str);
     options.bc        = string_to_enum<BoundaryCondition>(boundary_str);
     options.mesh_kind = string_to_enum<MeshKind>(mesh_str);
     options.potential = string_to_enum<Potential>(potential_str);
     options.initial   = string_to_enum<InitialValue>(initial_str);
+    options.manifold  = string_to_enum<ManifoldKind>(manifold_str);
 
     options.potential_expr = vm["potential-expr"].as<std::string>();
     options.mass_lumping   = vm["mass-lumping"].as<bool>();
+
+    if (options.manifold == ManifoldKind::SIMPLEX || options.manifold == ManifoldKind::POSITIVE_ORTHANT) {
+        throw std::invalid_argument("--manifold: not implemented: " + manifold_str);
+    }
+    // The density retraction stays on the sphere only for a diagonal mass matrix, see PosUnitMassSphere
+    if (options.manifold == ManifoldKind::MASS_UNIT_SPHERE_POSITIVE && !options.mass_lumping) {
+        throw std::invalid_argument("--manifold mass_unit_sphere_positive requires --mass-lumping");
+    }
+    // TODO: free-DoF mask in PosUnitMassSphere (tex/pos_sphere_domain.tex, Dirichlet DoFs); until then, the
+    //       Dirichlet DoFs (x_b = 0) break the positivity checks and the lifting
+    if (options.manifold == ManifoldKind::MASS_UNIT_SPHERE_POSITIVE && options.bc == BoundaryCondition::DIRICHLET) {
+        throw std::invalid_argument("--manifold mass_unit_sphere_positive does not support --boundary dirichlet yet");
+    }
 
     options.seed = vm["seed"].as<unsigned>();
 
@@ -337,6 +356,15 @@ inline void apply_gpe_options(const po::variables_map& vm, GPE_Options& options)
     options.dimension = vm["dimension"].as<int>();
     options.beta      = vm["beta"].as<double>();
     options.radius    = vm["radius"].as<double>();
+}
+
+
+//! For programs without a choice of manifold: rejects a --manifold other than the default
+inline void require_default_manifold(const GPE_Options& options)
+{
+    if (options.manifold != ManifoldKind::MASS_UNIT_SPHERE) {
+        throw std::invalid_argument("--manifold: only mass_unit_sphere is supported by this program");
+    }
 }
 
 
