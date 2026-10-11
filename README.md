@@ -127,6 +127,23 @@ RGD options:
   --ls-sigma arg (=0.20000000000000001) sigma for armijo line search
   --ls-min arg (=0.10000000000000001)   minimal step size for armijo line
                                         search
+  --ls-reference arg (=monotone)        reference value of the armijo
+                                        condition: monotone (f(x_k)), max (of
+                                        the last --ls-memory values,
+                                        Grippo-Lampariello-Lucidi) or average
+                                        (Zhang-Hager, weight --ls-eta);
+                                        single-level descent only
+  --ls-memory arg (=10)                 number of previous values for
+                                        --ls-reference max
+  --ls-eta arg (=0.84999999999999998)   weight in [0, 1] of the previous
+                                        average for --ls-reference average
+  --ls-initial arg (=fixed)             starting step size of the line search
+                                        (step size without line search): fixed
+                                        (--ls-alpha, --step-size), bb1, bb2 or
+                                        alternating (Barzilai-Borwein);
+                                        single-level descent only
+  --ls-bb-min arg (=1e-10)              smallest Barzilai-Borwein step size
+  --ls-bb-max arg (=10000000000)        largest Barzilai-Borwein step size
 
 multilevel options:
   --levels arg                          number of times to globally refine the

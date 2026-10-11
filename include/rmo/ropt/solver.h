@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <iosfwd>
+#include <limits>
+#include <tuple>
 #include <string>
 #include <utility>
 #include <vector>
@@ -91,13 +93,14 @@ public:
 
 //! One descent step along @p eta from @p x: Armijo line search or fixed step size (options_gd.line_search), both
 //! capped by capped_step(). Updates @p x and the oracle to the new point, and returns the step size taken and the
-//! elapsed time.
+//! elapsed time. @p f_ref is the reference value of a nonmonotone line search (NonmonotoneReference); NaN: f(x).
 template <typename Oracle>
 CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
                        Vector<double>& x, const Vector<double>& eta,
                        double dir_deriv,
                        const dealii::Timer& timer,
-                       DescentOptions options_gd)
+                       DescentOptions options_gd,
+                       double f_ref = std::numeric_limits<double>::quiet_NaN())
 {
     double step_size = options_gd.step_size;
 
@@ -107,6 +110,9 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
 #endif
         double Ex = O_fine.value(x);
+        if (!std::isnan(f_ref)) {
+            Ex = std::max(Ex, f_ref);
+        }
         //double dir_deriv = O_fine.directional_derivative(x, eta);
         // Runs O_fine.update(x)
         step_size = armijo_line_search(O_fine, manifold, x, eta, Ex, dir_deriv, options_gd);
@@ -155,6 +161,9 @@ cycle_eval(const Oracle& O, const ResidualBase& R, const Vector<double>& y, Iter
 
 
 //! Riemannian gradient descent on one level; stops when the residual is below options_gd.tol_residual.
+//! Optionally with a nonmonotone line search (options_gd.ls.reference, NonmonotoneReference) and Barzilai-Borwein
+//! step sizes (options_gd.ls.initial, BarzilaiBorwein): the starting step of the line search, or the step size
+//! without line search; both are capped by capped_step(). The defaults (monotone, fixed) are the plain method.
 class GradientDescent : public SolverBase
 {
 public:
@@ -195,13 +204,20 @@ public:
         info.iter   = 0;
 
         // Residual at x, passed to the next gradient (inner tolerance)
-        double residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
+        auto [residual, energy] = cycle_eval(O_fine, R_fine, x, m_observer, info);
         x_hist.clear();
         x_hist.emplace_back(x);
 
         if (residual < options_gd.tol_residual) {
             return;
         }
+
+        // Nonmonotone line search and Barzilai-Borwein steps (no effect for the defaults)
+        const bool nonmonotone = options_gd.ls.reference != LineSearchReference::MONOTONE;
+        const bool barzilai_borwein = options_gd.ls.initial != InitialStep::FIXED;
+        NonmonotoneReference reference(options_gd.ls);
+        BarzilaiBorwein bb(options_gd.ls);
+        reference.add(energy);
 
         // Execute gradient descent iterations
         for (unsigned i = 1; i <= options_gd.max_iter; i++) {
@@ -215,15 +231,29 @@ public:
 
             double dir_deriv = O_fine.directional_derivative(x, dk);
 
+            // Starting step of the line search (step size without line search)
+            DescentOptions options_step = options_gd;
+            if (barzilai_borwein) {
+                double& alpha = options_gd.line_search ? options_step.ls.alpha : options_step.step_size;
+                alpha = bb.step(x, x_grad, O_fine.metric(), alpha);
+            }
+
             // Evaluate directional derivative in A-norm
             // -> runs OracleBase::update()
-            CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, dir_deriv, timer, options_gd);
+            CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, dir_deriv, timer, options_step,
+                                          nonmonotone ? reference.value() : std::numeric_limits<double>::quiet_NaN());
             info.iter      = i;
             info.coarse    = false;
             info.lac_iter  = info_grad.num_iter;
             info.level     = 0;
+            if (barzilai_borwein || nonmonotone) {
+                info.extra = {{"initial_step", options_step.line_search ? options_step.ls.alpha
+                                                                        : options_step.step_size},
+                              {"reference", reference.value()}};
+            }
 
-            residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
+            std::tie(residual, energy) = cycle_eval(O_fine, R_fine, x, m_observer, info);
+            reference.add(energy);
             x_hist.emplace_back(x);
 
             if (residual < options_gd.tol_residual) {

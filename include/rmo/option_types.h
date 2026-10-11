@@ -72,6 +72,23 @@ enum class ManifoldKind : std::uint8_t
     POSITIVE_ORTHANT // TODO
 };
 
+// Reference value f_ref of the Armijo condition f(x_new) <= f_ref + sigma alpha <grad f(x), eta>
+enum class LineSearchReference : std::uint8_t
+{
+    MONOTONE,   // f(x_k)
+    MAX,        // max of the last LineSearchOptions::memory values (Grippo, Lampariello, Lucidi 1986)
+    AVERAGE     // weighted average C_k of all values (Zhang, Hager 2004)
+};
+
+// Starting step size of the line search (or step size without line search)
+enum class InitialStep : std::uint8_t
+{
+    FIXED,      // LineSearchOptions::alpha (DescentOptions::step_size without line search)
+    BB1,        // Barzilai-Borwein <s, s> / <s, y>
+    BB2,        // Barzilai-Borwein <s, y> / <y, y>
+    ALTERNATING // BB1 and BB2 in turn
+};
+
 // ----- Option structures
 struct DescentOptions
 {
@@ -89,6 +106,14 @@ struct DescentOptions
         double beta;              // reduction factor for backtracking
         double sigma;             // factor for sufficient decrease
         double min;               // minimum step-size taken
+
+        // Nonmonotone line search and Barzilai-Borwein steps (GradientDescent only; defaults: monotone, fixed start)
+        LineSearchReference reference = LineSearchReference::MONOTONE;  // reference value of the Armijo condition
+        unsigned int memory = 10; // LineSearchReference::MAX: number of previous values
+        double eta = 0.85;        // LineSearchReference::AVERAGE: weight in [0, 1] of the previous average
+        InitialStep initial = InitialStep::FIXED;  // starting step size (or fixed step size without line search)
+        double bb_min = 1e-10;    // safeguards of the Barzilai-Borwein step size
+        double bb_max = 1e10;
     } ls;
 };
 

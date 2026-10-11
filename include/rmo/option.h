@@ -21,7 +21,7 @@ namespace po = boost::program_options;
 BOOST_DESCRIBE_STRUCT(DescentOptions, (),
     (tol_residual, step_size, max_iter, line_search, boundary_fraction, ls));
 BOOST_DESCRIBE_STRUCT(DescentOptions::LineSearchOptions, (),
-    (max_iter, alpha, beta, sigma, min));
+    (max_iter, alpha, beta, sigma, min, reference, memory, eta, initial, bb_min, bb_max));
 BOOST_DESCRIBE_STRUCT(SolverOptions, (),
     (tol_inner, max_inner, solver, precond));
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
@@ -39,6 +39,8 @@ BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE);
 BOOST_DESCRIBE_ENUM(ManifoldKind, MASS_UNIT_SPHERE, MASS_UNIT_SPHERE_POSITIVE, SIMPLEX, POSITIVE_ORTHANT);
+BOOST_DESCRIBE_ENUM(LineSearchReference, MONOTONE, MAX, AVERAGE);
+BOOST_DESCRIBE_ENUM(InitialStep, FIXED, BB1, BB2, ALTERNATING);
 
 
 // ---------- MG_Options ----------
@@ -139,7 +141,21 @@ inline po::options_description descent_cli_options() {
         ("ls-sigma", po::value<double>()->default_value(0.2),
             "sigma for armijo line search")
         ("ls-min", po::value<double>()->default_value(1e-1),
-            "minimal step size for armijo line search");
+            "minimal step size for armijo line search")
+        ("ls-reference", po::value<std::string>()->default_value("monotone"),
+            "reference value of the armijo condition: monotone (f(x_k)), max (of the last --ls-memory values, "
+            "Grippo-Lampariello-Lucidi) or average (Zhang-Hager, weight --ls-eta); single-level descent only")
+        ("ls-memory", po::value<int>()->default_value(10),
+            "number of previous values for --ls-reference max")
+        ("ls-eta", po::value<double>()->default_value(0.85),
+            "weight in [0, 1] of the previous average for --ls-reference average")
+        ("ls-initial", po::value<std::string>()->default_value("fixed"),
+            "starting step size of the line search (step size without line search): fixed (--ls-alpha, "
+            "--step-size), bb1, bb2 or alternating (Barzilai-Borwein); single-level descent only")
+        ("ls-bb-min", po::value<double>()->default_value(1e-10),
+            "smallest Barzilai-Borwein step size")
+        ("ls-bb-max", po::value<double>()->default_value(1e10),
+            "largest Barzilai-Borwein step size");
     return d;
 }
 
@@ -157,6 +173,21 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.ls.beta      = vm["ls-beta"].as<double>();
     options_rgd.ls.sigma     = vm["ls-sigma"].as<double>();
     options_rgd.ls.min       = vm["ls-min"].as<double>();
+    options_rgd.ls.reference = string_to_enum<LineSearchReference>(upper(vm["ls-reference"].as<std::string>()));
+    options_rgd.ls.memory    = to_unsigned_nonneg(vm["ls-memory"].as<int>(), "ls-memory");
+    options_rgd.ls.eta       = vm["ls-eta"].as<double>();
+    options_rgd.ls.initial   = string_to_enum<InitialStep>(upper(vm["ls-initial"].as<std::string>()));
+    options_rgd.ls.bb_min    = vm["ls-bb-min"].as<double>();
+    options_rgd.ls.bb_max    = vm["ls-bb-max"].as<double>();
+    if (options_rgd.ls.memory == 0) {
+        throw std::invalid_argument("--ls-memory must be positive");
+    }
+    if (!(options_rgd.ls.eta >= 0 && options_rgd.ls.eta <= 1)) {
+        throw std::invalid_argument("--ls-eta must be in [0, 1]");
+    }
+    if (!(options_rgd.ls.bb_min > 0 && options_rgd.ls.bb_min <= options_rgd.ls.bb_max)) {
+        throw std::invalid_argument("--ls-bb-min and --ls-bb-max must satisfy 0 < min <= max");
+    }
 }
 
 
