@@ -341,12 +341,10 @@ inline po::options_description coarse_model_cli_options()
 {
     po::options_description d("Coarse model options");
     d.add_options()
-        ("metric", po::value<std::string>()->default_value("mass"),
+        ("metric-coarse", po::value<std::string>()->default_value("mass"),
             "metric for coarse model (none|frobenius|mass)")
         ("metric-cond", po::value<std::string>()->default_value("none"),
             "metric for coarse condition evaluation (none|frobenius|mass)")
-        // ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
-        //     "metric for smoother (energy_adaptive|mass|frobenius)")
         ("transport", po::value<std::string>()->default_value("mass"),
             "vector transport operator (frobenius|mass|differential|adjoint_restriction|adjoint_differential|"
             "adjoint_restriction_frobenius|adjoint_differential_frobenius|differential_frobenius)");
@@ -355,15 +353,35 @@ inline po::options_description coarse_model_cli_options()
 
 inline void apply_coarse_model_options(const po::variables_map& vm, CoarseModelOptions& options_cm)
 {
-    const auto metric_str = upper(vm["metric"].as<std::string>());
+    const auto metric_str = upper(vm["metric-coarse"].as<std::string>());
     const auto ccond_str  = upper(vm["metric-cond"].as<std::string>());
     const auto transp_str = upper(vm["transport"].as<std::string>());
-    // const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
 
     options_cm.metric_t    = string_to_enum<MetricKind>(metric_str);
     options_cm.ccond_t     = string_to_enum<MetricKind>(ccond_str);
-    // options_cm.smooth_t    = string_to_enum<MetricKind>(smooth_str);
     options_cm.transport_t = string_to_enum<Transport>(transp_str);
+}
+
+
+// ---------- Metric of the descent (smoother) ----------
+// Separate from coarse_model_cli_options(), whose --metric-coarse selects the metric of the coarse model
+inline po::options_description smoother_cli_options()
+{
+    po::options_description d("Descent metric options");
+    d.add_options()
+        ("metric-smooth", po::value<std::string>()->default_value("energy_adaptive"),
+            "metric of the Riemannian gradient for the descent (energy_adaptive|mass|frobenius)");
+    return d;
+}
+
+inline void apply_smoother_options(const po::variables_map& vm, MetricKind& smooth_t)
+{
+    const auto smooth_str = upper(vm["metric-smooth"].as<std::string>());
+
+    smooth_t = string_to_enum<MetricKind>(smooth_str);
+    if (smooth_t == MetricKind::NONE) {
+        throw std::invalid_argument("--metric-smooth: none is not a metric of a Riemannian gradient");
+    }
 }
 
 } // namespace gpe

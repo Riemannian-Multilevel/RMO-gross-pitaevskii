@@ -56,8 +56,6 @@ enum class Precondition : std::uint8_t
     AMG
 };
 
-// TODO: Merge CoarseMetric + SmoothKind -> MetricKind
-//       -> use two instances for smoother metric and coarse metric
 enum class MetricKind : std::uint8_t
 {
     NONE,   // Galerkin condition not fulfilled

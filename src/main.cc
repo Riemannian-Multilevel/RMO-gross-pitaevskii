@@ -13,6 +13,7 @@
 #include <rmo/util/serialize.h>
 
 #include <iostream>
+#include <memory>
 #include <fmt/format.h>
 
 using namespace rmo;
@@ -28,6 +29,7 @@ struct ProgramOptions
     SolverOptions  solver;
     MG_Options     mg;
     OutputOptions  output;
+    MetricKind     metric_smooth;  // metric of the Riemannian gradient, see --metric-smooth
 };
 
 
@@ -55,10 +57,10 @@ static void solve(const ProgramOptions& opts)
         auto manifold = UnitMassSphere<typename System::MassMatrix>(context.get_M());
 
         // Define Riemannian metric
-        EnergyOracle<System> oracle(gp, opts.solver);
+        auto oracle = make_oracle<System>(gp, opts.metric_smooth, opts.solver);
 
         // Termination criterion for gradient descent
-        GradientDescent solver(oracle, oracle.get_residual(), manifold, opts.descent);
+        GradientDescent solver(*oracle, oracle->get_residual(), manifold, opts.descent);
         ConvergenceTableObserver<CycleInfo> conv_observer;
         solver.set_observer(conv_observer);
 
@@ -89,6 +91,7 @@ int main(int argc, char* argv[])
         all.add(mg_cli_options());
         all.add(inner_cli_options());
         all.add(output_cli_options());
+        all.add(smoother_cli_options());
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, all), vm);
@@ -103,6 +106,7 @@ int main(int argc, char* argv[])
         apply_mg_options(vm, opts.mg);
         apply_inner_options(vm, opts.solver);
         apply_output_options(vm, opts.output);
+        apply_smoother_options(vm, opts.metric_smooth);
 
         // TODO: use multiresolution if multilevel=true
         //       timer carried on across levels

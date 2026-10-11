@@ -145,7 +145,7 @@ FAS options:
   --eps arg (=0.0001)                   minimum norm of restricted gradient
   --coarse-every arg (=2)               minimum number of fine steps before
                                         coarse step is taken
-  --metric arg (=mass)                  metric for coarse model
+  --metric-coarse arg (=mass)           metric for coarse model
                                         (none|frobenius|mass)
   --transport arg (=mass)               vector transport operator
                                         (frobenius|mass|differential|adjoint_re

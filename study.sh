@@ -62,7 +62,7 @@ for i in "${!beta_range[@]}"; do
     iter=${iter_range[$i]}
 
     # Single level reference
-    $argv0 "${args[@]}" --levels "$top_level" --metric none --max-iter 1000 --tol-residual 1e-14 --beta "$beta" \
+    $argv0 "${args[@]}" --levels "$top_level" --metric-coarse none --max-iter 1000 --tol-residual 1e-14 --beta "$beta" \
 	    >"$out_dir/sl_b${beta}_l${top_level}${suffix}"
     
     
@@ -72,37 +72,37 @@ for i in "${!beta_range[@]}"; do
 
         # Mass metric
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric mass --transport mass \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse mass --transport mass \
             >"$out_dir/ml_mass_proj_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric mass --transport differential \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse mass --transport differential \
             >"$out_dir/ml_mass_diff_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric mass --transport adjoint_restriction \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse mass --transport adjoint_restriction \
             >"$out_dir/ml_mass_adj1_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric mass --transport adjoint_differential \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse mass --transport adjoint_differential \
             >"$out_dir/ml_mass_adj2_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
 
         # Euclidean metric
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric frobenius --transport frobenius \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse frobenius --transport frobenius \
             >"$out_dir/ml_frob_proj_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric frobenius --transport differential_frobenius \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse frobenius --transport differential_frobenius \
             >"$out_dir/ml_frob_diff_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
 
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric frobenius --transport adjoint_restriction_frobenius \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse frobenius --transport adjoint_restriction_frobenius \
             >"$out_dir/ml_frob_adj1_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
         echo "[$(( ++count ))/$total]"
-        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric frobenius --transport adjoint_differential_frobenius \
+        $argv0 "${args[@]}" "${args_fas[@]}" --multilevel "${levels[$depth]}" --max-iter "$iter" --tol-residual "$tol_res" --beta "$beta" --metric-coarse frobenius --transport adjoint_differential_frobenius \
             >"$out_dir/ml_frob_adj2_b${beta}_l${top_level}_depth${depth_lab}${suffix}"
         
     done

@@ -8,7 +8,7 @@ programs run with the same mesh options, so their DoF numbering agrees. Per pote
 
   main_matrix   M, S and M_V in Matrix Market format (M and M_V lumped with --mass-lumping);
                 the linear part of the operator is A0 = S + M_V
-  main_coarse   single-level gradient descent (--metric none) per beta, with --output-bin
+  main_coarse   single-level gradient descent (--metric-coarse none) per beta, with --output-bin
 
 Constrained (Dirichlet) DoFs are the rows of S without non-zero off-diagonal entries: deal.II keeps
 only the diagonal of constrained rows when it assembles the matrices with constraints.
@@ -89,7 +89,7 @@ def run_case(args, potential, variant, level, betas):
 
     run([args.build_dir / "main_matrix", *base, "--matrix-market"], case_dir)
     for beta in betas:
-        stdout = run([args.build_dir / "main_coarse", *base, "--beta", str(beta), "--metric", "none",
+        stdout = run([args.build_dir / "main_coarse", *base, "--beta", str(beta), "--metric-coarse", "none",
                       "--initial", args.initial, "--max-iter", str(args.max_iter),
                       "--tol-residual", str(args.tol_residual), "--tol-inner-res", str(args.tol_inner_res),
                       "--max-inner", "5000", f"--output-bin=b{beta}"], case_dir)

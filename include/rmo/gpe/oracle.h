@@ -10,6 +10,9 @@
 
 #include <deal.II/base/timer.h>
 
+#include <memory>
+#include <stdexcept>
+
 /**
  * @file
  * @brief Oracles of the Gross-Pitaevskii energy on the unit-mass sphere, one per metric of the Riemannian gradient:
@@ -18,7 +21,7 @@
  *
  * The oracles evaluate a GrossPitaevskiiFunctional at the state of its last update(), compute gradients with the
  * kernels of kernels.h, and own the residual of their problem (get_residual()). The residual passed to
- * gradient() sets the tolerance of the inner solve.
+ * gradient() sets the tolerance of the inner solve. make_oracle() selects the oracle of a MetricKind.
  */
 namespace rmo::gpe
 {
@@ -258,6 +261,21 @@ public:
 private:
     EuclideanMetric m_metric;
 };
+
+
+//! Oracle of the Riemannian gradient in the metric @p metric_t; MetricKind::NONE is not a metric of a gradient.
+template <typename System>
+std::unique_ptr<GrossPitaevskiiOracle<System>>
+make_oracle(GrossPitaevskiiFunctional<System>& func, MetricKind metric_t, const SolverOptions& options)
+{
+    switch (metric_t) {
+        case MetricKind::FROBENIUS:       return std::make_unique<FrobeniusOracle<System>>(func, options);
+        case MetricKind::MASS:            return std::make_unique<MassOracle<System>>(func, options);
+        case MetricKind::ENERGY_ADAPTIVE: return std::make_unique<EnergyOracle<System>>(func, options);
+        case MetricKind::NONE:            break;
+    }
+    throw std::invalid_argument("no oracle for metric NONE");
+}
 
 } // namespace rmo::gpe
 
