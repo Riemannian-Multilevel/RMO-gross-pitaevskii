@@ -72,6 +72,7 @@ struct DescentOptions
     double step_size;           // fixed step-size used in iteration steps
     unsigned int max_iter;      // maximum GD iterations
     bool line_search;           // determine step-size by line search
+    double boundary_fraction = 0.99;  // fraction theta in (0, 1) of ManifoldBase::max_step() taken at most per step
 
     struct LineSearchOptions
     {

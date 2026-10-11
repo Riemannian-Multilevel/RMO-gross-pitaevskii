@@ -19,7 +19,7 @@ namespace rmo
 namespace po = boost::program_options;
 
 BOOST_DESCRIBE_STRUCT(DescentOptions, (),
-    (tol_residual, step_size, max_iter, line_search, ls));
+    (tol_residual, step_size, max_iter, line_search, boundary_fraction, ls));
 BOOST_DESCRIBE_STRUCT(DescentOptions::LineSearchOptions, (),
     (max_iter, alpha, beta, sigma, min));
 BOOST_DESCRIBE_STRUCT(SolverOptions, (),
@@ -126,6 +126,9 @@ inline po::options_description descent_cli_options() {
             "step size for RGD")
         ("line-search", po::value<bool>()->default_value(false)->implicit_value(true),
             "use armijo line search")
+        ("boundary-fraction", po::value<double>()->default_value(0.99),
+            "largest fraction in (0, 1) of the step at which the retraction becomes undefined, taken per step "
+            "(fixed step and start of the line search); no effect on manifolds where it is always defined")
         ("ls-max-iter", po::value<int>()->default_value(3),
             "maximum number of iterations for line search")
         ("ls-alpha", po::value<double>()->default_value(1.0),
@@ -144,6 +147,10 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.max_iter     = vm["max-iter"].as<int>();
     options_rgd.tol_residual = vm["tol-residual"].as<double>();
     options_rgd.line_search  = vm["line-search"].as<bool>();
+    options_rgd.boundary_fraction = vm["boundary-fraction"].as<double>();
+    if (!(options_rgd.boundary_fraction > 0 && options_rgd.boundary_fraction < 1)) {
+        throw std::invalid_argument("--boundary-fraction must be in (0, 1)");
+    }
     options_rgd.ls.max_iter  = vm["ls-max-iter"].as<int>();
     options_rgd.ls.alpha     = vm["ls-alpha"].as<double>();
     options_rgd.ls.beta      = vm["ls-beta"].as<double>();

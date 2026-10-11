@@ -5,6 +5,8 @@
 #include <rmo/lac.h>
 #include <rmo/option_types.h>
 
+#include <algorithm>
+#include <cmath>
 /**
  * @file
  * @brief Armijo line search on a manifold.
@@ -14,9 +16,27 @@ namespace rmo
 {
 
 /**
+ * @brief Step size along @p eta from @p x: @p step, capped at options.boundary_fraction times
+ * ManifoldBase::max_step() (fraction-to-the-boundary rule) where the retraction is not defined for all step sizes.
+ * Unchanged on manifolds without such a limit.
+ */
+inline double capped_step(const ManifoldBase& manifold, const Vector<double>& x, const Vector<double>& eta,
+                          const double step, const DescentOptions& options)
+{
+    const double h_max = manifold.max_step(x, eta);
+    if (!std::isfinite(h_max)) {
+        return step;
+    }
+    Assert(options.boundary_fraction > 0 && options.boundary_fraction < 1,
+           dealii::ExcMessage("boundary_fraction must be in (0, 1)"));
+    return std::min(step, options.boundary_fraction * h_max);
+}
+
+/**
  * @brief Armijo backtracking line search for @p oracle along the descent direction @p eta at @p x.
  *
- * Starting from options.ls.alpha and reducing by options.ls.beta, accepts the first step size \f$ \alpha \f$ with
+ * Starting from options.ls.alpha, capped by capped_step() so that every trial point is defined, and reducing by
+ * options.ls.beta, accepts the first step size \f$ \alpha \f$ with
  * \f$ f(R_x(\alpha \eta)) \le f(x) + \sigma \alpha \langle \grad f(x), \eta \rangle_x \f$ (up to rounding). On
  * acceptance, @p x and the oracle are at the new point. @p fx is \f$ f(x) \f$ and @p dir_deriv is
  * \f$ \langle \grad f(x), \eta \rangle_x \f$.
@@ -39,7 +59,7 @@ double armijo_line_search(OracleType& oracle,
         std::cerr << "warning: not a descent direction (" << dir_deriv
                   << std::setprecision(12) << ")" << std::endl;
     }
-    double alpha = options.ls.alpha;
+    double alpha = capped_step(manifold, x, eta, options.ls.alpha, options);
     Vector<double> x_trial(x);
 
     // Avoid numerical issues when close to the solution

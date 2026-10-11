@@ -89,8 +89,9 @@ public:
 };
 
 
-//! One descent step along @p eta from @p x: Armijo line search or fixed step size (options_gd.line_search). Updates
-//! @p x and the oracle to the new point, and returns the step size and the elapsed time.
+//! One descent step along @p eta from @p x: Armijo line search or fixed step size (options_gd.line_search), both
+//! capped by capped_step(). Updates @p x and the oracle to the new point, and returns the step size taken and the
+//! elapsed time.
 template <typename Oracle>
 CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
                        Vector<double>& x, const Vector<double>& eta,
@@ -118,7 +119,9 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: retraction" << std::endl;
 #endif
-        manifold.retract(eta, x, options_gd.step_size);   // update y
+        // Fixed step, capped where the retraction is not defined for all step sizes (fraction to the boundary)
+        step_size = capped_step(manifold, x, eta, options_gd.step_size, options_gd);
+        manifold.retract(eta, x, step_size);   // update y
 
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: assembly" << std::endl;

@@ -113,6 +113,13 @@ RGD options:
   --tol-residual arg (=0.0001)          tolerance for M-residual
   --step-size arg (=1)                  step size for RGD
   --line-search [=arg(=1)] (=0)         use armijo line search
+  --boundary-fraction arg (=0.98999999999999999)
+                                        largest fraction in (0, 1) of the step
+                                        at which the retraction becomes
+                                        undefined, taken per step (fixed step
+                                        and start of the line search); no
+                                        effect on manifolds where it is always
+                                        defined
   --ls-max-iter arg (=3)                maximum number of iterations for line
                                         search
   --ls-alpha arg (=1)                   alpha for armijo line search

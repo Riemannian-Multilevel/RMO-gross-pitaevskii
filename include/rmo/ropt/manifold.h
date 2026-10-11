@@ -9,6 +9,8 @@
 
 #include <deal.II/base/function.h>
 
+#include <limits>
+
 /**
  * @file
  * @brief ManifoldBase: the operations of the Riemannian solvers on a manifold embedded in \f$ \mathbb{R}^n \f$, a
@@ -35,6 +37,13 @@ public:
     virtual void retract(const Vector<double>& z, Vector<double>& x, double factor = 1.0) const = 0;
     //! \f$ \mathrm{output} = R_x(h z) \f$
     virtual void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor = 1.0) const = 0;
+
+    //! Supremum of the step sizes \f$ h \f$ for which \f$ R_x(h v) \f$ is defined; infinity if it is defined for all.
+    //! The solvers take at most a fraction of it, see DescentOptions::boundary_fraction.
+    [[nodiscard]] virtual double max_step(const Vector<double>& /*x*/, const Vector<double>& /*v*/) const
+    {
+        return std::numeric_limits<double>::infinity();
+    }
 
     //! \f$ v \leftarrow R_x^{-1}(v) \f$
     virtual void retract_inv(Vector<double>& v, const Vector<double>& x) const = 0;
