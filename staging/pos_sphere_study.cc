@@ -13,7 +13,8 @@
  *   (x1_<case>);
  * - `iter_<case>.csv`: per iterate the residual, energy, minimum, the deviation |x^T D x - 1| from the sphere, the
  *   step taken to the next iterate, the step limit tau_max of the density retraction along the descent direction,
- *   whether the step was capped, the floor (continuation), the Z-matrix lower bound of tau_max (tau_bound()), and
+ *   whether the step was capped, the floor (continuation), the largest rate max_i |eta_i| / x_i (the log-change of
+ *   the e-retraction per unit step), the Z-matrix lower bound of tau_max (tau_bound()), and
  *   the starting step (--ls-initial) and reference value (--ls-reference) of the line search from the iterate, and
  *   the stationarity of the constrained problem (free residual, smallest multiplier, see stationarity());
  * - `summary.csv`: one line per case (appended), with the iterations, the final residual and energy, and whether the
@@ -31,7 +32,20 @@
  * - `clip-floor`: both (positive_clip-floor_theta<theta>);
  * - `floor-cont`: the clamped retraction without option A, with a floor that decreases with the residual,
  *   floor_k = max(1e-150, min(floor_{k-1}, --floor-factor * r_k)), a continuation towards floor 0
- *   (positive_floor-cont).
+ *   (positive_floor-cont);
+ * - `e`: the e-retraction x_i' = c x_i exp(h v_i / x_i) (ellipsoid_positive::retract_by_e(), the e-geodesic of the
+ *   densities), defined for every step, so without step limit (positive_e);
+ * - `e-cap`: the e-retraction with the step limit 1 / max_i |v_i| / x_i and option A, so that no component changes by
+ *   more than a factor exp(theta) per step (positive_e-cap_theta<theta>);
+ * - `e-cap-up`: the e-retraction with the one-sided step limit 1 / max_i (v_i)_+ / x_i, which bounds the growth of
+ *   the components by a factor exp(theta) and lets them shrink freely (positive_e-cap-up_theta<theta>);
+ * - `clip-e`, `clip-e-cap`, `clip-e-cap-up`: these with the clipped energy-adaptive direction (positive_clip-e,
+ *   positive_clip-e-cap_theta<theta>, positive_clip-e-cap-up_theta<theta>);
+ * - `ortho`: the unit-mass sphere with the orthographic retraction (ellipsoid::retract_by_ortho()), with option A for
+ *   its step limit 1 / |v|_M (unit_ortho_theta<theta>); not positive;
+ * - `exp`: the unit-mass sphere with the exponential map (ellipsoid::retract_by_exp(), along the great circle; for the
+ *   mass metric the geodesic of the Levi-Civita connection, between the m- and the e-geodesic of the densities),
+ *   defined for every step (unit_exp); not positive.
  *
  * summary.csv also reports the discretization (mesh, degree) and its Z-matrix property: the number of
  * positive off-diagonal entries of A_0 (those of the stiffness matrix, for a lumped potential term).
@@ -48,6 +62,7 @@
 #include <deal.II/dofs/dof_tools.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -162,6 +177,134 @@ private:
     bool cap;
 };
 
+//! Step limit of ExpPosSphere: none, 1 / max_i |v_i| / x_i (a relative change exp(1) per component), or
+//! 1 / max_i (v_i)_+ / x_i (growth by at most exp(1))
+enum class ExpCap : std::uint8_t { NONE, TWO_SIDED, GROWTH };
+
+//! Positive sphere with the e-retraction, see ellipsoid_positive::retract_by_e(), with the step limit @p cap.
+class ExpPosSphere : public ManifoldBase
+{
+public:
+    ExpPosSphere(const MassMatrix& D, ExpCap cap) : D(D), cap(cap) {}
+
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid_positive::retract_by_e(D, z, x, factor);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
+    {
+        if (cap == ExpCap::NONE) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double rate = 0;
+        for (unsigned i = 0; i < x.size(); ++i) {
+            rate = std::max(rate, (cap == ExpCap::GROWTH ? v[i] : std::abs(v[i])) / x[i]);
+        }
+        return 1 / rate;
+    }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid_positive::retract_inv_by_e(D, v, x);
+    }
+
+    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                      Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                          Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                                  Vector<double>&) const override { throw ExcNotImplemented(); }
+
+private:
+    const MassMatrix& D;
+    ExpCap cap;
+};
+
+
+//! Unit-mass sphere with the orthographic retraction, see ellipsoid::retract_by_ortho(), then normalized against the
+//! drift of rounding errors (as PosUnitMassSphere); defined for h |v|_M < 1.
+class OrthoUnitSphere : public ManifoldBase
+{
+public:
+    explicit OrthoUnitSphere(const MassMatrix& D) : D(D) {}
+
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid::retract_by_ortho(D, z, x, factor);
+        ellipsoid::retract_by_norm(D, x);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    [[nodiscard]] double max_step(const Vector<double>& /*x*/, const Vector<double>& v) const override
+    {
+        Vector<double> Dv(v.size());
+        D.vmult(Dv, v);
+        return 1 / std::sqrt(v * Dv);
+    }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid::retract_inv_by_ortho(D, v, x);
+    }
+
+    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                      Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                          Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                                  Vector<double>&) const override { throw ExcNotImplemented(); }
+
+private:
+    const MassMatrix& D;
+};
+
+//! Unit-mass sphere with the exponential map, see ellipsoid::retract_by_exp(), then normalized against the drift of
+//! rounding errors; defined for every step.
+class ExpMapUnitSphere : public ManifoldBase
+{
+public:
+    explicit ExpMapUnitSphere(const MassMatrix& D) : D(D) {}
+
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid::retract_by_exp(D, z, x, factor);
+        ellipsoid::retract_by_norm(D, x);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid::retract_inv_by_exp(D, v, x);
+    }
+
+    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                      Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                          Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                                  Vector<double>&) const override { throw ExcNotImplemented(); }
+
+private:
+    const MassMatrix& D;
+};
+
 //! Collects the rows reported by the solver; @p on_add (optional) runs after each row, before the next step.
 struct Recorder : IterationObserver<CycleInfo>
 {
@@ -184,14 +327,20 @@ struct Variant
     bool floor;         // FlooredPosSphere
     bool cap;           // option A (fraction to the boundary)
     bool continuation;  // floor decreasing with the residual
+    bool e = false;     // ExpPosSphere
+    bool ortho = false; // OrthoUnitSphere
+    bool exp_map = false; // ExpMapUnitSphere
+    bool growth = false;  // ExpPosSphere with ExpCap::GROWTH (with cap)
 
-    //! Name of the case: positive_theta<theta> (plain), positive_<name> (no cap), positive_<name>_theta<theta>
+    //! Name of the case: positive_theta<theta> (plain), positive_<name> (no cap), positive_<name>_theta<theta>,
+    //! unit_<name>_theta<theta> (ortho), unit_<name> (exp)
     [[nodiscard]] std::string case_name(double theta) const
     {
+        const std::string prefix = ortho || exp_map ? "unit_" : "positive_";
         if (!cap) {
-            return "positive_" + name;
+            return prefix + name;
         }
-        return name == "plain" ? fmt::format("positive_theta{}", theta) : fmt::format("positive_{}_theta{}", name, theta);
+        return name == "plain" ? fmt::format("positive_theta{}", theta) : fmt::format("{}{}_theta{}", prefix, name, theta);
     }
 };
 
@@ -202,6 +351,16 @@ const std::vector<Variant> all_variants = {
     {.name = "floor-nocap", .clip = false, .floor = true,  .cap = false, .continuation = false},
     {.name = "clip-floor",  .clip = true,  .floor = true,  .cap = true,  .continuation = false},
     {.name = "floor-cont",  .clip = false, .floor = true,  .cap = false, .continuation = true},
+    {.name = "e",           .clip = false, .floor = false, .cap = false, .continuation = false, .e = true},
+    {.name = "e-cap",       .clip = false, .floor = false, .cap = true,  .continuation = false, .e = true},
+    {.name = "clip-e",      .clip = true,  .floor = false, .cap = false, .continuation = false, .e = true},
+    {.name = "clip-e-cap",  .clip = true,  .floor = false, .cap = true,  .continuation = false, .e = true},
+    {.name = "e-cap-up",    .clip = false, .floor = false, .cap = true,  .continuation = false, .e = true,
+     .growth = true},
+    {.name = "clip-e-cap-up", .clip = true, .floor = false, .cap = true, .continuation = false, .e = true,
+     .growth = true},
+    {.name = "ortho",       .clip = false, .floor = false, .cap = true,  .continuation = false, .ortho = true},
+    {.name = "exp",         .clip = false, .floor = false, .cap = false, .continuation = false, .exp_map = true},
 };
 
 Variant parse_variant(const std::string& name)
@@ -363,13 +522,14 @@ CaseResult run_case(const std::string& name, double theta, const ManifoldBase& m
 
     std::ofstream csv(out / fmt::format("iter_{}.csv", name));
     csv << "k,residual,energy,min_value,norm_dev,step,tau_max,cap,capped,floor,tau_bound,initial_step,reference,"
-           "free_residual,nu_min\n";
+           "free_residual,nu_min,rel_rate\n";
     unsigned n_capped = 0;
     for (unsigned k = 0; k < recorder.rows.size(); ++k) {
         const CycleInfo& row = recorder.rows[k];
         double tau_max = std::numeric_limits<double>::infinity();
         double norm_dev = std::numeric_limits<double>::quiet_NaN();
         double bound = std::numeric_limits<double>::quiet_NaN();
+        double rel_rate = std::numeric_limits<double>::quiet_NaN();
         Stationarity kkt{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 0};
         if (k < hist.size()) {
             bound = tau_bound(oracle, D, hist[k], metric);
@@ -379,6 +539,10 @@ CaseResult run_case(const std::string& name, double theta, const ManifoldBase& m
             Vector<double> Dx(hist[k].size());
             D.vmult(Dx, hist[k]);
             norm_dev = std::abs(hist[k] * Dx - 1);
+            rel_rate = 0;
+            for (unsigned i = 0; i < eta.size(); ++i) {
+                rel_rate = std::max(rel_rate, std::abs(eta[i]) / std::abs(hist[k][i]));
+            }
         }
         const double cap = positive ? options.boundary_fraction * tau_max : std::numeric_limits<double>::infinity();
         const bool has_next = k + 1 < recorder.rows.size();
@@ -398,7 +562,7 @@ CaseResult run_case(const std::string& name, double theta, const ManifoldBase& m
             << num(norm_dev) << ',' << num(step) << ',' << num(tau_max) << ',' << num(cap) << ',' << capped << ','
             << num(k < floors.size() ? floors[k] : std::numeric_limits<double>::quiet_NaN()) << ',' << num(bound)
             << ',' << num(has_next ? initial_step : std::numeric_limits<double>::quiet_NaN()) << ',' << num(reference)
-            << ',' << num(kkt.free_residual) << ',' << num(kkt.nu_min) << '\n';
+            << ',' << num(kkt.free_residual) << ',' << num(kkt.nu_min) << ',' << num(rel_rate) << '\n';
     }
 
     if (!hist.empty()) {
@@ -468,9 +632,19 @@ void study(const StudyOptions& opts)
     const FlooredPosSphere floored(context.get_M(), opts.floor, true);
     const FlooredPosSphere floored_nocap(context.get_M(), opts.floor, false);
     const FlooredPosSphere floored_cont(context.get_M(), opts.floor, false);
+    const ExpPosSphere exp_positive(context.get_M(), ExpCap::NONE);
+    const ExpPosSphere exp_positive_cap(context.get_M(), ExpCap::TWO_SIDED);
+    const ExpPosSphere exp_positive_growth(context.get_M(), ExpCap::GROWTH);
+    const OrthoUnitSphere ortho(context.get_M());
+    const ExpMapUnitSphere exp_map(context.get_M());
     for (const Variant& variant : opts.variants) {
         GrossPitaevskiiOracle<System>& variant_oracle = variant.clip ? clipped : *oracle;
-        const ManifoldBase& manifold = !variant.floor        ? static_cast<const ManifoldBase&>(positive)
+        const ManifoldBase& manifold = variant.growth        ? static_cast<const ManifoldBase&>(exp_positive_growth)
+                                     : variant.e && variant.cap ? static_cast<const ManifoldBase&>(exp_positive_cap)
+                                     : variant.e             ? static_cast<const ManifoldBase&>(exp_positive)
+                                     : variant.ortho         ? static_cast<const ManifoldBase&>(ortho)
+                                     : variant.exp_map       ? static_cast<const ManifoldBase&>(exp_map)
+                                     : !variant.floor        ? static_cast<const ManifoldBase&>(positive)
                                      : variant.continuation  ? static_cast<const ManifoldBase&>(floored_cont)
                                      : variant.cap           ? static_cast<const ManifoldBase&>(floored)
                                                              : static_cast<const ManifoldBase&>(floored_nocap);
@@ -550,7 +724,9 @@ int main(int argc, char* argv[])
             ("thetas", po::value<std::string>()->default_value("0.99"),
                 "comma-separated fractions theta for the positive sphere")
             ("variants", po::value<std::string>()->default_value("plain"),
-                "comma-separated variants of the positive sphere (plain|clip|floor|floor-nocap|clip-floor|floor-cont)")
+                "comma-separated variants of the positive sphere (plain|clip|floor|floor-nocap|clip-floor|floor-cont|e|e-cap|"
+                "e-cap-up|clip-e|clip-e-cap|clip-e-cap-up) "
+                "or of the unit sphere (ortho|exp)")
             ("floor", po::value<double>()->default_value(1e-12),
                 "floor of the variants floor, floor-nocap and clip-floor")
             ("floor-factor", po::value<double>()->default_value(1e-3),
