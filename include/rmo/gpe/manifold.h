@@ -16,7 +16,8 @@
  * @file
  * @brief The unit-mass sphere \f$ \mathcal{S} = \{ x : \|x\|_M = 1 \} \f$, \f$ \|x\|_M^2 = x^\top M x \f$:
  * retractions, their inverses and differentials (namespace ellipsoid), and the manifold UnitMassSphere; its
- * intersection with the positive orthant for a lumped mass matrix (namespace ellipsoid_positive, PosUnitMassSphere).
+ * intersection with the positive orthant for a lumped mass matrix (namespace ellipsoid_positive, PosUnitMassSphere),
+ * with the density retraction (m-connection) and the e-retraction (e-connection).
  *
  * Arguments in ellipsoid: the mass matrix `M` (any type with `vmult`), the base point `x` on the sphere, the
  * vector `v` to retract or lift, and the step factor \f$ h \f$ (`factor`). Retractions overwrite `x`, inverse
@@ -390,8 +391,68 @@ inline double max_step(const Vector<double>& x, const Vector<double>& v)
     return h_max;
 }
 
+/**
+ * @brief Exponential retraction (e-retraction) \f$ x_i \leftarrow c \, x_i \exp(h v_i / x_i) \f$, with \f$ c > 0 \f$
+ * such that \f$ x^\top D x = 1 \f$.
+ *
+ * Under the density map it is the e-geodesic \f$ p_i(h) \propto p_i \exp(h u_i) \f$, \f$ u_i = (J_x v)_i / p_i =
+ * 2 v_i / x_i \f$, of the exponential connection of information geometry; the density retraction is the m-geodesic
+ * \f$ p + h J_x v \f$ of the mixture connection. As retract_by_ortho(), it steps along @p v and rescales; unlike the
+ * density retraction, it is defined and positive for every step. For tangent @p v, \f$ \mathrm D R_x(0) = \mathrm{id}
+ * \f$. Evaluated in logarithms, shifted by their maximum against overflow; components that underflow are set to the
+ * smallest normal number.
+ */
+template <typename MatrixType>
+void retract_by_e(const MatrixType& D, const Vector<double>& v, Vector<double>& x, const double factor = 1.0)
+{
+    Assert(std::all_of(x.begin(), x.end(), [](double a) {
+        return a > 0;
+    }), dealii::ExcMessage("Point has non-positive component"));
 
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
 
+    // s_i = log(x_i exp(h v_i / x_i))
+    Vector<double> s(n);
+    for (unsigned i = 0; i < n; i++) {
+        s[i] = std::log(x[i]) + factor * v[i] / x[i];
+    }
+    AssertThrow(std::all_of(s.begin(), s.end(), [](double a) {
+        return std::isfinite(a);
+    }), dealii::ExcMessage("e-retraction: exponent not finite"));
+
+    const double s_max = *std::max_element(s.begin(), s.end());
+    for (unsigned i = 0; i < n; i++) {
+        x[i] = std::exp(s[i] - s_max);
+    }
+    ellipsoid::retract_by_norm(D, x);
+    threshold(x, std::numeric_limits<double>::min());
+}
+
+/**
+ * @brief Inverse of retract_by_e() for a point \f$ v \f$ on the positive sphere, overwritten with a tangent vector at
+ * @p x: \f$ v_i \leftarrow x_i \big( \log(v_i / x_i) - \sum_j p_j \log(v_j / x_j) \big) \f$, \f$ p = \pi(x) \f$.
+ */
+template <typename MatrixType>
+void retract_inv_by_e(const MatrixType& D, Vector<double>& v, const Vector<double>& x)
+{
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+
+    Vector<double> p(n);
+    density_map(D, x, p);
+
+    double mean = 0, mass = 0;
+    for (unsigned i = 0; i < n; i++) {
+        v[i] = std::log(v[i] / x[i]);
+        mean += p[i] * v[i];
+        mass += p[i];
+    }
+    mean /= mass;
+    for (unsigned i = 0; i < n; i++) {
+        v[i] = x[i] * (v[i] - mean);
+    }
+}
 
 } // namespace ellipsoid_positive
 
