@@ -9,7 +9,12 @@
  *   steps beyond \f$ h_{\max} = \min_{v_i < 0} x_i / (2|v_i|) \f$ (and leaves \f$ x \f$ unchanged);
  * - lifting: tangent, inverse of the retraction in both directions, affine density curve
  *   \f$ \pi(R_x(t L_x(\hat x))) = (1-t) \pi(x) + t \pi(\hat x) \f$;
+ * - e-retraction (ellipsoid_positive::retract_by_e()) and its inverse: \f$ R_x(0) = x \f$, positive and on the
+ *   sphere for every step, \f$ \mathrm D R_x(0) = \mathrm{id} \f$, inverse in both directions, geometric curve
+ *   \f$ R_x(t L_x(\hat x)) \propto x^{1-t} \hat x^t \f$ (the e-geodesic of the densities);
  * - the energy of GrossPitaevskiiFunctional satisfies the exact supporting identity, and is convex along the curve;
+ * - reported, not checked: the energy along the e-geodesic, which need not be convex (it is not from a peaked
+ *   point to the constant);
  * - without fraction-to-the-boundary steps, a full energy-adaptive step is undefined from points on the density
  *   curve towards the constant start (a component has to shrink by more than a factor ~2);
  * - energy-adaptive gradient descent on PosUnitMassSphere (GradientDescent with fraction-to-the-boundary steps
@@ -28,6 +33,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -262,6 +268,78 @@ void check_lifting(CheckReport& report, const Problem& p)
                  "max diff " + sci(max_error));
 }
 
+//! e-retraction and its inverse: retraction for every step, geometric curve x(t) ~ x^(1-t) x_hat^t.
+void check_e_retraction(CheckReport& report, const Problem& p)
+{
+    const MassMatrix& D = p.D();
+    const Points pts(D, p.n_dofs());
+    const double h_max = ellipsoid_positive::max_step(pts.x, pts.v);
+
+    Vector<double> y(pts.x);
+    ellipsoid_positive::retract_by_e(D, pts.v, y, 0.0);
+    y -= pts.x;
+    report.check(y.linfty_norm() < 1e-15 * pts.x.linfty_norm(), "e-retraction: R_x(0) = x",
+                 "max diff " + sci(y.linfty_norm()));
+
+    // Beyond the step limit of the density retraction, and far enough that components underflow
+    double max_norm_error = 0, min_value = std::numeric_limits<double>::infinity();
+    for (const double h : {0.5 * h_max, 10 * h_max, 1e4 * h_max}) {
+        y = pts.x;
+        ellipsoid_positive::retract_by_e(D, pts.v, y, h);
+        max_norm_error = std::max(max_norm_error, std::abs(d_inner(D, y, y) - 1));
+        min_value = std::min(min_value, *std::ranges::min_element(y));
+    }
+    report.check(max_norm_error < 1e-13 && min_value > 0, "e-retraction: positive and on the sphere for every step",
+                 "max |y^T D y - 1| = " + sci(max_norm_error) + ", min " + sci(min_value));
+
+    auto diff_error = [&](double h) {
+        Vector<double> y_plus(pts.x), y_minus(pts.x);
+        ellipsoid_positive::retract_by_e(D, pts.v, y_plus, h);
+        ellipsoid_positive::retract_by_e(D, pts.v, y_minus, -h);
+        y_plus -= y_minus;
+        y_plus /= 2 * h;
+        y_plus -= pts.v;
+        return y_plus.linfty_norm();
+    };
+    const double error_1 = diff_error(1e-2 * h_max), error_2 = diff_error(1e-3 * h_max);
+    report.check(error_2 < 1e-6 && error_1 / error_2 > 50, "e-retraction: D R_x(0) = id (finite differences)",
+                 "error " + sci(error_2) + ", ratio " + sci(error_1 / error_2));
+
+    Vector<double> lift(pts.x_hat);
+    ellipsoid_positive::retract_inv_by_e(D, lift, pts.x);
+    const double tangent = std::abs(d_inner(D, pts.x, lift)) / lift.l2_norm();
+    report.check(tangent < 1e-13, "e-lifting: L_x(x_hat) is tangent", "|x^T D L| / |L| = " + sci(tangent));
+
+    y = pts.x;
+    ellipsoid_positive::retract_by_e(D, lift, y, 1.0);
+    y -= pts.x_hat;
+    report.check(y.linfty_norm() < 1e-14 * pts.x_hat.linfty_norm(), "e-lifting: R_x(L_x(x_hat)) = x_hat",
+                 "max diff " + sci(y.linfty_norm()));
+
+    Vector<double> step(pts.v);
+    step *= 3 * h_max;
+    y = pts.x;
+    ellipsoid_positive::retract_by_e(D, step, y, 1.0);
+    ellipsoid_positive::retract_inv_by_e(D, y, pts.x);
+    y -= step;
+    report.check(y.linfty_norm() < 1e-13 * step.linfty_norm(), "e-lifting: L_x(R_x(v)) = v",
+                 "max diff " + sci(y.linfty_norm()));
+
+    // e-geodesic: pi(x(t)) ~ pi(x)^(1-t) pi(x_hat)^t, i.e. x(t) ~ x^(1-t) x_hat^t
+    double max_error = 0;
+    for (const double t : {0.25, 0.5, 0.9}) {
+        y = pts.x;
+        ellipsoid_positive::retract_by_e(D, lift, y, t);
+        Vector<double> geo = make_vector(p.n_dofs(), [&](unsigned i) {
+            return std::pow(pts.x[i], 1 - t) * std::pow(pts.x_hat[i], t);
+        });
+        normalize(D, geo);
+        y -= geo;
+        max_error = std::max(max_error, y.linfty_norm());
+    }
+    report.check(max_error < 1e-14, "e-lifting: R_x(t L_x(x_hat)) ~ x^(1-t) x_hat^t", "max diff " + sci(max_error));
+}
+
 //! Exact supporting identity (GP_exact_support) and R-convexity, with the energy of GrossPitaevskiiFunctional.
 void check_supporting_identity(CheckReport& report, Problem& p)
 {
@@ -312,6 +390,35 @@ void check_supporting_identity(CheckReport& report, Problem& p)
     }
     report.check(min_second_diff > -1e-12 * std::abs(E), "energy: convex along the density curve",
                  "min second difference " + sci(min_second_diff));
+
+    // e-geodesic (no convexity known): supporting inequality and second differences, from the test points and from a
+    // pair with fast-decaying tails, x ~ exp(-|i - c|^2 / w^2) to the constant
+    const unsigned n = x.size();
+    const auto peak = make_vector(n, [&](unsigned i) {
+        const double s = (static_cast<double>(i) - n / 2.0) / (n / 8.0);
+        return std::exp(-s * s);
+    });
+    const auto flat = make_vector(n, [](unsigned) { return 1.0; });
+    for (const auto& [name, a, b] : {std::tuple{"test points", x, x_hat}, std::tuple{"peak to constant", peak, flat}}) {
+        Vector<double> x_e(a), x_hat_e(b);
+        normalize(D, x_e);
+        normalize(D, x_hat_e);
+        Vector<double> lift_e(x_hat_e);
+        ellipsoid_positive::retract_inv_by_e(D, lift_e, x_e);
+        const double E_e = energy(func, x_e);
+        const double support = energy(func, x_hat_e) - E_e - func.directional_derivative(x_e, lift_e);
+        for (unsigned k = 0; k <= n_t; ++k) {
+            Vector<double> y(x_e);
+            ellipsoid_positive::retract_by_e(D, lift_e, y, static_cast<double>(k) / n_t);
+            phi[k] = energy(func, y);
+        }
+        double min_diff = std::numeric_limits<double>::infinity();
+        for (unsigned k = 1; k < n_t; ++k) {
+            min_diff = std::min(min_diff, (phi[k - 1] - 2 * phi[k] + phi[k + 1]) * n_t * n_t);
+        }
+        report.info(std::string("energy along the e-geodesic, ") + name,
+                    "f(x_hat) - f(x) - Df(x)[L^e_x(x_hat)] = " + sci(support) + ", min phi'' = " + sci(min_diff));
+    }
 }
 
 DescentOptions descent_options(double step_size, bool line_search, unsigned max_iter)
@@ -423,6 +530,7 @@ int main()
         check_density_map(report, p);
         check_retraction(report, p);
         check_lifting(report, p);
+        check_e_retraction(report, p);
         check_supporting_identity(report, p);
         check_descent(report, p);
     });
