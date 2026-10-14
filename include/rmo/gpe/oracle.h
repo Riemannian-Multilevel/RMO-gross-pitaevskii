@@ -63,6 +63,12 @@ public:
         return m_func.directional_derivative(x, z);
     }
 
+    [[nodiscard]] std::optional<double> ray_step(const Vector<double>& x, const Vector<double>& v,
+                                                 double t_max = std::numeric_limits<double>::infinity()) const override
+    {
+        return m_func.ray_step(x, v, t_max);
+    }
+
     [[nodiscard]] unsigned n_dofs() const override
     {
         return m_func.n_dofs();

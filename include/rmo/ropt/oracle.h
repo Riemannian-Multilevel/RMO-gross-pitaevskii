@@ -7,6 +7,8 @@
 #include <rmo/ropt/metric.h>
 
 #include <concepts>
+#include <limits>
+#include <optional>
 
 /**
  * @file
@@ -56,6 +58,16 @@ public:
 
     //! Metric of the Riemannian gradient
     [[nodiscard]] virtual const MetricBase& metric() const = 0;
+
+    //! Exact step along the normalization ray \f$ (x + t v) / \|x + t v\|_M \f$ of the oracle's mass matrix
+    //! \f$ M \f$: the global minimizer of the energy for \f$ 0 \le t \le \f$ @p t_max, 0 if @p v is not a descent
+    //! direction; std::nullopt if the oracle has no closed form (or, for an infinite @p t_max, the infimum is attained
+    //! only as \f$ t \to \infty \f$).
+    [[nodiscard]] virtual std::optional<double> ray_step(const Vector<double>& /*x*/, const Vector<double>& /*v*/,
+                                                         double /*t_max*/ = std::numeric_limits<double>::infinity()) const
+    {
+        return std::nullopt;
+    }
 
     [[nodiscard]] virtual unsigned n_dofs() const = 0;
 };

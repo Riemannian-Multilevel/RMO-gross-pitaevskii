@@ -18,8 +18,12 @@
 #include <deal.II/fe/fe_simplex_p_bubbles.h>  // for higher degree simplex elements with mass lumping
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -519,6 +523,98 @@ public:
     void gradient(const Vector<double>& x, Vector<double>& output) const
     {
         A.vmult(output, x);
+    }
+
+    /**
+     * @brief Exact step along the normalization ray \f$ y(t) = (x + t v) / \|x + t v\|_M \f$ of a lumped system
+     * (tex/exact_line_search.tex, Section 4); std::nullopt for a consistent mass matrix.
+     *
+     * With \f$ s = \|x + t v\|_M^2 \f$, \f$ Q = (x + t v)^\top A_0 (x + t v) \f$ and
+     * \f$ P = \sum_i m_i (x_i + t v_i)^4 \f$, \f$ \varphi = Q / (2 s) + \beta P / (4 s^2) \f$ and
+     * \f$ s^3 \varphi' = \frac12 (Q' s - Q s') s + \frac\beta4 (P' s - 2 P s') \f$, a polynomial of degree at most
+     * four. Its sign changes from - to + are located on a geometric grid of \f$ t \in [10^{-14}, 10^{14}] \f$ (up to
+     * @p t_max) and refined by bisection; the step is the one with the smallest \f$ \varphi \f$, compared with
+     * @p t_max if it is finite (a cap, e.g. positivity). Returns 0 if \f$ \varphi'(0) \ge 0 \f$, std::nullopt if
+     * @p t_max is infinite and the infimum is only attained as \f$ t \to \infty \f$. Cost: two products with
+     * \f$ A_0 \f$.
+     */
+    std::optional<double> ray_step(const Vector<double>& x, const Vector<double>& v,
+                                   const double t_max = std::numeric_limits<double>::infinity()) const
+    {
+        if constexpr (!lumped) {
+            return std::nullopt;
+        }
+        else {
+            const auto& m = system.get_M().get_vector();
+            const SparseMatrix<double>& A0 = system.get_A0();
+            Vector<double> A0x(x.size()), A0v(x.size());
+            A0.vmult(A0x, x);
+            A0.vmult(A0v, v);
+            const double c0 = x * A0x, c1 = x * A0v, c2 = v * A0v;
+
+            double s0 = 0, s1 = 0, s2 = 0;
+            std::array<double, 5> e{};  // e_k = sum_i m_i x_i^(4-k) v_i^k
+            for (unsigned i = 0; i < x.size(); ++i) {
+                const double xi = x[i], vi = v[i], mi = m[i];
+                s0 += mi * xi * xi;
+                s1 += mi * xi * vi;
+                s2 += mi * vi * vi;
+                e[0] += mi * xi * xi * xi * xi;
+                e[1] += mi * xi * xi * xi * vi;
+                e[2] += mi * xi * xi * vi * vi;
+                e[3] += mi * xi * vi * vi * vi;
+                e[4] += mi * vi * vi * vi * vi;
+            }
+            const double b4 = 0.25 * beta;
+            const auto phi = [&](double t) {
+                const double s = s0 + 2 * s1 * t + s2 * t * t;
+                const double Q = c0 + 2 * c1 * t + c2 * t * t;
+                const double P = e[0] + t * (4 * e[1] + t * (6 * e[2] + t * (4 * e[3] + t * e[4])));
+                return 0.5 * Q / s + b4 * P / (s * s);
+            };
+            const auto R = [&](double t) {  // s^3 phi'(t)
+                const double s  = s0 + 2 * s1 * t + s2 * t * t, ds = 2 * s1 + 2 * s2 * t;
+                const double Q  = c0 + 2 * c1 * t + c2 * t * t, dQ = 2 * c1 + 2 * c2 * t;
+                const double P  = e[0] + t * (4 * e[1] + t * (6 * e[2] + t * (4 * e[3] + t * e[4])));
+                const double dP = 4 * e[1] + t * (12 * e[2] + t * (12 * e[3] + t * 4 * e[4]));
+                return 0.5 * (dQ * s - Q * ds) * s + b4 * (dP * s - 2 * P * ds);
+            };
+            if (!(R(0.0) < 0)) {
+                return 0.0;
+            }
+            double best = std::numeric_limits<double>::quiet_NaN(), phi_best = std::numeric_limits<double>::infinity();
+            const unsigned n_grid = 2800;  // 100 points per decade
+            double t_lo = 0.0, r_lo = R(0.0);
+            for (unsigned j = 0; j <= n_grid && t_lo < t_max; ++j) {
+                const double t_hi = std::min(std::pow(10.0, -14.0 + 28.0 * j / n_grid), t_max);
+                const double r_hi = R(t_hi);
+                if (r_lo < 0 && r_hi >= 0) {
+                    double a = t_lo, b = t_hi;
+                    for (unsigned k = 0; k < 200 && b - a > 1e-15 * b; ++k) {
+                        const double c = 0.5 * (a + b);
+                        (R(c) < 0 ? a : b) = c;
+                    }
+                    if (phi(b) < phi_best) {
+                        phi_best = phi(b);
+                        best = b;
+                    }
+                }
+                t_lo = t_hi;
+                r_lo = r_hi;
+            }
+            if (std::isfinite(t_max)) {
+                // phi still decreasing at the cap, or the cap lower than every interior minimizer
+                if (std::isnan(best) || phi(t_max) < phi_best) {
+                    return t_max;
+                }
+                return best;
+            }
+            const double phi_inf = 0.5 * c2 / s2 + b4 * e[4] / (s2 * s2);
+            if (std::isnan(best) || phi_best > phi_inf) {
+                return std::nullopt;
+            }
+            return best;
+        }
     }
 
     // Accessors
