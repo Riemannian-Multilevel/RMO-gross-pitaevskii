@@ -15,7 +15,8 @@ from pos_sphere_plot import data_and_out_dirs, read_csv, read_rows, status, writ
 DISCS = ["Q1", "P1", "P2", "Q2"]
 RADII = [4, 6, 8, 10]
 METRICS = ["ENERGY_ADAPTIVE", "MASS", "FROBENIUS"]
-METRIC_NAMES = {"ENERGY_ADAPTIVE": "energy-adaptive, $\\tau=1$", "MASS": "mass, Armijo", "FROBENIUS": "Frobenius, Armijo"}
+METRIC_NAMES = {"ENERGY_ADAPTIVE": "energy-adaptive, $\\tau=1$", "ENERGY_ADAPTIVE_ARMIJO": "energy-adaptive, Armijo",
+                "MASS": "mass, Armijo", "FROBENIUS": "Frobenius, Armijo"}
 CASES = ["unit", "positive_theta0.99", "positive_clip_theta0.99", "positive_floor_theta0.99", "positive_floor-nocap",
          "positive_clip-floor_theta0.99", "positive_floor-cont"]
 SHORT = {"unit": "unit", "positive_theta0.99": "A", "positive_clip_theta0.99": "clip",
@@ -27,12 +28,19 @@ def disc_name(r):
     return f"{'Q' if r['mesh'] == 'QUADRILATERAL' else 'P'}{r['degree']}"
 
 
+def metric_key(r):
+    """Metric of a run; the energy-adaptive metric with Armijo is kept apart from the fixed step."""
+    if r["metric"] == "ENERGY_ADAPTIVE" and r["line_search"] == "1":
+        return "ENERGY_ADAPTIVE_ARMIJO"
+    return r["metric"]
+
+
 def read_matrix(data):
     """Rows of summary.csv by (discretization, radius, metric) and case."""
     runs = defaultdict(dict)
     for f in sorted((data / "matrix").glob("*/summary.csv")):
         for r in read_rows(f):
-            runs[(disc_name(r), int(r["radius"]), r["metric"])][r["case"]] = r
+            runs[(disc_name(r), int(r["radius"]), metric_key(r))][r["case"]] = r
     return runs
 
 
@@ -194,7 +202,9 @@ def main():
     data, out = data_and_out_dirs(__doc__)
     runs = read_matrix(data)
     fig_overview(runs, out, ["ENERGY_ADAPTIVE"], "fig_analysis_overview_ea.pdf", (6.3, 4.6))
-    fig_overview(runs, out, ["MASS", "FROBENIUS"], "fig_analysis_overview_mf.pdf", (8.6, 4.6))
+    fig_overview(runs, out, ["ENERGY_ADAPTIVE_ARMIJO"], "fig_analysis_overview_ea_armijo.pdf", (6.3, 4.6))
+    fig_overview(runs, out, ["MASS"], "fig_analysis_overview_mass.pdf", (5.2, 4.6))
+    fig_overview(runs, out, ["FROBENIUS"], "fig_analysis_overview_frobenius.pdf", (5.2, 4.6))
     table_summary(runs, out)
     table_discretizations(runs, out)
     fig_floor(data, out)
