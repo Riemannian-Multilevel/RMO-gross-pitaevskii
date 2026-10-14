@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs of pos_sphere_study for the analysis of the large-domain variants (tex/pos_sphere_variants.tex): every
 # discretization (mesh, degree) x radius x metric with the applicable variants, and sweeps of the floor.
-# Figures and tables: staging/plot_pos_sphere_analysis.py.
+# Figures and tables: staging/plot_pos_sphere_analysis.py; CPU times: staging/pos_sphere_cpu.sh (MATRIX_ONLY=1).
 #
 # Usage: staging/pos_sphere_analysis.sh <build dir> <output dir> [parallel jobs, default 6]
 set -euo pipefail
@@ -28,7 +28,8 @@ for d in "${!DISC[@]}"; do
     done
 done
 
-# Size of the fixed floor and of the continuation factor: radius 10, energy-adaptive
+# Size of the fixed floor and of the continuation factor: radius 10, energy-adaptive (skipped with MATRIX_ONLY=1)
+[[ ${MATRIX_ONLY:-0} == 1 ]] && { study_run; exit; }
 for d in q1 p1; do
     args disc "${DISC[$d]}"
     for floor in 1e-6 1e-9 1e-12 1e-15 1e-20 1e-50; do
