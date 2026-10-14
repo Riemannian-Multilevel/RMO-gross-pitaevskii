@@ -20,7 +20,11 @@
  * - energy-adaptive gradient descent on PosUnitMassSphere (GradientDescent with fraction-to-the-boundary steps
  *   \f$ h = \min(1, \theta h_{\max}) \f$, DescentOptions::boundary_fraction; full steps or Armijo line search)
  *   converges to the ground state of the norm retraction from these points and from multiplicative perturbations of
- *   the ground state.
+ *   the ground state;
+ * - exact line search (exact_line_search(), tex/exact_line_search.tex): the velocities of the normalization, density
+ *   and e retractions against central differences; the closed-form ray step (OracleBase::ray_step()) without cap and
+ *   with caps above and below its minimizer, against grids; the root finder of phi' on the density curve (interior
+ *   root), with a binding cap (theta t_max), and on the e-path with and without the growth cap.
  */
 #include "check.h"
 
@@ -30,6 +34,7 @@
 #include <rmo/ropt/solver.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -518,6 +523,287 @@ void check_descent(CheckReport& report, Problem& p)
     }
 }
 
+//! Velocities of the retractions (central differences) and the exact line search (tex/exact_line_search.tex): on the
+//! density path phi'(t*) = 0 with t* < t_max, on the normalization ray the closed-form step of ray_step(); both at
+//! least as good as a grid search. Mass metric, from a perturbed constant point.
+void check_exact_line_search(CheckReport& report, Problem& p)
+{
+    const MassMatrix& D = p.D();
+    const unsigned n = p.n_dofs();
+    Functional func(p.system, beta, solver_options());
+    MassOracle<System> oracle(func, solver_options());
+
+    Vector<double> x = make_vector(n, [](unsigned i) { return 1.0 + 0.5 * std::sin(0.37 * i); });
+    normalize(D, x);
+    Vector<double> eta(n);
+    oracle.update(x);
+    oracle.gradient(x, eta);
+    eta *= -1.0;
+
+    const UnitMassSphere<MassMatrix> sphere(D);
+    const PosUnitMassSphere<MassMatrix> pos_sphere(D);
+    const double t_max = pos_sphere.max_step(x, eta);
+
+    // Velocity against a central difference of the retraction, at t = 0.3 t_max
+    const auto velocity_error = [&](const auto& velocity, const auto& retract) {
+        const double t = 0.3 * t_max, h = 1e-6 * t_max;
+        Vector<double> y(n), y_dot(n), y_plus(x), y_minus(x);
+        velocity(t, y, y_dot);
+        retract(t + h, y_plus);
+        retract(t - h, y_minus);
+        y_plus -= y_minus;
+        y_plus /= 2 * h;
+        y_plus -= y_dot;
+        return y_plus.linfty_norm() / y_dot.linfty_norm();
+    };
+    const double err_norm = velocity_error(
+        [&](double t, Vector<double>& y, Vector<double>& y_dot) { sphere.retract_velocity(x, eta, t, y, y_dot); },
+        [&](double t, Vector<double>& y) { sphere.retract(eta, y, t); });
+    const double err_density = velocity_error(
+        [&](double t, Vector<double>& y, Vector<double>& y_dot) { pos_sphere.retract_velocity(x, eta, t, y, y_dot); },
+        [&](double t, Vector<double>& y) { pos_sphere.retract(eta, y, t); });
+    const double err_e = velocity_error(
+        [&](double t, Vector<double>& y, Vector<double>& y_dot) {
+            ellipsoid_positive::retract_velocity_by_e(D, x, eta, t, y, y_dot);
+        },
+        [&](double t, Vector<double>& y) { ellipsoid_positive::retract_by_e(D, eta, y, t); });
+    report.check(std::max({err_norm, err_density, err_e}) < 1e-6, "exact: retraction velocities (central differences)",
+                 "norm " + sci(err_norm) + ", density " + sci(err_density) + ", e " + sci(err_e));
+
+    DescentOptions options = capped_descent_options(0.999999, true, 1);
+    options.ls.exact = true;
+    options.ls.max_iter = 60;
+
+    // phi on a manifold, its central difference, and its minimum on a uniform grid of [0, t_end]
+    const auto phi = [&](const ManifoldBase& m, double t) {
+        Vector<double> y(x);
+        m.retract(eta, y, t);
+        return energy(func, y);
+    };
+    const auto grid_min = [&](const ManifoldBase& m, double t_end) {
+        double best = energy(func, x);  // retract_by_norm() rejects the step 0
+        for (unsigned j = 1; j <= 2000; ++j) {
+            best = std::min(best, phi(m, t_end * j / 2000.0));
+        }
+        return best;
+    };
+    const double dphi0 = oracle.directional_derivative(x, eta);
+
+    // Density path: interior zero of phi' (Theorem 3.7). From this rough point the mass gradient has its zero of
+    // phi' within 1e-6 t_max of the boundary (the barrier grows only like (t_max - t)^(-1/2)); the check uses the
+    // density curve towards a smooth point instead, which has t_max > 1.
+    {
+        const Points pts(D, n);
+        Vector<double> v(pts.x_hat);
+        ellipsoid_positive::retract_inv_by_density(v, x);
+        const double v_max = pos_sphere.max_step(x, v);
+        const auto phi_v = [&](double t) {
+            Vector<double> y(x);
+            pos_sphere.retract(v, y, t);
+            return energy(func, y);
+        };
+        Vector<double> z(x);
+        oracle.update(x);
+        const double dphi0_v = oracle.directional_derivative(x, v);
+        const double t_density = exact_line_search(oracle, pos_sphere, z, v, options, 1.0);
+        const double h = 1e-4 * std::min(t_density, v_max - t_density);
+        const double dphi_density = (phi_v(t_density + h) - phi_v(t_density - h)) / (2 * h);
+        double grid = phi_v(0.0);
+        for (unsigned j = 1; j < 2000; ++j) {
+            grid = std::min(grid, phi_v(v_max * j / 2000.0));
+        }
+        const double gap_density = phi_v(t_density) - grid;
+        report.check(dphi0_v < 0 && t_density > 0 && t_density < v_max
+                         && std::abs(dphi_density) < 1e-6 * std::abs(dphi0_v) && gap_density <= 1e-12,
+                     "exact: density path, interior stationary point at least as good as a grid",
+                     "t*/t_max " + sci(t_density / v_max) + ", |phi'(t*)|/|phi'(0)| "
+                         + sci(std::abs(dphi_density / dphi0_v)) + ", phi(t*) - grid min " + sci(gap_density));
+    }
+    Vector<double> z(x);
+
+    // Normalization ray: closed form (ray_step) against central differences and a grid
+    z = x;
+    oracle.update(x);
+    const double t_ray = exact_line_search(oracle, sphere, z, eta, options, 1.0);
+    const double h_ray = 1e-7 * t_ray;
+    const double dphi_ray = (phi(sphere, t_ray + h_ray) - phi(sphere, t_ray - h_ray)) / (2 * h_ray);
+    const double gap_ray = phi(sphere, t_ray) - grid_min(sphere, 10 * t_ray);
+    report.check(t_ray > 0 && std::abs(dphi_ray) < 1e-6 * std::abs(dphi0) && gap_ray <= 1e-12,
+                 "exact: normalization ray, closed-form step stationary and at least as good as a grid",
+                 "t* " + sci(t_ray) + ", |phi'(t*)|/|phi'(0)| " + sci(std::abs(dphi_ray / dphi0))
+                     + ", phi(t*) - grid min " + sci(gap_ray));
+}
+
+//! Positive sphere with the normalization retraction and the positivity cap (as NormPosSphere of the study), or the
+//! e-retraction with or without the growth cap (as ExpPosSphere), for the cap checks of the exact line search.
+class TestPosSphere : public ManifoldBase
+{
+public:
+    enum class Kind : std::uint8_t { NORM_CAP, E, E_CAP_UP };
+    TestPosSphere(const MassMatrix& D, Kind kind) : D(D), kind(kind) {}
+
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        if (kind == Kind::NORM_CAP) {
+            ellipsoid::retract_by_norm(D, z, x, factor);
+        }
+        else {
+            ellipsoid_positive::retract_by_e(D, z, x, factor);
+        }
+    }
+    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& out, double factor) const override
+    {
+        out = x;
+        retract(z, out, factor);
+    }
+    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
+    {
+        if (kind == Kind::NORM_CAP) {
+            return 2 * ellipsoid_positive::max_step(x, v);
+        }
+        if (kind == Kind::E) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double rate = 0;
+        for (unsigned i = 0; i < x.size(); ++i) {
+            rate = std::max(rate, v[i] / x[i]);
+        }
+        return 1 / rate;
+    }
+    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t, Vector<double>& y,
+                          Vector<double>& y_dot) const override
+    {
+        if (kind == Kind::NORM_CAP) {
+            ellipsoid::retract_velocity_by_norm(D, x, v, t, y, y_dot);
+        }
+        else {
+            ellipsoid_positive::retract_velocity_by_e(D, x, v, t, y, y_dot);
+        }
+    }
+    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        return ellipsoid::mass_inner(D, y, z);
+    }
+    [[nodiscard]] bool retracts_by_normalization() const override { return kind == Kind::NORM_CAP; }
+    void retract_inv(Vector<double>&, const Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                      Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                          Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                                  Vector<double>&) const override { throw ExcNotImplemented(); }
+
+private:
+    const MassMatrix& D;
+    Kind kind;
+};
+
+//! Caps of the exact step (tex/exact_line_search.tex, Sections 4 and 7): the closed-form ray step without cap, with a
+//! cap above and below its minimizer, against grids; the root finder of phi' with a binding cap on the density path
+//! (phi still decreasing at theta t_max), and on the e-path with and without the growth cap (descent, and a root of
+//! phi' unless at the cap). Mass metric, from a perturbed constant point.
+void check_exact_caps(CheckReport& report, Problem& p)
+{
+    const MassMatrix& D = p.D();
+    const unsigned n = p.n_dofs();
+    Functional func(p.system, beta, solver_options());
+    MassOracle<System> oracle(func, solver_options());
+
+    Vector<double> x = make_vector(n, [](unsigned i) { return 1.0 + 0.5 * std::sin(0.37 * i); });
+    normalize(D, x);
+    Vector<double> eta(n);
+    oracle.update(x);
+    oracle.gradient(x, eta);
+    eta *= -1.0;
+    const double E0 = energy(func, x);
+
+    const auto phi = [&](const ManifoldBase& m, double t) {
+        if (t == 0.0) {
+            return E0;
+        }
+        Vector<double> y(x);
+        m.retract(eta, y, t);
+        return energy(func, y);
+    };
+    const auto grid_min = [&](const ManifoldBase& m, double t_end) {
+        double best = E0;
+        for (unsigned j = 1; j <= 2000; ++j) {
+            best = std::min(best, phi(m, t_end * j / 2000.0));
+        }
+        return best;
+    };
+
+    // Closed form without cap and with caps above and below its minimizer
+    const UnitMassSphere<MassMatrix> sphere(D);
+    oracle.update(x);
+    const auto t_free = oracle.ray_step(x, eta);
+    report.check(t_free.has_value() && *t_free > 0
+                     && phi(sphere, *t_free) <= grid_min(sphere, 20 * *t_free) + 1e-12,
+                 "caps: closed-form ray step without cap is the minimizer on a grid of [0, 20 t*]",
+                 "t* " + sci(t_free.value_or(0)));
+    double worst_gap = 0, worst_t = 0;
+    for (const double c : {0.25, 0.5, 2.0, 8.0}) {
+        const double cap = c * *t_free;
+        const double t = oracle.ray_step(x, eta, cap).value_or(-1);
+        double best = std::min(E0, phi(sphere, cap));
+        for (unsigned j = 1; j < 2000; ++j) {
+            best = std::min(best, phi(sphere, cap * j / 2000.0));
+        }
+        worst_gap = std::max(worst_gap, phi(sphere, t) - best);
+        const double expected = c >= 1 ? *t_free : cap;  // phi decreases on [0, t*]: the cap binds below t*
+        worst_t = std::max(worst_t, std::abs(t - expected) / expected);
+    }
+    report.check(worst_gap <= 1e-12 && worst_t <= 1e-10,
+                 "caps: closed-form ray step with caps 0.25, 0.5, 2, 8 t*: the cap below t*, t* above, grid minimum",
+                 "max phi(t) - grid min " + sci(worst_gap) + ", max |t - expected| / expected " + sci(worst_t));
+
+    // Normalization on the positive sphere (norm-cap): closed form, capped at theta min x_i / |v_i|
+    DescentOptions options = capped_descent_options(0.99, true, 1);
+    options.ls.exact = true;
+    options.ls.max_iter = 40;
+    const TestPosSphere norm_cap(D, TestPosSphere::Kind::NORM_CAP);
+    const double cap_norm = 0.99 * norm_cap.max_step(x, eta);
+    Vector<double> z(x);
+    oracle.update(x);
+    const double t_norm = exact_line_search(oracle, norm_cap, z, eta, options, 1.0);
+    report.check(t_norm > 0 && t_norm <= cap_norm * (1 + 1e-14)
+                     && phi(norm_cap, t_norm) <= grid_min(norm_cap, cap_norm) + 1e-12
+                     && *std::ranges::min_element(z) > 0,
+                 "caps: norm-cap, closed form within the positivity cap, positive",
+                 "t/cap " + sci(t_norm / cap_norm) + ", t*/cap " + sci(*t_free / cap_norm));
+
+    // Density path, mass gradient from this point: the zero of phi' lies within 1e-6 t_max of the boundary, so the cap
+    // theta t_max binds and phi decreases on [0, theta t_max]
+    const PosUnitMassSphere<MassMatrix> pos_sphere(D);
+    const double cap_density = 0.99 * pos_sphere.max_step(x, eta);
+    z = x;
+    oracle.update(x);
+    const double t_density = exact_line_search(oracle, pos_sphere, z, eta, options, 1.0);
+    report.check(std::abs(t_density - cap_density) <= 1e-14 * cap_density
+                     && phi(pos_sphere, t_density) <= grid_min(pos_sphere, cap_density) + 1e-12,
+                 "caps: density path, binding cap: the step is theta t_max, the minimum on [0, theta t_max]",
+                 "t/(theta t_max) " + sci(t_density / cap_density));
+
+    // e-path with the growth cap and without cap: sufficient decrease, and a stationary point unless at the cap
+    for (const auto kind : {TestPosSphere::Kind::E_CAP_UP, TestPosSphere::Kind::E}) {
+        const TestPosSphere e_sphere(D, kind);
+        const double cap = 0.99 * e_sphere.max_step(x, eta);
+        z = x;
+        oracle.update(x);
+        const double dphi0 = oracle.directional_derivative(x, eta);
+        const double t = exact_line_search(oracle, e_sphere, z, eta, options, 1.0);
+        const double h = 1e-6 * t;
+        const double dphi = (phi(e_sphere, t + h) - phi(e_sphere, t - h)) / (2 * h);
+        const bool at_cap = std::isfinite(cap) && std::abs(t - cap) <= 1e-14 * cap;
+        const bool descent = phi(e_sphere, t) < E0;
+        report.check(t > 0 && descent && (at_cap || std::abs(dphi) <= 1e-6 * std::abs(dphi0)),
+                     std::string("caps: e-path ") + (kind == TestPosSphere::Kind::E ? "without cap" : "with growth cap")
+                         + ", descent and a root of phi' (or at the cap)",
+                     "t " + sci(t) + (std::isfinite(cap) ? ", t/cap " + sci(t / cap) : std::string(", no cap"))
+                         + ", |phi'(t)|/|phi'(0)| " + sci(std::abs(dphi / dphi0)));
+    }
+}
+
 } // namespace
 
 
@@ -533,5 +819,7 @@ int main()
         check_e_retraction(report, p);
         check_supporting_identity(report, p);
         check_descent(report, p);
+        check_exact_line_search(report, p);
+        check_exact_caps(report, p);
     });
 }
