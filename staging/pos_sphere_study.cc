@@ -33,6 +33,12 @@
  * - `floor-cont`: the clamped retraction without option A, with a floor that decreases with the residual,
  *   floor_k = max(1e-150, min(floor_{k-1}, --floor-factor * r_k)), a continuation towards floor 0
  *   (positive_floor-cont);
+ * - `norm-cap`: the normalization retraction on the positive sphere with the positivity cap
+ *   h <= theta min_{v_i<0} x_i / |v_i| (NormPosSphere, positive_norm-cap_theta<theta>); with --ls-exact the
+ *   closed-form ray step, capped;
+ * - `floor-cont-cap`: the continuation with option A over the nodes above 10 floor, as `floor`
+ *   (positive_floor-cont-cap_theta<theta>); with --ls-exact the variants without cap have no exact step, since the
+ *   energy along the clamped curve can decrease towards t -> infinity;
  * - `e`: the e-retraction x_i' = c x_i exp(h v_i / x_i) (ellipsoid_positive::retract_by_e(), the e-geodesic of the
  *   densities), defined for every step, so without step limit (positive_e);
  * - `e-cap`: the e-retraction with the step limit 1 / max_i |v_i| / x_i and option A, so that no component changes by
@@ -159,6 +165,25 @@ public:
         return h_max;
     }
 
+    //! retract() of t v with its velocity: clamped components do not move (exact line search)
+    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
+                          Vector<double>& y, Vector<double>& y_dot) const override
+    {
+        y.reinit(x.size(), true);
+        y_dot.reinit(x.size(), true);
+        for (unsigned i = 0; i < x.size(); ++i) {
+            const double q = x[i] * x[i] + 2 * t * x[i] * v[i];
+            y[i] = std::sqrt(std::max(q, floor * floor));
+            y_dot[i] = q > floor * floor ? x[i] * v[i] / y[i] : 0.0;
+        }
+        ellipsoid::normalize_with_velocity(D, y, y_dot);
+    }
+
+    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        return ellipsoid::mass_inner(D, y, z);
+    }
+
     void retract_inv(Vector<double>& v, const Vector<double>& x) const override
     {
         ellipsoid_positive::retract_inv_by_density(v, x);
@@ -210,6 +235,17 @@ public:
         return 1 / rate;
     }
 
+    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
+                          Vector<double>& y, Vector<double>& y_dot) const override
+    {
+        ellipsoid_positive::retract_velocity_by_e(D, x, v, t, y, y_dot);
+    }
+
+    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        return ellipsoid::mass_inner(D, y, z);
+    }
+
     void retract_inv(Vector<double>& v, const Vector<double>& x) const override
     {
         ellipsoid_positive::retract_inv_by_e(D, v, x);
@@ -227,6 +263,59 @@ private:
     ExpCap cap;
 };
 
+
+//! Positive sphere with the normalization retraction (x + h v) / |x + h v|_D and the positivity cap
+//! h <= theta min_{v_i < 0} x_i / |v_i| (twice the step limit of the density retraction): the unit sphere restricted to
+//! the positive orthant, with the closed-form exact step of the ray (OracleBase::ray_step(), capped).
+class NormPosSphere : public ManifoldBase
+{
+public:
+    explicit NormPosSphere(const MassMatrix& D) : D(D) {}
+
+    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
+    {
+        ellipsoid::retract_by_norm(D, z, x, factor);
+    }
+
+    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
+    {
+        output = x;
+        retract(z, output, factor);
+    }
+
+    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
+    {
+        return 2 * ellipsoid_positive::max_step(x, v);
+    }
+
+    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
+                          Vector<double>& y, Vector<double>& y_dot) const override
+    {
+        ellipsoid::retract_velocity_by_norm(D, x, v, t, y, y_dot);
+    }
+
+    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        return ellipsoid::mass_inner(D, y, z);
+    }
+
+    [[nodiscard]] bool retracts_by_normalization() const override { return true; }
+
+    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
+    {
+        ellipsoid::retract_inv_by_norm(D, v, x);
+    }
+
+    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                      Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                          Vector<double>&) const override { throw ExcNotImplemented(); }
+    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
+                                  Vector<double>&) const override { throw ExcNotImplemented(); }
+
+private:
+    const MassMatrix& D;
+};
 
 //! Unit-mass sphere with the orthographic retraction, see ellipsoid::retract_by_ortho(), then normalized against the
 //! drift of rounding errors (as PosUnitMassSphere); defined for h |v|_M < 1.
@@ -328,6 +417,7 @@ struct Variant
     bool cap;           // option A (fraction to the boundary)
     bool continuation;  // floor decreasing with the residual
     bool e = false;     // ExpPosSphere
+    bool norm = false;  // NormPosSphere
     bool ortho = false; // OrthoUnitSphere
     bool exp_map = false; // ExpMapUnitSphere
     bool growth = false;  // ExpPosSphere with ExpCap::GROWTH (with cap)
@@ -351,6 +441,7 @@ const std::vector<Variant> all_variants = {
     {.name = "floor-nocap", .clip = false, .floor = true,  .cap = false, .continuation = false},
     {.name = "clip-floor",  .clip = true,  .floor = true,  .cap = true,  .continuation = false},
     {.name = "floor-cont",  .clip = false, .floor = true,  .cap = false, .continuation = true},
+    {.name = "floor-cont-cap", .clip = false, .floor = true, .cap = true, .continuation = true},
     {.name = "e",           .clip = false, .floor = false, .cap = false, .continuation = false, .e = true},
     {.name = "e-cap",       .clip = false, .floor = false, .cap = true,  .continuation = false, .e = true},
     {.name = "clip-e",      .clip = true,  .floor = false, .cap = false, .continuation = false, .e = true},
@@ -359,6 +450,7 @@ const std::vector<Variant> all_variants = {
      .growth = true},
     {.name = "clip-e-cap-up", .clip = true, .floor = false, .cap = true, .continuation = false, .e = true,
      .growth = true},
+    {.name = "norm-cap",    .clip = false, .floor = false, .cap = true,  .continuation = false, .norm = true},
     {.name = "ortho",       .clip = false, .floor = false, .cap = true,  .continuation = false, .ortho = true},
     {.name = "exp",         .clip = false, .floor = false, .cap = false, .continuation = false, .exp_map = true},
 };
@@ -632,9 +724,11 @@ void study(const StudyOptions& opts)
     const FlooredPosSphere floored(context.get_M(), opts.floor, true);
     const FlooredPosSphere floored_nocap(context.get_M(), opts.floor, false);
     const FlooredPosSphere floored_cont(context.get_M(), opts.floor, false);
+    const FlooredPosSphere floored_cont_cap(context.get_M(), opts.floor, true);
     const ExpPosSphere exp_positive(context.get_M(), ExpCap::NONE);
     const ExpPosSphere exp_positive_cap(context.get_M(), ExpCap::TWO_SIDED);
     const ExpPosSphere exp_positive_growth(context.get_M(), ExpCap::GROWTH);
+    const NormPosSphere norm_positive(context.get_M());
     const OrthoUnitSphere ortho(context.get_M());
     const ExpMapUnitSphere exp_map(context.get_M());
     for (const Variant& variant : opts.variants) {
@@ -642,9 +736,12 @@ void study(const StudyOptions& opts)
         const ManifoldBase& manifold = variant.growth        ? static_cast<const ManifoldBase&>(exp_positive_growth)
                                      : variant.e && variant.cap ? static_cast<const ManifoldBase&>(exp_positive_cap)
                                      : variant.e             ? static_cast<const ManifoldBase&>(exp_positive)
+                                     : variant.norm          ? static_cast<const ManifoldBase&>(norm_positive)
                                      : variant.ortho         ? static_cast<const ManifoldBase&>(ortho)
                                      : variant.exp_map       ? static_cast<const ManifoldBase&>(exp_map)
                                      : !variant.floor        ? static_cast<const ManifoldBase&>(positive)
+                                     : variant.continuation && variant.cap
+                                                             ? static_cast<const ManifoldBase&>(floored_cont_cap)
                                      : variant.continuation  ? static_cast<const ManifoldBase&>(floored_cont)
                                      : variant.cap           ? static_cast<const ManifoldBase&>(floored)
                                                              : static_cast<const ManifoldBase&>(floored_nocap);
@@ -654,7 +751,10 @@ void study(const StudyOptions& opts)
             const std::string name = variant.case_name(theta);
             results.push_back(run_case(name, theta, manifold, context.get_M(), variant_oracle, x0, opts.descent,
                                        opts.out, x, x1, opts.metric_smooth,
-                                       variant.continuation ? &floored_cont : nullptr, opts.floor_factor));
+                                       !variant.continuation ? nullptr
+                                       : variant.cap         ? &floored_cont_cap
+                                                             : &floored_cont,
+                                       opts.floor_factor));
             first.emplace_back(name, x1);
         }
     }
@@ -677,7 +777,7 @@ void study(const StudyOptions& opts)
     if (header) {
         csv << "mesh,degree,n_pos_offdiag,max_pos_ratio,"
                "level,n_dofs,radius,beta,metric,line_search,step_size,tol_inner_res,floor,case,theta,iterations,"
-               "converged,failed,residual,energy,energy_diff,min_value,n_capped,tau_max0,elapsed,free_residual,nu_min,n_active,ls_reference,ls_initial\n";
+               "converged,failed,residual,energy,energy_diff,min_value,n_capped,tau_max0,elapsed,free_residual,nu_min,n_active,ls_reference,ls_initial,ls_exact\n";
     }
     const double E_unit = results.front().energy;
     const double tau_max0 = ellipsoid_positive::max_step(x0, eta0);
@@ -696,7 +796,7 @@ void study(const StudyOptions& opts)
             << num(r.energy) << ',' << num(std::abs(r.energy - E_unit)) << ',' << num(r.min_value) << ','
             << r.n_capped << ',' << num(tau_max0) << ',' << num(r.elapsed) << ',' << num(r.kkt.free_residual) << ','
             << num(r.kkt.nu_min) << ',' << r.kkt.n_active << ',' << enum_to_string(opts.descent.ls.reference) << ','
-            << enum_to_string(opts.descent.ls.initial) << '\n';
+            << enum_to_string(opts.descent.ls.initial) << ',' << opts.descent.ls.exact << '\n';
         std::cout << fmt::format("  {:24s} {:5d} iterations  {:9s}  residual {:.2e}  E {:.12f}  min {:.2e}  "
                                  "capped {:3d}  {:.2f} s  free res {:.1e}  nu_min {:.1e} ({} active)\n", r.name, r.iterations,
                                  r.failed ? "FAILED" : (r.converged ? "converged" : "stopped"), r.residual,
