@@ -45,6 +45,26 @@ public:
         return std::numeric_limits<double>::infinity();
     }
 
+    //! Point \f$ y = R_x(t v) \f$ and velocity \f$ \dot y = \frac{d}{dt} R_x(t v) \f$, as computed by retract();
+    //! used by the exact line search. Not implemented by default.
+    virtual void retract_velocity(const Vector<double>& /*x*/, const Vector<double>& /*v*/, double /*t*/,
+                                  Vector<double>& /*y*/, Vector<double>& /*y_dot*/) const
+    {
+        throw dealii::ExcNotImplemented("retract_velocity");
+    }
+
+    //! \f$ y^\top M z \f$ for a manifold \f$ \{ y : y^\top M y = 1 \} \f$, 0 for a manifold without such a constraint.
+    //! The exact line search subtracts \f$ \lambda(y)\, y^\top M \dot y \f$ from the directional derivative, which
+    //! removes the rounding error of the normal component of \f$ \dot y \f$.
+    [[nodiscard]] virtual double constraint_inner(const Vector<double>& /*y*/, const Vector<double>& /*z*/) const
+    {
+        return 0.0;
+    }
+
+    //! Whether retract() is the normalization \f$ (x + t v) / \|x + t v\|_M \f$; then OracleBase::ray_step() may give
+    //! the exact step in closed form.
+    [[nodiscard]] virtual bool retracts_by_normalization() const { return false; }
+
     //! \f$ v \leftarrow R_x^{-1}(v) \f$
     virtual void retract_inv(Vector<double>& v, const Vector<double>& x) const = 0;
 

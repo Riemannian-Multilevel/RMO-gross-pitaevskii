@@ -66,6 +66,43 @@ void retract_by_norm(const MatrixType& M, Vector<double>& x)
     x /= std::sqrt(x * Mx);
 }
 
+/** @brief \f$ y^\top M z \f$ for any matrix type with `vmult`. */
+template <typename MatrixType>
+double mass_inner(const MatrixType& M, const Vector<double>& y, const Vector<double>& z)
+{
+    Vector<double> Mz(z.size());
+    M.vmult(Mz, z);
+    return y * Mz;
+}
+
+/**
+ * @brief Normalization of a curve with its velocity: on input \f$ y = \hat y(t) \f$ and \f$ \dot y = \hat y'(t) \f$, on
+ * output \f$ y = \hat y / n \f$ and \f$ \dot y = \hat y' / n - (y^\top M \hat y' / n)\, y \f$ with
+ * \f$ n = \|\hat y\|_M \f$, the derivative of \f$ \hat y(t) / \|\hat y(t)\|_M \f$.
+ */
+template <typename MatrixType>
+void normalize_with_velocity(const MatrixType& M, Vector<double>& y, Vector<double>& y_dot)
+{
+    Vector<double> My(y.size());
+    M.vmult(My, y);
+    const double n = std::sqrt(y * My);
+    y /= n;
+    y_dot /= n;
+    My /= n;
+    y_dot.add(-(My * y_dot), y);
+}
+
+/** @brief retract_by_norm() of \f$ t v \f$ with its velocity: \f$ \hat y = x + t v \f$, \f$ \hat y' = v \f$, normalized. */
+template <typename MatrixType>
+void retract_velocity_by_norm(const MatrixType& M, const Vector<double>& x, const Vector<double>& v, const double t,
+                              Vector<double>& y, Vector<double>& y_dot)
+{
+    y = x;
+    y.add(t, v);
+    y_dot = v;
+    normalize_with_velocity(M, y, y_dot);
+}
+
 /** @brief Inverse of retract_by_norm() for \f$ v \in \mathcal{S} \f$: \f$ v \leftarrow v / (x^\top M v) - x \f$. */
 template <typename MatrixType>
 void retract_inv_by_norm(const MatrixType& M, Vector<double>& v, const Vector<double>& x)
@@ -454,6 +491,59 @@ void retract_inv_by_e(const MatrixType& D, Vector<double>& v, const Vector<doubl
     }
 }
 
+/**
+ * @brief Density retraction of \f$ t v \f$ followed by the normalization (as PosUnitMassSphere::retract()), with its
+ * velocity: \f$ \hat y_i = \sqrt{x_i^2 + 2 t x_i v_i} \f$, \f$ \hat y_i' = x_i v_i / \hat y_i \f$.
+ */
+template <typename MatrixType>
+void retract_velocity_by_density(const MatrixType& D, const Vector<double>& x, const Vector<double>& v, const double t,
+                                 Vector<double>& y, Vector<double>& y_dot)
+{
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+    y.reinit(n, true);
+    y_dot.reinit(n, true);
+    for (unsigned i = 0; i < n; i++) {
+        const double q = x[i] * x[i] + 2 * t * x[i] * v[i];
+        AssertThrow(q > 0, dealii::ExcMessage("Retraction is undefined"));
+        y[i] = std::sqrt(q);
+        y_dot[i] = x[i] * v[i] / y[i];
+    }
+    ellipsoid::normalize_with_velocity(D, y, y_dot);
+}
+
+/**
+ * @brief retract_by_e() of \f$ t v \f$ with its velocity: \f$ \hat y = x e^{t w} \f$, \f$ w = v / x \f$, scaled by
+ * \f$ e^{-\max_i s_i} \f$ (\f$ s_i = \log x_i + t w_i \f$), \f$ \hat y' = \hat y w \f$, normalized; components raised to
+ * the smallest normal number have velocity 0.
+ */
+template <typename MatrixType>
+void retract_velocity_by_e(const MatrixType& D, const Vector<double>& x, const Vector<double>& v, const double t,
+                           Vector<double>& y, Vector<double>& y_dot)
+{
+    const unsigned n = x.size();
+    AssertDimension(n, v.size());
+    y.reinit(n, true);
+    y_dot.reinit(n, true);
+    double s_max = -std::numeric_limits<double>::infinity();
+    for (unsigned i = 0; i < n; i++) {
+        y[i] = std::log(x[i]) + t * v[i] / x[i];
+        s_max = std::max(s_max, y[i]);
+    }
+    AssertThrow(std::isfinite(s_max), dealii::ExcMessage("e-retraction: exponent not finite"));
+    for (unsigned i = 0; i < n; i++) {
+        y[i] = std::exp(y[i] - s_max);
+        y_dot[i] = y[i] * v[i] / x[i];
+    }
+    ellipsoid::normalize_with_velocity(D, y, y_dot);
+    for (unsigned i = 0; i < n; i++) {
+        if (y[i] < std::numeric_limits<double>::min()) {
+            y[i] = std::numeric_limits<double>::min();
+            y_dot[i] = 0.0;
+        }
+    }
+}
+
 } // namespace ellipsoid_positive
 
 
@@ -481,6 +571,19 @@ public:
     {
         ellipsoid::retract_diff_by_norm(M, x, v, w, output);
     }
+
+    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
+                          Vector<double>& y, Vector<double>& y_dot) const override
+    {
+        ellipsoid::retract_velocity_by_norm(M, x, v, t, y, y_dot);
+    }
+
+    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        return ellipsoid::mass_inner(M, y, z);
+    }
+
+    [[nodiscard]] bool retracts_by_normalization() const override { return true; }
 
     void retract_inv(Vector<double>& v, const Vector<double>& x) const override
     {
@@ -551,6 +654,18 @@ public:
     [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
     {
         return ellipsoid_positive::max_step(x, v);
+    }
+
+    /** @brief retract() of \f$ t v \f$ with its velocity, see ellipsoid_positive::retract_velocity_by_density(). */
+    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
+                          Vector<double>& y, Vector<double>& y_dot) const override
+    {
+        ellipsoid_positive::retract_velocity_by_density(D, x, v, t, y, y_dot);
+    }
+
+    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
+    {
+        return ellipsoid::mass_inner(D, y, z);
     }
 
     /** @brief Lifting, see ellipsoid_positive::retract_inv_by_density(). */
