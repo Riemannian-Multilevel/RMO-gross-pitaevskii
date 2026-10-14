@@ -104,8 +104,15 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
 {
     double step_size = options_gd.step_size;
 
-    // Update point (fixed step or line search)
-    if (options_gd.line_search) {
+    // Update point (fixed step, exact line search or Armijo line search)
+    if (options_gd.line_search && options_gd.ls.exact) {
+        // Starts the bracket at options_gd.ls.alpha (GradientDescent passes the previous step)
+        step_size = exact_line_search(O_fine, manifold, x, eta, options_gd, options_gd.ls.alpha);
+        if (step_size == 0.0) {
+            std::cerr << "  -> Step rejected by exact line search (not a descent direction, or no descent)." << '\n';
+        }
+    }
+    else if (options_gd.line_search) {
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
 #endif
@@ -218,6 +225,7 @@ public:
         NonmonotoneReference reference(options_gd.ls);
         BarzilaiBorwein bb(options_gd.ls);
         reference.add(energy);
+        double previous_step = 0.0;
 
         // Execute gradient descent iterations
         for (unsigned i = 1; i <= options_gd.max_iter; i++) {
@@ -231,8 +239,12 @@ public:
 
             double dir_deriv = O_fine.directional_derivative(x, dk);
 
-            // Starting step of the line search (step size without line search)
+            // Starting step of the line search (step size without line search); the exact line search starts its
+            // bracket at the previous step
             DescentOptions options_step = options_gd;
+            if (options_gd.line_search && options_gd.ls.exact && previous_step > 0) {
+                options_step.ls.alpha = previous_step;
+            }
             if (barzilai_borwein) {
                 double& alpha = options_gd.line_search ? options_step.ls.alpha : options_step.step_size;
                 alpha = bb.step(x, x_grad, O_fine.metric(), alpha);
@@ -242,6 +254,7 @@ public:
             // -> runs OracleBase::update()
             CycleInfo info = cycle_smooth(O_fine, manifold, x, dk, dir_deriv, timer, options_step,
                                           nonmonotone ? reference.value() : std::numeric_limits<double>::quiet_NaN());
+            previous_step  = info.step;
             info.iter      = i;
             info.coarse    = false;
             info.lac_iter  = info_grad.num_iter;

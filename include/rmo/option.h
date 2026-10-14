@@ -155,7 +155,13 @@ inline po::options_description descent_cli_options() {
         ("ls-bb-min", po::value<double>()->default_value(1e-10),
             "smallest Barzilai-Borwein step size")
         ("ls-bb-max", po::value<double>()->default_value(1e10),
-            "largest Barzilai-Borwein step size");
+            "largest Barzilai-Borwein step size")
+        ("ls-exact", po::value<bool>()->default_value(false)->implicit_value(true),
+            "exact line search (with --line-search): first local minimizer of the energy along the retraction, "
+            "found from its derivative; closed form on the normalization ray of a lumped problem; "
+            "single-level descent only")
+        ("ls-exact-tol", po::value<double>()->default_value(1e-10),
+            "relative tolerance of the exact line search");
     return d;
 }
 
@@ -179,6 +185,11 @@ inline void apply_descent_options(const po::variables_map& vm, DescentOptions& o
     options_rgd.ls.initial   = string_to_enum<InitialStep>(upper(vm["ls-initial"].as<std::string>()));
     options_rgd.ls.bb_min    = vm["ls-bb-min"].as<double>();
     options_rgd.ls.bb_max    = vm["ls-bb-max"].as<double>();
+    options_rgd.ls.exact     = vm["ls-exact"].as<bool>();
+    options_rgd.ls.exact_tol = vm["ls-exact-tol"].as<double>();
+    if (options_rgd.ls.exact && !options_rgd.line_search) {
+        throw std::invalid_argument("--ls-exact requires --line-search");
+    }
     if (options_rgd.ls.memory == 0) {
         throw std::invalid_argument("--ls-memory must be positive");
     }

@@ -114,6 +114,11 @@ struct DescentOptions
         InitialStep initial = InitialStep::FIXED;  // starting step size (or fixed step size without line search)
         double bb_min = 1e-10;    // safeguards of the Barzilai-Borwein step size
         double bb_max = 1e10;
+
+        // Exact line search (GradientDescent only): first local minimizer of f(R_x(t eta)), see exact_line_search();
+        // max_iter bounds the number of derivative evaluations
+        bool exact = false;
+        double exact_tol = 1e-10; // relative tolerance of the derivative and of the bracket
     } ls;
 };
 

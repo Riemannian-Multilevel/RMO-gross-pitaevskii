@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <limits>
 
 /**
  * @file
@@ -102,6 +103,136 @@ double armijo_line_search(OracleType& oracle,
               << options.ls.max_iter << ")." << std::endl;
     // No step accepted: x and the oracle state are unchanged. Returning 0 (not options.ls.min) lets callers
     // detect the stalled search, see cycle_smooth() and GradientDescent::cycle().
+    return 0.0;
+}
+
+
+/**
+ * @brief Exact line search for @p oracle along @p eta at @p x (tex/exact_line_search.tex, Section 7): a root of
+ * \f$ \varphi'(t) \f$, \f$ \varphi(t) = f(R_x(t \eta)) \f$, on \f$ (0, \theta h_{\max}] \f$, or \f$ \theta h_{\max} \f$ if
+ * \f$ \varphi' < 0 \f$ there; \f$ h_{\max} \f$ is ManifoldBase::max_step() and \f$ \theta \f$ options.boundary_fraction.
+ *
+ * On a manifold that retracts by normalization, OracleBase::ray_step() gives the global minimizer on
+ * \f$ [0, \theta h_{\max}] \f$ in closed form if the oracle has one (\f$ h_{\max} = \infty \f$ on the unit sphere).
+ * Otherwise a derivative-only root finder: the first sign change of \f$ \varphi' \f$ is bracketed by doubling from
+ * @p t_start up to the cap, and the root located by the Illinois variant of regula falsi (Dowell and Jarratt, BIT 11,
+ * 1971), until \f$ |\varphi'(t)| \le \max(\epsilon |\varphi'(0)|, \delta_g) \f$, the bracket is shorter than
+ * \f$ \epsilon \f$ times its right end (\f$ \epsilon \f$ = options.ls.exact_tol), or options.ls.max_iter evaluations.
+ * \f$ \varphi' \f$ is evaluated from ManifoldBase::retract_velocity() as
+ * \f$ \nabla f(y)^\top \dot y - \lambda(y)\, y^\top M \dot y \f$, \f$ \lambda(y) = \nabla f(y)^\top y / y^\top M y \f$
+ * (ManifoldBase::constraint_inner()); the subtraction removes the rounding error of the normal component of
+ * \f$ \dot y \f$, which otherwise dominates \f$ \varphi'(0) \f$ once the residual is below about \f$ 10^{-8} \f$.
+ * \f$ \delta_g = 10 \epsilon_{\mathrm{mach}} |\lambda(y)| \|y\|_M \|\dot y\|_M \f$ is the rounding level of
+ * \f$ \varphi' \f$; near a solution it exceeds \f$ \epsilon |\varphi'(0)| = O(\epsilon\, \mathrm{res}^2) \f$. The only
+ * function value is a final descent check: if \f$ \varphi(t) > \varphi(0) + \delta \f$,
+ * \f$ \delta = 10 \epsilon_{\mathrm{mach}} \max(1, |\varphi(0)|) \f$ (a minimizer passed between two doubling steps),
+ * \f$ t \f$ is halved until \f$ \varphi \f$ descends.
+ *
+ * @return The step size taken; then @p x and the oracle are at the new point. 0 if \f$ \varphi'(0) \ge 0 \f$ or no
+ * halving descended; then @p x and the oracle are unchanged.
+ */
+template <typename VectorType, typename OracleType>
+double exact_line_search(OracleType& oracle,
+                         const ManifoldBase& manifold,
+                         VectorType& x,
+                         const VectorType& eta,
+                         const DescentOptions& options,
+                         const double t_start)
+{
+    const double t_cap = capped_step(manifold, x, eta, std::numeric_limits<double>::infinity(), options);
+    if (manifold.retracts_by_normalization()) {
+        // Closed form on [0, theta max_step] (positivity cap of a positive sphere; infinite on the unit sphere)
+        if (const auto t = oracle.ray_step(x, eta, t_cap)) {
+            if (*t > 0) {
+                manifold.retract(eta, x, *t);
+                oracle.update(x);
+            }
+            return *t;
+        }
+    }
+
+    struct Derivative { double g, noise; };
+    Vector<double> y(x.size()), y_dot(x.size());
+    unsigned evals = 0;
+    // phi'(t) and its rounding level; leaves the oracle at R_x(t eta)
+    const auto dphi = [&](const double t) {
+        ++evals;
+        manifold.retract_velocity(x, eta, t, y, y_dot);
+        oracle.update(y);
+        const double yMy = manifold.constraint_inner(y, y);
+        double g = oracle.directional_derivative(y, y_dot);
+        double noise = 0;
+        if (yMy > 0) {
+            const double lambda = oracle.directional_derivative(y, y) / yMy;
+            g -= lambda * manifold.constraint_inner(y, y_dot);
+            noise = 10.0 * std::numeric_limits<double>::epsilon() * std::abs(lambda)
+                  * std::sqrt(yMy * std::max(0.0, manifold.constraint_inner(y_dot, y_dot)));
+        }
+        return Derivative{g, noise};
+    };
+
+    const double f0 = oracle.value(x);  // the oracle is at x
+    const Derivative d0 = dphi(0.0);
+    if (!(d0.g < 0)) {
+        oracle.update(x);
+        return 0.0;
+    }
+    const double eps = options.ls.exact_tol;
+    const unsigned max_evals = std::max(2u, options.ls.max_iter);
+    const auto root = [&](const Derivative& d) { return std::abs(d.g) <= std::max(eps * std::abs(d0.g), d.noise); };
+
+    // Bracket the first sign change of phi' by doubling, up to the cap
+    double a = 0.0, ga = d0.g;
+    double t = std::min(t_start, t_cap);
+    Derivative d = dphi(t);
+    while (d.g < 0 && !root(d) && t < t_cap && evals < max_evals) {
+        a = t;
+        ga = d.g;
+        t = std::min(2 * t, t_cap);
+        d = dphi(t);
+    }
+
+    // Illinois method on [a, b] with phi'(a) < 0 <= phi'(b)
+    if (!(d.g < 0) && !root(d)) {
+        double b = t, gb = std::isfinite(d.g) ? d.g : std::abs(ga) * 1e3;
+        int side = 0;
+        while (!root(d) && b - a > eps * b && evals < max_evals) {
+            t = (a * gb - b * ga) / (gb - ga);
+            if (!(t > a && t < b)) {
+                t = 0.5 * (a + b);
+            }
+            d = dphi(t);
+            if (d.g < 0) {
+                a = t;
+                ga = d.g;
+                if (side == -1) {
+                    gb *= 0.5;  // the same end retained twice: halve its value (Illinois)
+                }
+                side = -1;
+            }
+            else {
+                b = t;
+                gb = std::isfinite(d.g) ? d.g : std::abs(ga) * 1e3;
+                if (side == +1) {
+                    ga *= 0.5;
+                }
+                side = +1;
+            }
+        }
+    }
+
+    // Descent check: halve the step until phi(t) <= phi(0) + delta
+    const double delta = 10.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::abs(f0));
+    Vector<double> x_new(x.size());
+    for (unsigned k = 0; k < 60; ++k, t *= 0.5) {
+        manifold.retract(eta, x, x_new, t);
+        oracle.update(x_new);
+        if (oracle.value(x_new) <= f0 + delta) {
+            x = x_new;
+            return t;
+        }
+    }
+    oracle.update(x);
     return 0.0;
 }
 
