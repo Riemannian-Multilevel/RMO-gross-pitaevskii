@@ -11,6 +11,7 @@ study_init "$@"
 common=("${COMMON[@]}" --thetas 0.99)
 declare -A metric=(
     [ea]="--metric-smooth energy_adaptive --variants plain,clip,floor,floor-nocap,clip-floor,floor-cont"
+    [ea-armijo]="--metric-smooth energy_adaptive ${LINE_SEARCH[*]} --ls-alpha 1 --variants plain,clip,floor,floor-nocap,clip-floor,floor-cont"
     [mass]="--metric-smooth mass ${LINE_SEARCH[*]} --ls-alpha 1 --variants plain,floor,floor-nocap,floor-cont"
     [frobenius]="--metric-smooth frobenius ${LINE_SEARCH[*]} --ls-alpha 1 --variants plain,floor,floor-nocap,floor-cont"
 )
