@@ -18,3 +18,4 @@ build-*/
 .#*
 # Notes and reports (kept locally)
 tex/
+build*/
