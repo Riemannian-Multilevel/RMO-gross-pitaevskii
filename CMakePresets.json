@@ -2,25 +2,35 @@
   "version": 6,
   "configurePresets": [
     {
-      "name": "base",
-      "hidden": true,
-      "generator": "Ninja",
+      "name": "mac-base",
+            "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
-      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": ":ON",
+        "deal.II_DIR": "/Applications/deal.II.app/Contents/Resources/Libraries/lib/cmake/deal.II",
+        "Boost_DIR": "/Applications/deal.II.app/Contents/Resources/Libraries/lib/cmake/Boost-1.83.0"
+      }
     },
-    { "name": "debug", "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
-    { "name": "release", "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+    {
+      "name": "mac-debug",
+      "inherits": "mac-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "mac-release",
+      "inherits": "mac-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
   ],
   "buildPresets": [
-    { "name": "debug", "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" }
+    { "name": "mac-debug", "configurePreset": "mac-debug" },
+    { "name": "mac-release", "configurePreset": "mac-release" }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug",
+    { "name": "mac-debug", "configurePreset": "mac-debug",
       "output": { "outputOnFailure": true } },
-    { "name": "release", "configurePreset": "release",
+    { "name": "mac-release", "configurePreset": "mac-release",
       "output": { "outputOnFailure": true } }
   ]
 }
