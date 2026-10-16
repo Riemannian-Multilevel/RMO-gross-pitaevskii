@@ -6,7 +6,6 @@
 #define SOLVER_MAX_TOL 1e-2
 
 #include "option_types.h"
-#include "lac_traits.h"
 #include <type_traits>
 #include <utility>
 #include <variant>
