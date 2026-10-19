@@ -77,27 +77,33 @@ def label_all(v):
     return f"{metric}, {rule if rule != '1' else 'τ=1'}, {RETRACTION_LETTER[family]}: {variant}"
 
 
-def plot_all(path, cost, problems, title):
+def plot_all(path, cost, problems, title, metric=None):
     """One profile over all metrics: the best version per (metric, rule, retraction), without the exact step on
     the normalization retractions (unit, norm+cap); ratios to the best version among those; legend outside. Colour:
     retraction, shaded by metric; line style: step rule; marker: metric. The versions with the largest area under rho
-    are drawn on top; tau ends at the first of 10, 20, 50, ... above 1.3 times the largest finite ratio."""
+    are drawn on top; tau ends at the first of 10, 20, 50, ... above 1.3 times the largest finite ratio.
+
+    With @p metric, only the versions of that metric are drawn, with the ratios and the tau range of the profile
+    over all metrics, so that the profiles of the metrics are comparable."""
     kept = {v: c for v, c in cost.items() if not (v[1] == "exact" and v[2] in ("unit", "norm"))}
     r = ratios(kept, problems)
     versions = representatives(r, lambda v: (v[0], v[1], v[2]))
     versions.sort(key=lambda v: (METRICS.index(v[0]), RULES.index(v[1]), list(FAMILY_COLOR).index(v[2])))
     finite = [x for v in versions for x in r[v] if math.isfinite(x)]
+    if metric is not None:
+        versions = [v for v in versions if v[0] == metric]
     tau_max = next(t for t in [10, 20, 50, 100, 200, 500, 1000, math.inf] if t >= 1.3 * max(finite, default=1))
     tau_max = min(tau_max, 1000)
     taus = np.logspace(0, math.log10(tau_max), 601)
     area = {v: np.trapezoid([rho(r[v], t) for t in taus], np.log10(taus)) for v in versions}
     z = {v: 2 + k for k, v in enumerate(sorted(versions, key=lambda v: area[v]))}
-    fig, ax = plt.subplots(figsize=(7.6, 4.6), layout="constrained")
+    fig, ax = plt.subplots(figsize=(7.6, 4.6) if metric is None else (6.6, 4.0), layout="constrained")
     for v in versions:
-        metric, rule, family, name = v
-        ax.step(taus, [rho(r[v], t) for t in taus], where="post", color=SHADES[family][metric],
-                ls=RULE_STYLE[rule], lw=1.4, marker=METRIC_MARKER[metric], markersize=3.5,
-                markevery=(0.015 + 0.025 * METRICS.index(metric), 0.075), zorder=z[v], label=label_all(v))
+        m, rule, family, name = v
+        ax.step(taus, [rho(r[v], t) for t in taus], where="post",
+                color=SHADES[family][m if metric is None else "EA"],
+                ls=RULE_STYLE[rule], lw=1.4, marker=METRIC_MARKER[m], markersize=3.5,
+                markevery=(0.015 + 0.025 * METRICS.index(m), 0.075), zorder=z[v], label=label_all(v))
     ax.set_xscale("log")
     ax.set_xlim(1, tau_max)
     ticks = [t for t in [1, 1.5, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000] if t <= tau_max]
