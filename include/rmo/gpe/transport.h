@@ -6,6 +6,8 @@
 
 #include <rmo/ropt/transport.h>
 
+#include <type_traits>
+
 /**
  * @file
  * @brief Transfers between the fine and coarse unit-mass spheres \f$ \mathcal{S}_h \f$, \f$ \mathcal{S}_H \f$: the point
@@ -30,14 +32,21 @@
  * - FrobeniusAdjointDifferentialTransport: \f$ \mathcal{P} v = \Pi^F_x \mathrm{D}p(y)[v] \f$,
  *   \f$ \mathcal{R} v = \frac1n \Pi^F_y (I_H^h)^\top \big( v - \frac{\tilde y^\top v}{n^2} M_h \tilde y \big) \f$.
  *
+ * The restriction of AdjointDifferentialTransport is ManifoldTransferBase::diff_prolongation_adjoint() of the point
+ * transfer (ManifoldTransfer with the inverse coarse mass matrix).
+ *
  * For the differential transports, \f$ \mathcal{R} \f$ is not the adjoint of \f$ \mathcal{P} \f$: both are
  * differentials of independent point maps.
  */
 namespace rmo::gpe
 {
 
-/** @brief Point maps \f$ r \f$, \f$ p \f$ between the spheres and their differentials (metric-independent). */
-template <typename MatrixType>
+/**
+ * @brief Point maps \f$ r \f$, \f$ p \f$ between the spheres and their differentials (metric-independent). With the
+ * inverse coarse mass matrix @p M_inv_coarse (type InverseMatrixType), also the \f$ M \f$-adjoint of the differential of
+ * \f$ p \f$, see diff_prolongation_adjoint().
+ */
+template <typename MatrixType, typename InverseMatrixType = void>
 class ManifoldTransfer : public ManifoldTransferBase
 {
 public:
@@ -45,6 +54,15 @@ public:
                      const MatrixType& M_coarse,
                      const MatrixType& M_fine)
         : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    template <typename Inverse = InverseMatrixType>
+        requires (!std::is_void_v<Inverse>)
+    ManifoldTransfer(const LinearTransferBase& transfer,
+                     const MatrixType& M_coarse,
+                     const MatrixType& M_fine,
+                     const Inverse& M_inv_coarse)
+        : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine), M_inv_coarse(&M_inv_coarse)
     {}
 
     /** @brief \f$ y = r(x) = I_h^H x / \|I_h^H x\|_{M_H} \f$ */
@@ -127,9 +145,62 @@ public:
         dst /= n_h;
     }
 
+    /**
+     * @brief \f$ \mathrm{D}p(y)^* u = \frac1n M_H^{-1} (I_H^h)^\top M_h \Pi_{p(y)} u
+     * = \frac1n M_H^{-1} (I_H^h)^\top \Big( M_h u - \frac{\hat y^\top M_h u}{n^2} M_h \hat y \Big) \f$, with
+     * \f$ \hat y = I_H^h y \f$ and \f$ n = \|\hat y\|_{M_h} \f$, in the operation order of AdjointDifferentialTransport.
+     */
+    void diff_prolongation_adjoint(const Vector<double>& y_coarse, const Vector<double>& v_fine,
+                                   Vector<double>& dst) const override
+    {
+        if constexpr (std::is_void_v<InverseMatrixType>) {
+            throw dealii::ExcMessage("ManifoldTransfer: the adjoint differential needs the inverse coarse mass matrix");
+        }
+        else {
+            // Let \psi = y_coarse
+            // 1. Compute \tilde{\psi} = I_H^h \psi (Prolonged base point)
+            Vector<double> psi_tilde(transfer.n_fine());
+            transfer.to_fine_mesh(y_coarse, psi_tilde);
+
+            // 2. Compute M_h * \tilde{\psi}
+            Vector<double> M_psi_tilde(transfer.n_fine());
+            M_fine.vmult(M_psi_tilde, psi_tilde);
+
+            // 3. Compute norm squared: ||I_H^h \psi||_{M_h}^2  and inner product (I_H^h \psi)^T M_h v_fine
+            const double norm_sq = psi_tilde * M_psi_tilde;
+            const double norm    = std::sqrt(norm_sq);
+
+            Vector<double> M_v(transfer.n_fine());
+            M_fine.vmult(M_v, v_fine);
+            const double inner_prod = psi_tilde * M_v;
+
+            // 4. Evaluate M_h * [ (I - \Pi) v_fine ]
+            Vector<double> M_v_proj = M_v;
+            M_v_proj.add(-inner_prod / norm_sq, M_psi_tilde);
+
+            // 5. Apply transpose of prolongation: (I_H^h)^T [ M_h (I - \Pi) v_fine ]
+            Vector<double> IT_M_v_proj(transfer.n_coarse());
+            transfer.Tfine(M_v_proj, IT_M_v_proj);
+
+            // 6. Apply inverse coarse mass matrix: M_H^{-1} * (I_H^h)^T ...
+            //    XXX: Reset to a relative tolerance, so that restriction solve does not
+            //    inherit the absolute tolerance left by the coarse oracle's gradient()
+            //    on the shared M_inv_coarse
+            M_inv_coarse->set_tol(0.0);
+            dst.reinit(transfer.n_coarse());
+            M_inv_coarse->vmult(dst, IT_M_v_proj);
+
+            // 7. Scale by (1 / ||I_H^h \psi||_{M_h})
+            dst /= norm;
+        }
+    }
+
 private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
+    // Inverse coarse mass matrix for the adjoint (none for InverseMatrixType = void)
+    using InverseStorage = std::conditional_t<std::is_void_v<InverseMatrixType>, char, InverseMatrixType>;
+    const InverseStorage* M_inv_coarse = nullptr;
 };
 
 /** @brief Transport by linear transfer and \f$ M \f$-orthogonal projection, see the file documentation. */
@@ -417,20 +488,21 @@ protected:
 
 /** @brief Transport whose restriction is the \f$ M \f$-adjoint of the differential of \f$ p \f$. */
 template <typename MatrixType, typename InverseMatrixType>
-class AdjointDifferentialTransport : public VectorTransportBase
+class
+AdjointDifferentialTransport : public VectorTransportBase
 {
 public:
     static constexpr const char* id = "V5restr";
 
-    // ADDED: LinearTransferBase and InverseMatrixType are required to compute
-    // the adjoint restriction (transpose of I_H^h and M_H^{-1}.)
-    explicit AdjointDifferentialTransport(const LinearTransferBase& transfer,
+    // The adjoint is ManifoldTransferBase::diff_prolongation_adjoint() of the point transfer, which holds
+    // M_H^{-1}; the linear transfer and the inverse are not used, the arguments are kept for the callers
+    explicit AdjointDifferentialTransport(const LinearTransferBase& /*transfer*/,
                                           const ManifoldTransferBase& pt,
                                           const MatrixType& M_coarse,
                                           const MatrixType& M_fine,
-                                          const InverseMatrixType& M_inv_coarse)
-        : transfer(transfer), point_transfer(pt),
-          M_coarse(M_coarse), M_fine(M_fine), M_inv_coarse(M_inv_coarse)
+                                          const InverseMatrixType& /*M_inv_coarse*/)
+        : point_transfer(pt),
+          M_coarse(M_coarse), M_fine(M_fine)
     {}
 
     void vector_prolongation(const Vector<double>& y_coarse, const Vector<double>& v_coarse,
@@ -450,57 +522,26 @@ public:
         metric::mass::project_onto_tangent_space(x_fine, M_fine, D_px, dst);
     }
 
-    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& x_fine,
+    /**
+     * @brief \f$ \mathcal{R} v = \Pi_y \mathrm{D}p(y)^* v \f$, the \f$ M \f$-adjoint of vector_prolongation() on
+     * \f$ T_x \f$, from ManifoldTransferBase::diff_prolongation_adjoint() of the point transfer
+     * (ManifoldTransfer).
+     */
+    void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& /*x_fine*/,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
     {
-        // Let \psi = y_coarse
-        // 1. Compute \tilde{\psi} = I_H^h \psi (Prolonged base point)
-        Vector<double> psi_tilde(transfer.n_fine());
-        transfer.to_fine_mesh(y_coarse, psi_tilde);
+        Vector<double> w(point_transfer.n_coarse());
+        point_transfer.diff_prolongation_adjoint(y_coarse, v_fine, w);
 
-        // 2. Compute M_h * \tilde{\psi}
-        Vector<double> M_psi_tilde(transfer.n_fine());
-        M_fine.vmult(M_psi_tilde, psi_tilde);
-
-        // 3. Compute norm squared: ||I_H^h \psi||_{M_h}^2  and inner product (I_H^h \psi)^T M_h v_fine
-        const double norm_sq = psi_tilde * M_psi_tilde;
-        const double norm    = std::sqrt(norm_sq);
-
-        Vector<double> M_v(transfer.n_fine());
-        M_fine.vmult(M_v, v_fine);
-        const double inner_prod = psi_tilde * M_v;
-
-        // 4. Evaluate M_h * [ (I - \Pi) v_fine ]
-        // Equivalent to M_h v_fine - [((I_H^h \psi)^T M_h v_fine) / ||I_H^h \psi||_{M_h}^2] * (M_h I_H^h \psi)
-        Vector<double> M_v_proj = M_v;
-        M_v_proj.add(-inner_prod / norm_sq, M_psi_tilde);
-
-        // 5. Apply transpose of prolongation: (I_H^h)^T [ M_h (I - \Pi) v_fine ]
-        Vector<double> IT_M_v_proj(transfer.n_coarse());
-        transfer.Tfine(M_v_proj, IT_M_v_proj);
-
-        // 6. Apply inverse coarse mass matrix: M_H^{-1} * (I_H^h)^T ...
-        //    XXX: Reset to a relative tolerance, so that restriction solve does not
-        //    inherit the absolute tolerance left by the coarse oracle's gradient()
-        //    on the shared M_inv_coarse
-        M_inv_coarse.set_tol(0.0);
-        Vector<double> w(transfer.n_coarse());
-        M_inv_coarse.vmult(w, IT_M_v_proj);
-
-        // 7. Scale by (1 / ||I_H^h \psi||_{M_h})
-        w /= norm;
-
-        // 8. Project onto the target tangent space T_\psi S_H
+        // Project onto the target tangent space T_\psi S_H
         metric::mass::project_onto_tangent_space(y_coarse, M_coarse, w, dst);
     }
 
 private:
-    const LinearTransferBase& transfer;
     const ManifoldTransferBase& point_transfer;
 
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
-    const InverseMatrixType& M_inv_coarse;
 };
 
 
@@ -575,6 +616,7 @@ private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
 };
+
 
 } // namespace rmo::gpe
 

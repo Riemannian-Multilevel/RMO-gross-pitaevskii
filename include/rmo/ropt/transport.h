@@ -36,6 +36,13 @@ public:
         throw dealii::ExcNotImplemented("Differential not implemented for manifold transfer");
     }
 
+    //! \f$ \mathrm{dst} = \mathrm{D}p(y)^* u = M_H^{-1} \mathrm{D}p(y)^\top M_h u \f$, the \f$ M \f$-adjoint of
+    //! diff_prolongation() at @p y applied to @p u (point transfers that hold \f$ M_H^{-1} \f$)
+    virtual void diff_prolongation_adjoint(const Vector<double>&, const Vector<double>&, Vector<double>&) const
+    {
+        throw dealii::ExcNotImplemented("Adjoint differential not implemented for manifold transfer");
+    }
+
     // Dimension
     [[nodiscard]] unsigned n_fine() const { return transfer.n_fine(); }
     [[nodiscard]] unsigned n_coarse() const { return transfer.n_coarse(); }

@@ -31,8 +31,8 @@ static auto build_transfers(const DoFHandler<dim>& dofs_c, const DoFHandler<dim>
     std::shared_ptr<LinearTransferBase> transfer = std::make_shared<fe::LinearTransferMG<dim>>(
         dofs_c, dofs_f, constr_c, constr_f);
 
-    std::shared_ptr<ManifoldTransferBase> point_transfer = std::make_shared<ManifoldTransfer<Operator>>(
-        *transfer, M_c, M_f);
+    std::shared_ptr<ManifoldTransferBase> point_transfer = std::make_shared<ManifoldTransfer<Operator, InverseM>>(
+        *transfer, M_c, M_f, M_inv_c);
     std::shared_ptr<VectorTransportBase> vector_transport;
 
     // TODO: include other operators
