@@ -9,6 +9,9 @@
  *   steps beyond \f$ h_{\max} = \min_{v_i < 0} x_i / (2|v_i|) \f$ (and leaves \f$ x \f$ unchanged);
  * - lifting: tangent, inverse of the retraction in both directions, affine density curve
  *   \f$ \pi(R_x(t L_x(\hat x))) = (1-t) \pi(x) + t \pi(\hat x) \f$;
+ * - differential of the lifting (PosUnitMassSphere, FlooredPosSphere): \f$ \mathrm D L_x(\zeta)[u] = (\zeta/x) \circ u \f$
+ *   against central differences (exact up to rounding, the lifting is quadratic in \f$ \zeta \f$), the identity at
+ *   \f$ \zeta = x \f$, and the D-adjoint \f$ \langle w, \mathrm D L\, u \rangle_D = \langle \mathrm D L^* w, u \rangle_D \f$;
  * - e-retraction (ellipsoid_positive::retract_by_e()) and its inverse: \f$ R_x(0) = x \f$, positive and on the
  *   sphere for every step, \f$ \mathrm D R_x(0) = \mathrm{id} \f$, inverse in both directions, geometric curve
  *   \f$ R_x(t L_x(\hat x)) \propto x^{1-t} \hat x^t \f$ (the e-geodesic of the densities);
@@ -30,6 +33,7 @@
 
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/manifold.h>
+#include <rmo/gpe/manifold_positive.h>
 #include <rmo/gpe/oracle.h>
 #include <rmo/ropt/solver.h>
 
@@ -271,6 +275,56 @@ void check_lifting(CheckReport& report, const Problem& p)
     }
     report.check(max_error < 1e-15, "lifting: pi(R_x(t L_x(x_hat))) = (1-t) pi(x) + t pi(x_hat)",
                  "max diff " + sci(max_error));
+}
+
+//! Differential of the density lifting and its D-adjoint, for PosUnitMassSphere and FlooredPosSphere.
+void check_lifting_diff(CheckReport& report, const Problem& p)
+{
+    const MassMatrix& D = p.D();
+    const unsigned n = p.n_dofs();
+    const Points pts(D, n);
+    const Vector<double> u = make_vector(n, [](unsigned i) { return std::sin(0.71 * i + 0.3); });
+    const Vector<double> w = make_vector(n, [](unsigned i) { return std::cos(0.53 * i - 0.2); });
+
+    const PosUnitMassSphere<MassMatrix> pos_sphere(D);
+    const FlooredPosSphere<MassMatrix> floored(D, 1e-12, true);
+    const std::vector<std::pair<const ManifoldBase*, std::string>> manifolds{
+        {&pos_sphere, "PosUnitMassSphere"}, {&floored, "FlooredPosSphere"}};
+
+    for (const auto& [m, name] : manifolds) {
+        // Central difference of zeta -> L_x(zeta), with h small against min_i zeta_i / |u_i|
+        double h = std::numeric_limits<double>::infinity();
+        for (unsigned i = 0; i < n; ++i) {
+            if (u[i] != 0) {
+                h = std::min(h, pts.x_hat[i] / std::abs(u[i]));
+            }
+        }
+        h *= 1e-3;
+        Vector<double> plus(pts.x_hat), minus(pts.x_hat), dl(n);
+        plus.add(h, u);
+        minus.add(-h, u);
+        m->retract_inv(plus, pts.x);
+        m->retract_inv(minus, pts.x);
+        plus -= minus;
+        plus /= 2 * h;
+        m->retract_inv_diff(pts.x, pts.x_hat, u, dl);
+        plus -= dl;
+        const double fd_error = plus.linfty_norm() / dl.linfty_norm();
+        report.check(fd_error < 1e-9, name + ": D L_x(zeta)[u] = (zeta/x) u (central differences)",
+                     "relative error " + sci(fd_error));
+
+        m->retract_inv_diff(pts.x, pts.x, u, dl);
+        dl -= u;
+        report.check(dl.linfty_norm() < 1e-15 * u.linfty_norm(), name + ": D L_x(x) = id",
+                     "max diff " + sci(dl.linfty_norm()));
+
+        Vector<double> dl_u(n), dl_adj_w(n);
+        m->retract_inv_diff(pts.x, pts.x_hat, u, dl_u);
+        m->retract_inv_diff_adjoint(pts.x, pts.x_hat, w, dl_adj_w);
+        const double lhs = d_inner(D, w, dl_u), rhs = d_inner(D, dl_adj_w, u);
+        const double adj_error = std::abs(lhs - rhs) / std::abs(lhs);
+        report.check(adj_error < 1e-13, name + ": <w, D L u>_D = <D L^* w, u>_D", "relative error " + sci(adj_error));
+    }
 }
 
 //! e-retraction and its inverse: retraction for every step, geometric curve x(t) ~ x^(1-t) x_hat^t.
@@ -816,6 +870,7 @@ int main()
         check_density_map(report, p);
         check_retraction(report, p);
         check_lifting(report, p);
+        check_lifting_diff(report, p);
         check_e_retraction(report, p);
         check_supporting_identity(report, p);
         check_descent(report, p);

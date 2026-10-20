@@ -411,6 +411,23 @@ inline void retract_inv_by_density(Vector<double>& v, const Vector<double>& x)
 }
 
 /**
+ * @brief Differential of retract_inv_by_density() at the point \f$ \zeta \f$ in the direction \f$ u \f$:
+ * \f$ \mathrm{D} \mathcal{L}_x(\zeta)[u] = (\zeta / x) \circ u \f$. It is diagonal, hence self-adjoint in the
+ * metric of a diagonal mass matrix; at \f$ \zeta = x \f$ it is the identity.
+ */
+inline void retract_inv_diff_by_density(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                                        Vector<double>& dst)
+{
+    const unsigned n = x.size();
+    AssertDimension(n, zeta.size());
+    AssertDimension(n, u.size());
+    dst.reinit(n, true);
+    for (unsigned i = 0; i < n; i++) {
+        dst[i] = zeta[i] * u[i] / x[i];
+    }
+}
+
+/**
  * @brief Supremum of the step sizes \f$ h \f$ for which retract_by_density() of \f$ h v \f$ at @p x is defined:
  * \f$ h_{\max} = \min_{v_i < 0} x_i / (2 |v_i|) \f$, the step at which the first density
  * \f$ x_i^2 + 2 h x_i v_i \f$ reaches zero; infinity if no component decreases.
@@ -643,7 +660,7 @@ public:
         retract(z, output, factor);
     }
 
-    // TODO: differentials of the density retraction and the lifting, needed by the coarse models
+    // TODO: differential of the density retraction
     void retract_diff(const Vector<double>& /*x*/, const Vector<double>& /*v*/, const Vector<double>& /*w*/,
                       Vector<double>& /*output*/) const override
     {
@@ -674,16 +691,18 @@ public:
         ellipsoid_positive::retract_inv_by_density(v, x);
     }
 
-    void retract_inv_diff(const Vector<double>& /*x*/, const Vector<double>& /*zeta*/, const Vector<double>& /*u*/,
-                          Vector<double>& /*output*/) const override
+    /** @brief Differential of the lifting, see ellipsoid_positive::retract_inv_diff_by_density(). */
+    void retract_inv_diff(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                          Vector<double>& output) const override
     {
-        throw dealii::ExcNotImplemented();
+        ellipsoid_positive::retract_inv_diff_by_density(x, zeta, u, output);
     }
 
-    void retract_inv_diff_adjoint(const Vector<double>& /*x*/, const Vector<double>& /*zeta*/,
-                                  const Vector<double>& /*u*/, Vector<double>& /*output*/) const override
+    /** @brief D-adjoint of retract_inv_diff(): the differential is diagonal, hence self-adjoint. */
+    void retract_inv_diff_adjoint(const Vector<double>& x, const Vector<double>& zeta, const Vector<double>& u,
+                                  Vector<double>& output) const override
     {
-        throw dealii::ExcNotImplemented();
+        ellipsoid_positive::retract_inv_diff_by_density(x, zeta, u, output);
     }
 
     // Accessors

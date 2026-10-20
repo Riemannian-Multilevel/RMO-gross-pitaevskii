@@ -10,6 +10,7 @@
 
 #include <deal.II/base/timer.h>
 
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 
@@ -223,6 +224,29 @@ private:
     SolverOptions options;
 
     OperatorMetric<Operator> m_metric;
+};
+
+
+/**
+ * @brief Energy-adaptive oracle with \f$ w = A(x)^{-1} D x \f$ clipped at zero: \f$ (\grad f)_i \le x_i \f$, i.e.
+ * \f$ \eta_i \ge -x_i \f$, which holds in exact arithmetic since \f$ A(x)^{-1} > 0 \f$; restores
+ * \f$ \tau_{\max} \ge 1/2 \f$ of the density retraction for inexact inner solves.
+ */
+template <typename System>
+class ClippedEnergyOracle : public EnergyOracle<System>
+{
+public:
+    using EnergyOracle<System>::EnergyOracle;
+    using EnergyOracle<System>::gradient;
+
+    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const override
+    {
+        const GradInfo info = EnergyOracle<System>::gradient(x, output, residual);
+        for (unsigned i = 0; i < x.size(); ++i) {
+            output[i] = std::min(output[i], x[i]);
+        }
+        return info;
+    }
 };
 
 

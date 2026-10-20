@@ -59,6 +59,7 @@
 #include <rmo/gpe/model.h>
 #include <rmo/gpe/oracle.h>
 #include <rmo/gpe/manifold.h>
+#include <rmo/gpe/manifold_positive.h>
 
 #include <rmo/ropt/solver.h>
 
@@ -108,214 +109,6 @@ struct StudyOptions
     std::filesystem::path out;
 };
 
-
-//! Energy-adaptive oracle with w = A(x)^{-1} D x clipped at zero: grad_i <= x_i, i.e. eta_i >= -x_i, which holds in
-//! exact arithmetic since A(x)^{-1} > 0; restores tau_max >= 1/2 for inexact inner solves.
-class ClippedEnergyOracle : public EnergyOracle<System>
-{
-public:
-    using EnergyOracle<System>::EnergyOracle;
-    using EnergyOracle<System>::gradient;
-
-    GradInfo gradient(const Vector<double>& x, Vector<double>& output, double residual) const override
-    {
-        const GradInfo info = EnergyOracle<System>::gradient(x, output, residual);
-        for (unsigned i = 0; i < x.size(); ++i) {
-            output[i] = std::min(output[i], x[i]);
-        }
-        return info;
-    }
-};
-
-
-//! Positive sphere whose density retraction clamps every component at @p floor (then normalizes), so that it is
-//! defined for every step; the step limit (option A) only counts the nodes above 10 floor, or none (@p cap false).
-class FlooredPosSphere : public ManifoldBase
-{
-public:
-    FlooredPosSphere(const MassMatrix& D, double floor, bool cap) : D(D), floor(floor), cap(cap) {}
-
-    void set_floor(double floor_new) const { floor = floor_new; }
-    [[nodiscard]] double get_floor() const { return floor; }
-
-    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
-    {
-        for (unsigned i = 0; i < x.size(); ++i) {
-            x[i] = std::sqrt(std::max(x[i] * x[i] + 2 * factor * x[i] * z[i], floor * floor));
-        }
-        ellipsoid::retract_by_norm(D, x);
-    }
-
-    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
-    {
-        output = x;
-        retract(z, output, factor);
-    }
-
-    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
-    {
-        double h_max = std::numeric_limits<double>::infinity();
-        if (cap) {
-            for (unsigned i = 0; i < x.size(); ++i) {
-                if (v[i] < 0 && x[i] > 10 * floor) {
-                    h_max = std::min(h_max, x[i] / (-2 * v[i]));
-                }
-            }
-        }
-        return h_max;
-    }
-
-    //! retract() of t v with its velocity: clamped components do not move (exact line search)
-    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
-                          Vector<double>& y, Vector<double>& y_dot) const override
-    {
-        y.reinit(x.size(), true);
-        y_dot.reinit(x.size(), true);
-        for (unsigned i = 0; i < x.size(); ++i) {
-            const double q = x[i] * x[i] + 2 * t * x[i] * v[i];
-            y[i] = std::sqrt(std::max(q, floor * floor));
-            y_dot[i] = q > floor * floor ? x[i] * v[i] / y[i] : 0.0;
-        }
-        ellipsoid::normalize_with_velocity(D, y, y_dot);
-    }
-
-    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        return ellipsoid::mass_inner(D, y, z);
-    }
-
-    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
-    {
-        ellipsoid_positive::retract_inv_by_density(v, x);
-    }
-
-    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                      Vector<double>&) const override { throw ExcNotImplemented(); }
-    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                          Vector<double>&) const override { throw ExcNotImplemented(); }
-    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                                  Vector<double>&) const override { throw ExcNotImplemented(); }
-
-private:
-    const MassMatrix& D;
-    mutable double floor;
-    bool cap;
-};
-
-//! Step limit of ExpPosSphere: none, 1 / max_i |v_i| / x_i (a relative change exp(1) per component), or
-//! 1 / max_i (v_i)_+ / x_i (growth by at most exp(1))
-enum class ExpCap : std::uint8_t { NONE, TWO_SIDED, GROWTH };
-
-//! Positive sphere with the e-retraction, see ellipsoid_positive::retract_by_e(), with the step limit @p cap.
-class ExpPosSphere : public ManifoldBase
-{
-public:
-    ExpPosSphere(const MassMatrix& D, ExpCap cap) : D(D), cap(cap) {}
-
-    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
-    {
-        ellipsoid_positive::retract_by_e(D, z, x, factor);
-    }
-
-    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
-    {
-        output = x;
-        retract(z, output, factor);
-    }
-
-    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
-    {
-        if (cap == ExpCap::NONE) {
-            return std::numeric_limits<double>::infinity();
-        }
-        double rate = 0;
-        for (unsigned i = 0; i < x.size(); ++i) {
-            rate = std::max(rate, (cap == ExpCap::GROWTH ? v[i] : std::abs(v[i])) / x[i]);
-        }
-        return 1 / rate;
-    }
-
-    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
-                          Vector<double>& y, Vector<double>& y_dot) const override
-    {
-        ellipsoid_positive::retract_velocity_by_e(D, x, v, t, y, y_dot);
-    }
-
-    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        return ellipsoid::mass_inner(D, y, z);
-    }
-
-    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
-    {
-        ellipsoid_positive::retract_inv_by_e(D, v, x);
-    }
-
-    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                      Vector<double>&) const override { throw ExcNotImplemented(); }
-    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                          Vector<double>&) const override { throw ExcNotImplemented(); }
-    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                                  Vector<double>&) const override { throw ExcNotImplemented(); }
-
-private:
-    const MassMatrix& D;
-    ExpCap cap;
-};
-
-
-//! Positive sphere with the normalization retraction (x + h v) / |x + h v|_D and the positivity cap
-//! h <= theta min_{v_i < 0} x_i / |v_i| (twice the step limit of the density retraction): the unit sphere restricted to
-//! the positive orthant, with the closed-form exact step of the ray (OracleBase::ray_step(), capped).
-class NormPosSphere : public ManifoldBase
-{
-public:
-    explicit NormPosSphere(const MassMatrix& D) : D(D) {}
-
-    void retract(const Vector<double>& z, Vector<double>& x, double factor) const override
-    {
-        ellipsoid::retract_by_norm(D, z, x, factor);
-    }
-
-    void retract(const Vector<double>& z, const Vector<double>& x, Vector<double>& output, double factor) const override
-    {
-        output = x;
-        retract(z, output, factor);
-    }
-
-    [[nodiscard]] double max_step(const Vector<double>& x, const Vector<double>& v) const override
-    {
-        return 2 * ellipsoid_positive::max_step(x, v);
-    }
-
-    void retract_velocity(const Vector<double>& x, const Vector<double>& v, double t,
-                          Vector<double>& y, Vector<double>& y_dot) const override
-    {
-        ellipsoid::retract_velocity_by_norm(D, x, v, t, y, y_dot);
-    }
-
-    [[nodiscard]] double constraint_inner(const Vector<double>& y, const Vector<double>& z) const override
-    {
-        return ellipsoid::mass_inner(D, y, z);
-    }
-
-    [[nodiscard]] bool retracts_by_normalization() const override { return true; }
-
-    void retract_inv(Vector<double>& v, const Vector<double>& x) const override
-    {
-        ellipsoid::retract_inv_by_norm(D, v, x);
-    }
-
-    void retract_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                      Vector<double>&) const override { throw ExcNotImplemented(); }
-    void retract_inv_diff(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                          Vector<double>&) const override { throw ExcNotImplemented(); }
-    void retract_inv_diff_adjoint(const Vector<double>&, const Vector<double>&, const Vector<double>&,
-                                  Vector<double>&) const override { throw ExcNotImplemented(); }
-
-private:
-    const MassMatrix& D;
-};
 
 //! Unit-mass sphere with the orthographic retraction, see ellipsoid::retract_by_ortho(), then normalized against the
 //! drift of rounding errors (as PosUnitMassSphere); defined for h |v|_M < 1.
@@ -583,7 +376,7 @@ struct CaseResult
 CaseResult run_case(const std::string& name, double theta, const ManifoldBase& manifold, const MassMatrix& D,
                     GrossPitaevskiiOracle<System>& oracle, const Vector<double>& x0, DescentOptions options,
                     const std::filesystem::path& out, Vector<double>& x, Vector<double>& x1, MetricKind metric,
-                    const FlooredPosSphere* continuation = nullptr, double floor_factor = 0)
+                    const FlooredPosSphere<MassMatrix>* continuation = nullptr, double floor_factor = 0)
 {
     options.boundary_fraction = std::isnan(theta) ? 0.99 : theta;
     GradientDescent solver(oracle, oracle.get_residual(), manifold, options);
@@ -720,15 +513,15 @@ void study(const StudyOptions& opts)
     first.emplace_back("unit", x1);
 
     // Variants of the positive sphere, see the file documentation
-    ClippedEnergyOracle clipped(gp, opts.solver);
-    const FlooredPosSphere floored(context.get_M(), opts.floor, true);
-    const FlooredPosSphere floored_nocap(context.get_M(), opts.floor, false);
-    const FlooredPosSphere floored_cont(context.get_M(), opts.floor, false);
-    const FlooredPosSphere floored_cont_cap(context.get_M(), opts.floor, true);
-    const ExpPosSphere exp_positive(context.get_M(), ExpCap::NONE);
-    const ExpPosSphere exp_positive_cap(context.get_M(), ExpCap::TWO_SIDED);
-    const ExpPosSphere exp_positive_growth(context.get_M(), ExpCap::GROWTH);
-    const NormPosSphere norm_positive(context.get_M());
+    ClippedEnergyOracle<System> clipped(gp, opts.solver);
+    const FlooredPosSphere<MassMatrix> floored(context.get_M(), opts.floor, true);
+    const FlooredPosSphere<MassMatrix> floored_nocap(context.get_M(), opts.floor, false);
+    const FlooredPosSphere<MassMatrix> floored_cont(context.get_M(), opts.floor, false);
+    const FlooredPosSphere<MassMatrix> floored_cont_cap(context.get_M(), opts.floor, true);
+    const ExpPosSphere<MassMatrix> exp_positive(context.get_M(), ExpCap::NONE);
+    const ExpPosSphere<MassMatrix> exp_positive_cap(context.get_M(), ExpCap::TWO_SIDED);
+    const ExpPosSphere<MassMatrix> exp_positive_growth(context.get_M(), ExpCap::GROWTH);
+    const NormPosSphere<MassMatrix> norm_positive(context.get_M());
     const OrthoUnitSphere ortho(context.get_M());
     const ExpMapUnitSphere exp_map(context.get_M());
     for (const Variant& variant : opts.variants) {
