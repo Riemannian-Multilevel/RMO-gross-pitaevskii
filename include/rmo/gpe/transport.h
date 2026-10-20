@@ -36,13 +36,25 @@
  *   \f$ \mathcal{R} v = \frac1n \Pi^F_y (I_H^h)^\top \big( v - \frac{\tilde y^\top v}{n^2} M_h \tilde y \big) \f$.
  *
  * The restriction of AdjointDifferentialTransport is ManifoldTransferBase::diff_prolongation_adjoint() of the point
- * transfer (ManifoldTransfer with the inverse coarse mass matrix, LogManifoldTransfer).
+ * transfer (ManifoldTransfer with the inverse coarse mass matrix, LogManifoldTransfer, LogThresholdManifoldTransfer).
  *
  * For the differential transports, \f$ \mathcal{R} \f$ is not the adjoint of \f$ \mathcal{P} \f$: both are
  * differentials of independent point maps.
  */
 namespace rmo::gpe
 {
+
+namespace transfer_detail
+{
+//! a <- exp(a - max_i a_i): exponential of logarithms, shifted by their maximum against overflow
+inline void exp_shifted(Vector<double>& a)
+{
+    const double a_max = *std::max_element(a.begin(), a.end());
+    for (auto& ai : a) {
+        ai = std::exp(ai - a_max);
+    }
+}
+} // namespace transfer_detail
 
 /**
  * @brief Point maps \f$ r \f$, \f$ p \f$ between the spheres and their differentials (metric-independent). With the
@@ -719,10 +731,7 @@ private:
     //! a <- N(exp(a)), with the logarithms a shifted by their maximum against overflow
     static void exp_normalized(const MatrixType& M, Vector<double>& a)
     {
-        const double a_max = *std::max_element(a.begin(), a.end());
-        for (auto& ai : a) {
-            ai = std::exp(ai - a_max);
-        }
+        transfer_detail::exp_shifted(a);
         ellipsoid::retract_by_norm(M, a);
         ellipsoid_positive::threshold(a, std::numeric_limits<double>::min());
     }
@@ -730,6 +739,132 @@ private:
     const MatrixType& M_coarse;
     const MatrixType& M_fine;
     const InverseMatrixType& M_inv_coarse;
+};
+
+
+/**
+ * @brief Logarithmic point maps on points floored at a fixed @p eps (md/positive_multilevel_benchmark.md, step 3b):
+ * \f$ r(x) = N_H(e^{I_h^H \log \max(x, \varepsilon)}) \f$, \f$ p(y) = N_h(e^{I_H^h \log \max(y, \varepsilon)}) \f$
+ * with the normalization \f$ N(a) = a / \|a\|_M \f$.
+ *
+ * Only the input is clamped: the interpolated logarithms are at least \f$ \log \varepsilon \f$ (for an interpolation
+ * with nonnegative weights summing to 1; the \f$ Q_2 \f$ embedding extrapolates slightly), so the outputs are at least
+ * \f$ c \varepsilon \f$, \f$ c \f$ the normalization factor (close to 1). Clamping the output as well would put every
+ * component coming from clamped inputs (\f$ \approx c \varepsilon \f$) on the kink of the clamp, so that the maps would
+ * not be differentiable in the tails.
+ *
+ * The differentials are those of the clamped maps, with the input mask \f$ m = [\mathrm{src} > \varepsilon] \f$
+ * (components at or below \f$ \varepsilon \f$ are frozen):
+ * \f$ \mathrm{D}p(y)[v] = \Pi_{\hat x}(\hat x \circ I_H^h(m \circ v / y)) \f$, \f$ \hat x = p(y) \f$, and
+ * \f$ \mathrm{D}r \f$ likewise. The adjoint is the \f$ M \f$-transpose of this differential,
+ * \f$ \mathrm{D}p(y)^* u = M_H^{-1}(m \circ Y^{-1} (I_H^h)^\top (\hat x \circ M_h \Pi_{\hat x} u)) \f$. Its terms have
+ * the factors \f$ \hat x_i \ge c \varepsilon \f$ and \f$ u_i \f$, and the divisor \f$ y_j > \varepsilon \f$: with the
+ * default \f$ \varepsilon = 10^{-140} \f$ nothing overflows, and a product underflows only for \f$ u_i \f$ far below
+ * \f$ \hat x_i \f$. Unlike LogManifoldTransfer, components of the input at or below \f$ \varepsilon \f$ (also zero or
+ * negative ones) are allowed; they are treated as \f$ \varepsilon \f$.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+class LogThresholdManifoldTransfer : public ManifoldTransferBase
+{
+public:
+    static constexpr double default_eps = 1e-140;
+
+    LogThresholdManifoldTransfer(const LinearTransferBase& transfer, const MatrixType& M_coarse,
+                                 const MatrixType& M_fine, const InverseMatrixType& M_inv_coarse,
+                                 double eps = default_eps)
+        : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine), M_inv_coarse(M_inv_coarse), eps(eps)
+    {
+        AssertThrow(eps > 0, dealii::ExcMessage("LogThresholdManifoldTransfer: eps must be positive"));
+    }
+
+    /** @brief \f$ y = r(x) = N_H(e^{I_h^H \log \max(x, \varepsilon)}) \f$ */
+    void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const override
+    {
+        map(x_fine, y_coarse, false);
+    }
+
+    /** @brief \f$ x = p(y) = N_h(e^{I_H^h \log \max(y, \varepsilon)}) \f$ */
+    void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const override
+    {
+        map(y_coarse, x_fine, true);
+    }
+
+    /** @brief \f$ \mathrm{D}r(x)[v] = \Pi_{\hat y}(\hat y \circ I_h^H(m \circ v / x)) \f$, \f$ \hat y = r(x) \f$ */
+    void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        diff(x_fine, v, dst, false);
+    }
+
+    /** @brief \f$ \mathrm{D}p(y)[v] = \Pi_{\hat x}(\hat x \circ I_H^h(m \circ v / y)) \f$, \f$ \hat x = p(y) \f$ */
+    void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        diff(y_coarse, v, dst, true);
+    }
+
+    /** @brief \f$ \mathrm{D}p(y)^* u = M_H^{-1}(m \circ Y^{-1} (I_H^h)^\top (\hat x \circ M_h \Pi_{\hat x} u)) \f$ */
+    void diff_prolongation_adjoint(const Vector<double>& y_coarse, const Vector<double>& u,
+                                   Vector<double>& dst) const override
+    {
+        Vector<double> x_hat(transfer.n_fine());
+        map(y_coarse, x_hat, true);
+        Vector<double> proj(u.size()), M_proj(u.size());
+        metric::mass::project_onto_tangent_space(x_hat, M_fine, u, proj);
+        M_fine.vmult(M_proj, proj);
+        M_proj.scale(x_hat);
+        Vector<double> dual(transfer.n_coarse());
+        transfer.Tfine(M_proj, dual);
+        for (unsigned j = 0; j < dual.size(); ++j) {
+            dual[j] = y_coarse[j] > eps ? dual[j] / y_coarse[j] : 0.0;
+        }
+        M_inv_coarse.set_tol(0.0);  // relative tolerance, as in ManifoldTransfer (shared inverse)
+        dst.reinit(transfer.n_coarse());
+        M_inv_coarse.vmult(dst, dual);
+    }
+
+    [[nodiscard]] double get_eps() const { return eps; }
+
+private:
+    //! dst = N(exp(I log max(src, eps))) on the fine (@p to_fine) or the coarse mesh
+    void map(const Vector<double>& src, Vector<double>& dst, bool to_fine) const
+    {
+        Vector<double> s(src.size());
+        for (unsigned i = 0; i < src.size(); ++i) {
+            s[i] = std::log(std::max(src[i], eps));
+        }
+        dst.reinit(to_fine ? transfer.n_fine() : transfer.n_coarse());
+        if (to_fine) {
+            transfer.to_fine_mesh(s, dst);
+        } else {
+            transfer.to_coarse_mesh(s, dst);
+        }
+        transfer_detail::exp_shifted(dst);
+        ellipsoid::retract_by_norm(to_fine ? M_fine : M_coarse, dst);
+    }
+
+    //! Pi_f(f (I (m v / src))), f = map(src), m = [src > eps]
+    void diff(const Vector<double>& src, const Vector<double>& v, Vector<double>& dst, bool to_fine) const
+    {
+        const unsigned n = to_fine ? transfer.n_fine() : transfer.n_coarse();
+        Vector<double> f(n);
+        map(src, f, to_fine);
+        Vector<double> rel(src.size());
+        for (unsigned i = 0; i < src.size(); ++i) {
+            rel[i] = src[i] > eps ? v[i] / src[i] : 0.0;
+        }
+        Vector<double> t(n);
+        if (to_fine) {
+            transfer.to_fine_mesh(rel, t);
+        } else {
+            transfer.to_coarse_mesh(rel, t);
+        }
+        t.scale(f);
+        metric::mass::project_onto_tangent_space(f, to_fine ? M_fine : M_coarse, t, dst);
+    }
+
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& M_inv_coarse;
+    double eps;
 };
 
 

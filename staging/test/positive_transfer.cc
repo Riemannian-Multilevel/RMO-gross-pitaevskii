@@ -4,7 +4,7 @@
  * positive sphere") on nested finite element spaces, with \f$ \tilde P \f$ the embedding of LinearTransferMG
  * (to_fine_mesh(), transpose Tfine()), lumped masses \f$ d_h, d_H \f$ and Neumann boundary, for a positive point
  * \f$ x \f$ with Gaussian tails (radius 10; the point maps also at radius 22, tails below \f$ 10^{-154} \f$, where
- * squares and products of components underflow):
+ * squares and products of components underflow), and the thresholded log maps (LogThresholdManifoldTransfer):
  *
  * - partition of unity \f$ \tilde P \onebb = \onebb \f$ and mass consistency \f$ \tilde P^\top d_h = d_H \f$;
  * - point restriction by full weighting of the densities, \f$ y = (\tilde P^\top(d_h x^2) / d_H)^{1/2} \f$: on the
@@ -598,6 +598,219 @@ void check_point_transfers(CheckReport& report, const Discretization& disc, unsi
     }
 }
 
+/**
+ * Thresholded log point maps (LogThresholdManifoldTransfer, eps = 1e-140): above eps the same as LogManifoldTransfer;
+ * below eps (radius 22, min x ~ 1e-211) the outputs are at least c eps (c the normalization factor), normalized, with
+ * the differentials of the clamped maps and their exact transpose; on a plateau at DBL_MIN next to O(1) values (as in a
+ * stalled run) all restrictions finite.
+ */
+void check_threshold_transfers(CheckReport& report, const Discretization& disc, unsigned n_levels)
+{
+    using Threshold = LogThresholdManifoldTransfer<MassMatrix, DiagonalMassInverse>;
+    using Log = LogManifoldTransfer<MassMatrix, DiagonalMassInverse>;
+    const auto tag = [&](const std::string& s) { return fmt::format("{} threshold maps: {}", disc.name, s); };
+    const auto tangent_at = [](const Vector<double>& dd, const Vector<double>& z, double freq) {
+        Vector<double> v(z.size());
+        for (unsigned i = 0; i < z.size(); ++i) {
+            v[i] = z[i] * std::cos(freq * i);
+        }
+        v.add(-d_inner(dd, z, v) / d_inner(dd, z, z), z);
+        return v;
+    };
+    const auto rel_max = [](const Vector<double>& a, const Vector<double>& b) {
+        double m = 0;
+        for (unsigned i = 0; i < a.size(); ++i) {
+            m = std::max(m, std::abs(a[i] / b[i] - 1));
+        }
+        return m;
+    };
+    const auto rel_linf = [](Vector<double> a, const Vector<double>& b) {
+        a -= b;
+        return a.linfty_norm() / b.linfty_norm();
+    };
+    const auto gaussian = [](const Level& level, double scale) {
+        auto x = at_support_points(level, [scale](const Point<dim>& p) {
+            return std::exp(-0.5 * scale * p.norm_square()) * (1 + 0.3 * std::sin(p[0]) * std::cos(0.7 * p[1]));
+        });
+        return x;
+    };
+
+    // Radius 10: all values above eps, the same maps as LogManifoldTransfer
+    {
+        const Level fine(disc, n_levels), coarse(disc, n_levels - 1);
+        const fe::LinearTransferMG<dim> embedding(coarse.package.get_dofs(), fine.package.get_dofs(),
+                                                  coarse.package.get_constraints(), fine.package.get_constraints());
+        const DiagonalMassInverse M_inv_H{coarse.d()};
+        const Threshold thr(embedding, coarse.D(), fine.D(), M_inv_H);
+        const Log log(embedding, coarse.D(), fine.D(), M_inv_H);
+        auto x = gaussian(fine, 1.0);
+        x /= std::sqrt(d_inner(fine.d(), x, x));
+        Vector<double> y_t(coarse.d().size()), y_l(coarse.d().size()), p_t(x.size()), p_l(x.size());
+        thr.restriction(x, y_t);
+        log.restriction(x, y_l);
+        thr.prolongation(y_l, p_t);
+        log.prolongation(y_l, p_l);
+        const Vector<double> v = tangent_at(coarse.d(), y_l, 0.37), u = tangent_at(fine.d(), x, 0.53),
+                             g = tangent_at(fine.d(), x, 1.1);
+        Vector<double> dp_t(x.size()), dp_l(x.size()), dr_t(y_l.size()), dr_l(y_l.size()), ad_t(y_l.size()),
+            ad_l(y_l.size());
+        thr.diff_prolongation(y_l, v, dp_t);
+        log.diff_prolongation(y_l, v, dp_l);
+        thr.diff_restriction(x, u, dr_t);
+        log.diff_restriction(x, u, dr_l);
+        thr.diff_prolongation_adjoint(y_l, g, ad_t);
+        log.diff_prolongation_adjoint(y_l, g, ad_l);
+        const double err = std::max({rel_max(y_t, y_l), rel_max(p_t, p_l), rel_linf(dp_t, dp_l), rel_linf(dr_t, dr_l),
+                                     rel_linf(ad_t, ad_l)});
+        report.check(err < 1e-14, tag("radius 10 (above eps): r, p, Dp, Dr, Dp^* equal to LogManifoldTransfer"),
+                     fmt::format("min x {}, max relative difference {}", sci(*std::ranges::min_element(x)), sci(err)));
+    }
+
+    // Radius 22: tails below eps
+    {
+        const double radius = 22.0;
+        const Level fine(disc, n_levels, radius), coarse(disc, n_levels - 1, radius);
+        const fe::LinearTransferMG<dim> embedding(coarse.package.get_dofs(), fine.package.get_dofs(),
+                                                  coarse.package.get_constraints(), fine.package.get_constraints());
+        const auto& d_h = fine.d();
+        const auto& d_H = coarse.d();
+        const DiagonalMassInverse M_inv_H{d_H};
+        const Threshold thr(embedding, coarse.D(), fine.D(), M_inv_H);
+        const double eps = thr.get_eps();
+        auto x = gaussian(fine, 1.0);
+        x /= std::sqrt(d_inner(d_h, x, x));
+        Vector<double> y(d_H.size()), xp(d_h.size());
+        thr.restriction(x, y);
+        thr.prolongation(y, xp);
+        unsigned n_clamped = 0;
+        for (unsigned j = 0; j < y.size(); ++j) {
+            n_clamped += y[j] < 2 * eps ? 1 : 0;  // coarse values from clamped inputs (~ c eps)
+        }
+        const double min_y = *std::ranges::min_element(y), min_xp = *std::ranges::min_element(xp);
+        const double norm_err = std::max(std::abs(d_inner(d_H, y, y) - 1), std::abs(d_inner(d_h, xp, xp) - 1));
+        // Outputs are at least c eps, c the normalization factor (close to 1)
+        report.check(min_y >= 0.1 * eps && min_xp >= 0.1 * eps && norm_err < 1e-13,
+                     tag("radius 22: r(x), p(y) >= c eps and on the spheres"),
+                     fmt::format("min x {}, min y / eps {:.3f}, min p(y) / eps {:.3f}, {} of {} coarse nodes near eps, "
+                                 "|norm - 1| {}", sci(*std::ranges::min_element(x)), min_y / eps, min_xp / eps,
+                                 n_clamped, y.size(), sci(norm_err)));
+
+        // Central differences of the clamped maps, componentwise relative (as check_point_transfers); the directions
+        // do not move components within 1 % of eps (the maps are not differentiable at eps)
+        Vector<double> v(d_H.size()), u(d_h.size());
+        for (unsigned j = 0; j < v.size(); ++j) {
+            v[j] = y[j] > 1.01 * eps ? y[j] * std::cos(0.37 * j) : 0.0;
+        }
+        for (unsigned i = 0; i < u.size(); ++i) {
+            u[i] = x[i] > 1.01 * eps ? x[i] * std::cos(0.53 * i) : 0.0;
+        }
+        const auto fd_error = [&](auto&& map, const Vector<double>& base, const Vector<double>& dir,
+                                  const Vector<double>& diff, double h) {
+            Vector<double> bp(base), bm(base), fp, fm, f0;
+            bp.add(h, dir);
+            bm.add(-h, dir);
+            map(bp, fp);
+            map(bm, fm);
+            map(base, f0);
+            double e = 0, scale = 0;
+            for (unsigned i = 0; i < f0.size(); ++i) {
+                e = std::max(e, std::abs((fp[i] - fm[i]) / (2 * h) - diff[i]) / f0[i]);
+                scale = std::max(scale, std::abs(diff[i]) / f0[i]);
+            }
+            return e / scale;
+        };
+        const auto p_map = [&](const Vector<double>& a, Vector<double>& b) { thr.prolongation(a, b); };
+        const auto r_map = [&](const Vector<double>& a, Vector<double>& b) { thr.restriction(a, b); };
+        Vector<double> dp(d_h.size()), dr(d_H.size());
+        thr.diff_prolongation(y, v, dp);
+        thr.diff_restriction(x, u, dr);
+        const double ep1 = fd_error(p_map, y, v, dp, 1e-3), ep2 = fd_error(p_map, y, v, dp, 1e-4);
+        const double er1 = fd_error(r_map, x, u, dr, 1e-3), er2 = fd_error(r_map, x, u, dr, 1e-4);
+        // Rounding floor of the difference quotient at h = 1e-4 for maps evaluated in logarithms (|log eps| ~ 322)
+        const double floor_h = 10 * std::numeric_limits<double>::epsilon() * std::abs(std::log(eps)) / 1e-4;
+        report.check(ep2 < 1e-6 && (ep2 < floor_h || ep1 / ep2 > 50), tag("radius 22: Dp(y) (central differences)"),
+                     fmt::format("relative error {}, ratio {}, rounding floor {}", sci(ep2), sci(ep1 / ep2),
+                                 sci(floor_h)));
+        report.check(er2 < 1e-6 && (er2 < floor_h || er1 / er2 > 50), tag("radius 22: Dr(x) (central differences)"),
+                     fmt::format("relative error {}, ratio {}, rounding floor {}", sci(er2), sci(er1 / er2),
+                                 sci(floor_h)));
+
+        // Transport: tangency and Galerkin (the adjoint is the exact transpose of the differential)
+        const AdjointDifferentialTransport<MassMatrix, DiagonalMassInverse> transport(embedding, thr, coarse.D(),
+                                                                                      fine.D(), M_inv_H);
+        const Vector<double> vt = tangent_at(d_H, y, 0.37), g = tangent_at(d_h, x, 1.1);
+        Vector<double> Pv(d_h.size()), Rg(d_H.size());
+        transport.vector_prolongation(x, y, vt, Pv);
+        transport.vector_restriction(y, x, g, Rg);
+        const double tang = std::max(std::abs(d_inner(d_h, x, Pv)) / std::sqrt(d_inner(d_h, Pv, Pv)),
+                                     std::abs(d_inner(d_H, y, Rg)) / std::sqrt(d_inner(d_H, Rg, Rg)));
+        const double galerkin = std::abs(d_inner(d_h, Pv, g) - d_inner(d_H, vt, Rg)) /
+                                std::sqrt(d_inner(d_h, Pv, Pv) * d_inner(d_h, g, g));
+        report.check(tang < 1e-13 && galerkin < 1e-14, tag("radius 22: P v, R g tangent; Galerkin"),
+                     fmt::format("tangency {}, Galerkin defect {}", sci(tang), sci(galerkin)));
+
+        // Adjoint entrywise against the exact reference Dp^*(F g) / F, F = 2^1000 (no underflow of its terms)
+        Vector<double> adj(d_H.size()), adj_ref(d_H.size()), g_scaled(g);
+        thr.diff_prolongation_adjoint(y, g, adj);
+        const double F = std::ldexp(1.0, 1000);
+        g_scaled *= F;
+        thr.diff_prolongation_adjoint(y, g_scaled, adj_ref);
+        adj_ref /= F;
+        double adj_err = 0;
+        unsigned n_zero = 0, n_ref = 0;
+        for (unsigned j = 0; j < d_H.size(); ++j) {
+            if (adj_ref[j] != 0) {
+                n_ref++;
+                adj_err = std::max(adj_err, std::abs(adj[j] - adj_ref[j]) / std::abs(adj_ref[j]));
+                n_zero += adj[j] == 0 ? 1 : 0;
+            }
+        }
+        report.check(adj_err < 1e-12 && n_zero == 0, tag("radius 22: Dp(y)^* g entrywise (reference Dp^*(F g) / F)"),
+                     fmt::format("max relative error {}, entries 0 instead of nonzero: {} of {}", sci(adj_err), n_zero,
+                                 n_ref));
+
+        // Plateau at DBL_MIN next to O(1) values (tails of exp(-|p|^2) underflow at radius 22)
+        auto x_pl = gaussian(fine, 2.0);
+        for (auto& a : x_pl) {
+            a = std::max(a, std::numeric_limits<double>::min());
+        }
+        x_pl /= std::sqrt(d_inner(d_h, x_pl, x_pl));
+        unsigned n_plateau = 0;
+        for (const double a : x_pl) {
+            n_plateau += a <= 2 * std::numeric_limits<double>::min() ? 1 : 0;
+        }
+        const Vector<double> g_pl = tangent_at(d_h, x_pl, 1.1);
+        const auto relative_restriction = [&](const ManifoldTransferBase& pt, const Vector<double>& y_pt) {
+            const AdjointDifferentialTransport<MassMatrix, DiagonalMassInverse> tr(embedding, pt, coarse.D(), fine.D(),
+                                                                                   M_inv_H);
+            Vector<double> rg(d_H.size());
+            tr.vector_restriction(y_pt, x_pl, g_pl, rg);
+            unsigned n_nonfinite = 0, n_zeros = 0;
+            for (unsigned j = 0; j < rg.size(); ++j) {
+                const double q = rg[j] / y_pt[j];
+                n_nonfinite += std::isfinite(q) ? 0 : 1;
+                n_zeros += q == 0 ? 1 : 0;
+            }
+            return std::make_pair(n_nonfinite, n_zeros);
+        };
+        Vector<double> y_pl(d_H.size());
+        thr.restriction(x_pl, y_pl);
+        const auto [nf_t, nz_t] = relative_restriction(thr, y_pl);
+        const bool y_finite = std::all_of(y_pl.begin(), y_pl.end(), [eps](double a) {
+            return std::isfinite(a) && a >= 0.1 * eps;
+        });
+        report.check(y_finite && nf_t == 0, tag("plateau at DBL_MIN: r(x) >= c eps, R g / y finite"),
+                     fmt::format("{} fine nodes at DBL_MIN; non-finite entries of R g / y: {}, zero entries: {}",
+                                 n_plateau, nf_t, nz_t));
+        const Log log(embedding, coarse.D(), fine.D(), M_inv_H);
+        Vector<double> y_log(d_H.size());
+        log.restriction(x_pl, y_log);
+        const auto [nf_l, nz_l] = relative_restriction(log, y_log);
+        report.info(tag("plateau at DBL_MIN, LogManifoldTransfer for comparison: R g / y non-finite, zero entries"),
+                    fmt::format("{}, {} of {}", nf_l, nz_l, d_H.size()));
+    }
+}
+
 } // namespace
 
 
@@ -617,6 +830,7 @@ int main()
             check_point_transfers(report, disc, disc.degree == 1 ? 5 : 4);
             // Tails below 1e-154 (min x ~ 1e-210), where squares and products of components underflow
             check_point_transfers(report, disc, disc.degree == 1 ? 5 : 4, 22.0);
+            check_threshold_transfers(report, disc, disc.degree == 1 ? 5 : 4);
         }
     });
 }
