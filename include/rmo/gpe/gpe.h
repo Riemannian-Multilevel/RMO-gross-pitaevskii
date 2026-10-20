@@ -624,6 +624,8 @@ public:
     const Operator& get_M() const { return M; }
     const Operator& get_A() const { return A; }
     const SparseMatrix<double>& get_A0() const { return system.get_A0(); }
+    /** @brief \f$ M_{\phi\phi} \f$ of the last update(), the non-linear component of \f$ A \f$. */
+    const typename System::MassMatrix& get_Mpp() const { return system.get_Mpp(); }
 
     const InverseM& get_M_inv() const { return M_inv; }
     InverseM& get_M_inv() { return M_inv; }

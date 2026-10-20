@@ -160,6 +160,44 @@ private:
     OperatorMetric<Operator> m_metric; // M-metric
 };
 
+/**
+ * @brief M-norm of the residual of the coarse model with the density lifting (DensityCoarseOracle): the Gross-Pitaevskii
+ * eigenvalue residual with the potential shifted by \f$ -w/y \f$, i.e. kernels::eigen_residual() with the tilt
+ * \f$ g = D (w \circ z / y) \f$, the gradient of the correction term \f$ \langle w, \mathcal{L}^m_y(z) \rangle_D \f$.
+ */
+template <typename System>
+class DensityCoarseResidual : public ResidualBase
+{
+public:
+    using Functional = GrossPitaevskiiFunctional<System>;
+    using Operator   = typename Functional::Operator;
+
+    DensityCoarseResidual(const CoarseOracleBase& model, const Functional& func)
+        : m_model(model)
+        , m_func(func)
+        , m_metric(func.get_M(), MetricKind::MASS)
+        , d(func.get_M().diagonal())
+    {}
+
+    [[nodiscard]] double residual(const Vector<double>& z) const override
+    {
+        const auto& state = m_model.get_state();
+        Vector<double> g(z.size());
+        for (unsigned j = 0; j < z.size(); ++j) {
+            g[j] = d[j] * state.w[j] * z[j] / state.y[j];
+        }
+        return m_metric.norm(kernels::eigen_residual(m_func.get_A(), m_func.get_M(), z, g));
+    }
+
+    [[nodiscard]] unsigned n_dofs() const override { return m_func.n_dofs(); }
+
+private:
+    const CoarseOracleBase& m_model;
+    const Functional& m_func;
+    OperatorMetric<Operator> m_metric;  // M-metric
+    Vector<double> d;                   // lumped masses
+};
+
 } // namespace rmo::gpe
 
 #endif //RMO_GPE_RESIDUAL_H
