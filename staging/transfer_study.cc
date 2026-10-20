@@ -18,10 +18,9 @@
  * - `linear`: ManifoldTransfer (unit-sphere point maps; both spheres; no reference);
  * - `log`: LogManifoldTransfer (the adjoint forms x_hat_i d_i u_i, which underflows for x below ~1e-154);
  * - `banded`: the log maps with the adjoint by exponent bands (frexp/ldexp, Tfine once per band, exact rescaling by
- *   powers of two), evaluated directly in relative form; the reference for `log` and `floor`;
- * - `floor` (eps 1e-12, 1e-50, 1e-100, 1e-150): the log maps on points floored at eps (restriction and prolongation
- *   clamp at eps and renormalize), with the differential of the floored maps (zero at clamped components) and its
- *   transpose.
+ *   powers of two), evaluated directly in relative form; the reference for `log` and `threshold`;
+ * - `threshold` (eps 1e-12, 1e-50, 1e-100, 1e-140, 1e-150): LogThresholdManifoldTransfer, the log maps on inputs
+ *   clamped at eps, with the differentials of the clamped maps and their exact transpose.
  *
  * Writes (appends) one row per gradient and variant to --out (CSV): the sphere, tol_inner_res, the problem, the
  * iterate (`point`), its residual, min x, min y; the number of floored coarse nodes; the maximum entrywise relative
@@ -181,117 +180,6 @@ unsigned banded_relative_restriction(const LinearTransferBase& transfer, const V
     return n_bands;
 }
 
-/**
- * Log point maps on points floored at eps: r(x) = N(max(N(e^{I log max(x, eps)}), eps)) and p likewise; the
- * differentials are those of the floored maps (zero at the clamped input and output components), the adjoint their
- * M-transpose (lumped masses). All terms of the adjoint then have factors >= eps.
- */
-class FlooredLogTransfer : public ManifoldTransferBase
-{
-public:
-    FlooredLogTransfer(const LinearTransferBase& transfer, const Vector<double>& d_H, const Vector<double>& d_h,
-                       double eps)
-        : ManifoldTransferBase(transfer), d_H(d_H), d_h(d_h), eps(eps)
-    {}
-
-    void restriction(const Vector<double>& x, Vector<double>& y) const override { map(x, y, false); }
-    void prolongation(const Vector<double>& y, Vector<double>& x) const override { map(y, x, true); }
-
-    void diff_prolongation(const Vector<double>& y, const Vector<double>& v, Vector<double>& dst) const override
-    {
-        diff(y, v, dst, true);
-    }
-
-    void diff_restriction(const Vector<double>& x, const Vector<double>& v, Vector<double>& dst) const override
-    {
-        diff(x, v, dst, false);
-    }
-
-    //! Transpose of diff_prolongation() in the masses: mask_y Y^{-1} D_H^{-1} I^T (mask_x x_hat D_h Pi_x_hat u)
-    void diff_prolongation_adjoint(const Vector<double>& y, const Vector<double>& u, Vector<double>& dst) const override
-    {
-        Vector<double> x_hat(d_h.size());
-        map(y, x_hat, true);
-        double c = 0;
-        for (unsigned i = 0; i < u.size(); ++i) {
-            c += d_h[i] * x_hat[i] * u[i];
-        }
-        Vector<double> a(d_h.size());
-        for (unsigned i = 0; i < u.size(); ++i) {
-            a[i] = x_hat[i] > eps ? x_hat[i] * d_h[i] * (u[i] - c * x_hat[i]) : 0.0;
-        }
-        dst.reinit(d_H.size());
-        transfer.Tfine(a, dst);
-        for (unsigned j = 0; j < dst.size(); ++j) {
-            dst[j] = y[j] > eps ? dst[j] / (d_H[j] * y[j]) : 0.0;
-        }
-    }
-
-private:
-    //! dst = N(max(N(e^{I log max(src, eps)}), eps)), I = to_fine_mesh (fine) or to_coarse_mesh
-    void map(const Vector<double>& src, Vector<double>& dst, bool fine) const
-    {
-        const Vector<double>& d = fine ? d_h : d_H;
-        Vector<double> s(src.size());
-        for (unsigned i = 0; i < src.size(); ++i) {
-            s[i] = std::log(std::max(src[i], eps));
-        }
-        dst.reinit(d.size());
-        if (fine) {
-            transfer.to_fine_mesh(s, dst);
-        } else {
-            transfer.to_coarse_mesh(s, dst);
-        }
-        const double s_max = *std::max_element(dst.begin(), dst.end());
-        for (auto& a : dst) {
-            a = std::exp(a - s_max);
-        }
-        normalize(d, dst);
-        for (auto& a : dst) {
-            a = std::max(a, eps);
-        }
-        normalize(d, dst);
-    }
-
-    //! Pi_{f}(mask_out f (I (mask_in v / src))), f = map(src)
-    void diff(const Vector<double>& src, const Vector<double>& v, Vector<double>& dst, bool fine) const
-    {
-        const Vector<double>& d = fine ? d_h : d_H;
-        Vector<double> f(d.size());
-        map(src, f, fine);
-        Vector<double> rel(src.size());
-        for (unsigned i = 0; i < src.size(); ++i) {
-            rel[i] = src[i] > eps ? v[i] / src[i] : 0.0;
-        }
-        Vector<double> t(d.size());
-        if (fine) {
-            transfer.to_fine_mesh(rel, t);
-        } else {
-            transfer.to_coarse_mesh(rel, t);
-        }
-        double c = 0;
-        for (unsigned i = 0; i < t.size(); ++i) {
-            t[i] = f[i] > eps ? f[i] * t[i] : 0.0;
-            c += d[i] * f[i] * t[i];
-        }
-        dst = t;
-        dst.add(-c, f);
-    }
-
-    static void normalize(const Vector<double>& d, Vector<double>& x)
-    {
-        double s = 0;
-        for (unsigned i = 0; i < x.size(); ++i) {
-            s += d[i] * x[i] * x[i];
-        }
-        x /= std::sqrt(s);
-    }
-
-    const Vector<double>& d_H;
-    const Vector<double>& d_h;
-    double eps;
-};
-
 double d_inner(const Vector<double>& d, const Vector<double>& a, const Vector<double>& b)
 {
     double s = 0;
@@ -415,7 +303,7 @@ void evaluate(const GPE_Options& gpe_opts, unsigned level, const SolverOptions& 
                                                            func_c.get_M_inv());
     Vector<double> y(d_H.size());
     linear_maps.restriction(x, y);  // the injection: the same point for the log maps
-    // The log, banded and floored maps (and the relative quantities) only on the positive sphere
+    // The log, banded and thresholded maps (and the relative quantities) only on the positive sphere
     const bool positive = !unit_sphere && *std::min_element(x.begin(), x.end()) > 0 &&
                           *std::min_element(y.begin(), y.end()) > 0;
 
@@ -500,16 +388,18 @@ void evaluate(const GPE_Options& gpe_opts, unsigned level, const SolverOptions& 
             }
         }
 
-        // Variants: `linear` (both spheres, no reference), and on the positive sphere `log`, `banded`, `floor`
+        // Variants: `linear` (both spheres, no reference), and on the positive sphere `log`, `banded`, `threshold`
         struct Variant { std::string name; double eps; const ManifoldTransferBase* pt; bool compare; };
-        std::vector<std::unique_ptr<FlooredLogTransfer>> floored;
+        using Threshold = LogThresholdManifoldTransfer<Operator, InverseM>;
+        std::vector<std::unique_ptr<Threshold>> thresholded;
         std::vector<Variant> variants{{"linear", 0, &linear_maps, false}};
         if (positive) {
             variants.push_back({"log", 0, &log_maps, true});
             variants.push_back({"banded", 0, nullptr, true});
-            for (const double eps : {1e-12, 1e-50, 1e-100, 1e-150}) {
-                floored.push_back(std::make_unique<FlooredLogTransfer>(transfer, d_H, d_h, eps));
-                variants.push_back({"floor", eps, floored.back().get(), true});
+            for (const double eps : {1e-12, 1e-50, 1e-100, Threshold::default_eps, 1e-150}) {
+                thresholded.push_back(std::make_unique<Threshold>(transfer, func_c.get_M(), func_f.get_M(),
+                                                                  func_c.get_M_inv(), eps));
+                variants.push_back({"threshold", eps, thresholded.back().get(), true});
             }
         }
 
