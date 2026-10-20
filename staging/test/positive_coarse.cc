@@ -14,7 +14,13 @@
  * - safeguard: with a large correction \f$ w \f$ (coarse functional with \f$ \beta \f$ 100 times the fine one), the
  *   ENERGY_MODEL_SHIFT step \f$ \eta = -\grad q \f$ satisfies \f$ \eta > -z \f$; the shift \f$ \sigma \f$, the
  *   ENERGY_MODEL step bound, and the number of updates at which \f$ \hat A(z) \f$ has a non-positive row sum are
- *   reported.
+ *   reported;
+ * - guard: update() throws if \f$ w_j / y_j \f$ is not finite (\f$ y_j = 0 \f$, from a fine point with zero tails);
+ * - coherence near convergence: at a fine ground state the computed \f$ g = \grad_M f_h(x) \f$ has a normal part
+ *   from rounding; with AdjointDifferentialTransport (linear and thresholded log point maps) the Galerkin condition
+ *   for this \f$ g \f$ holds to rounding only with the projected restriction (TangentProjectedTransport); the
+ *   coherence \f$ \langle \grad_M q(y), v \rangle_{D_H} = \langle g, P v \rangle_{D_h} \f$ holds to the rounding
+ *   floor of \f$ \grad_M f_H(y) - w \f$, which is larger.
  */
 #include "check.h"
 
@@ -24,6 +30,7 @@
 #include <rmo/gpe/oracle.h>
 #include <rmo/gpe/oracle_coarse.h>
 #include <rmo/gpe/transport.h>
+#include <rmo/ropt/solver.h>
 
 #include <deal.II/dofs/dof_tools.h>
 
@@ -295,6 +302,129 @@ void check_safeguard(CheckReport& report)
                 fmt::format("{} of {} updates", q_model.get_n_not_dominant(), q_model.get_n_updates()));
 }
 
+//! Guard of update(): a coarse node with y_j = 0 (injection of a fine point with zero tails) throws
+void check_guard(CheckReport& report)
+{
+    TwoLevel tl(100.0);
+    Vector<double> x(tl.x);
+    const double cut = 1e-12 * x.linfty_norm();
+    for (auto& a : x) {
+        a = a < cut ? 0.0 : a;
+    }
+    normalize(tl.fine.d(), x);
+    tl.T_fine.update(x);
+    tl.base.update_model(x);
+    const auto& y = tl.base.get_state().y;
+    const auto n_zero = std::ranges::count(y, 0.0);
+
+    DensityCoarseOracle<System, DensityGradient::MASS> q(tl.base, solver_options());
+    bool thrown = false;
+    try {
+        q.update(y);
+    } catch (const dealii::ExceptionBase&) {
+        thrown = true;
+    }
+    report.check(n_zero > 0 && thrown, "guard: update() throws if w_j / y_j is not finite",
+                 fmt::format("{} of {} coarse nodes with y_j = 0, thrown: {}", n_zero, y.size(), thrown));
+}
+
+//! Diagonal inverse of a lumped mass matrix, with the interface the point transfers expect (vmult, set_tol)
+struct DiagonalMassInverse
+{
+    const Vector<double>& d;
+    void vmult(Vector<double>& dst, const Vector<double>& src) const
+    {
+        dst.reinit(src.size(), true);
+        for (unsigned i = 0; i < src.size(); ++i) {
+            dst[i] = src[i] / d[i];
+        }
+    }
+    void set_tol(double) const {}
+};
+
+/**
+ * First-order coherence at a fine ground state x (energy-adaptive descent, residual below 1e-10): the transport-level
+ * defect \f$ |\langle P v, g \rangle_{D_h} - \langle v, R g \rangle_{D_H}| \f$ and the model-level defect
+ * \f$ |\langle \grad_M q(y), v \rangle_{D_H} - \langle g, P v \rangle_{D_h}| \f$, relative to
+ * \f$ |P v| |g| \f$, for the computed \f$ g = \grad_M f_h(x) \f$, without and with TangentProjectedTransport. The
+ * transport-level defect drops to rounding with the projection; the model-level defect has the rounding floor
+ * \f$ \epsilon |\grad_M f_H(y)| / |g| \f$ of \f$ \grad_M q(y) = \grad_M f_H(y) - w \f$, above the defect from
+ * the normal part, with and without the projection.
+ */
+void check_coherence_near_convergence(CheckReport& report)
+{
+    Level fine(5), coarse(4);
+    const auto& d_h = fine.d();
+    const auto& d_H = coarse.d();
+    Functional func_f(fine.system, 100.0, solver_options());
+    Functional func_c(coarse.system, 100.0, solver_options());
+
+    // Ground state: energy-adaptive full steps with the norm retraction, from the constant
+    EnergyOracle<System> ea(func_f, solver_options());
+    const UnitMassSphere<MassMatrix> sphere(fine.D());
+    DescentOptions descent{};
+    descent.tol_residual = 1e-10;
+    descent.step_size    = 1.0;
+    descent.max_iter     = 1000;
+    descent.line_search  = false;
+    Vector<double> x(d_h.size());
+    x = 1.0;
+    normalize(d_h, x);
+    GradientDescent gd(ea, ea.get_residual(), sphere, descent);
+    gd.cycle(x);
+    ea.update(x);
+    const double res = ea.get_residual().residual(x);
+
+    MassOracle<System> T_fine(func_f, solver_options()), T_coarse(func_c, solver_options());
+    T_fine.update(x);
+    const fe::LinearTransferMG<dim> transfer(coarse.package.get_dofs(), fine.package.get_dofs(),
+                                             coarse.package.get_constraints(), fine.package.get_constraints());
+    const DiagonalMassInverse M_inv_H{d_H};
+    const ManifoldTransfer<MassMatrix, DiagonalMassInverse> lin(transfer, coarse.D(), fine.D(), M_inv_H);
+    const LogThresholdManifoldTransfer<MassMatrix, DiagonalMassInverse> thr(transfer, coarse.D(), fine.D(), M_inv_H);
+    const PosUnitMassSphere<MassMatrix> coarse_manifold(coarse.D());
+    const metric::mass::TangentProjection<MassMatrix> projection(fine.D());
+
+    const std::vector<std::pair<const ManifoldTransferBase*, std::string>> maps{{&lin, "linear"}, {&thr, "threshold"}};
+    for (const auto& [pt, name] : maps) {
+        const AdjointDifferentialTransport<MassMatrix, DiagonalMassInverse> raw(transfer, *pt, coarse.D(), fine.D(),
+                                                                                M_inv_H);
+        const TangentProjectedTransport projected(raw, projection);
+        double defect[2], defect_q[2], normal = 0, floor_q = 0;
+        for (const int k : {0, 1}) {
+            const VectorTransportBase& tr = k == 0 ? static_cast<const VectorTransportBase&>(raw) : projected;
+            CoarseOracleBase base(T_fine, T_coarse, coarse_manifold, *pt, tr);
+            base.update_model(x);
+            const auto& s = base.get_state();
+            const Vector<double> v = tangent(coarse, s.y, 0.37);
+            Vector<double> Pv(d_h.size());
+            tr.vector_prolongation(x, s.y, v, Pv);
+            const double norm_g = std::sqrt(d_inner(d_h, s.x_grad, s.x_grad));
+            const double scale = std::sqrt(d_inner(d_h, Pv, Pv)) * norm_g;
+            const double lhs = d_inner(d_h, Pv, s.x_grad);
+            defect[k] = std::abs(lhs - d_inner(d_H, v, s.x_grad_restr)) / scale;
+
+            DensityCoarseOracle<System, DensityGradient::MASS> q(base, solver_options());
+            q.update(s.y);
+            Vector<double> gq(d_H.size());
+            q.gradient(s.y, gq);
+            defect_q[k] = std::abs(d_inner(d_H, v, gq) - lhs) / scale;
+            normal = std::abs(d_inner(d_h, x, s.x_grad)) / norm_g;
+            floor_q = std::numeric_limits<double>::epsilon() * std::sqrt(d_inner(d_H, s.y_grad, s.y_grad)) / norm_g;
+        }
+        report.check(res < 1e-10 && defect[1] < 1e-13, name + " maps near convergence: Galerkin for the computed g "
+                     "holds with the projected restriction",
+                     fmt::format("residual {}, normal part |x^T D g| / |g|_D {}; defect without {}, with {}", sci(res),
+                                 sci(normal), sci(defect[0]), sci(defect[1])));
+        // The cancellation in grad f_H(y) - w (both O(|grad f_H(y)|), the difference O(|g|)) dominates: the Galerkin
+        // defect without the projection is below this floor, so at the model level both are at the floor
+        report.check(std::max(defect_q[0], defect_q[1]) < 10 * floor_q + 1e-13, name + " maps near convergence: "
+                     "coherence <grad q(y), v> = <g, P v> to the rounding floor of grad f_H(y) - w",
+                     fmt::format("defect without {}, with {}; rounding floor eps |grad f_H(y)| / |g| {}",
+                                 sci(defect_q[0]), sci(defect_q[1]), sci(floor_q)));
+    }
+}
+
 } // namespace
 
 
@@ -304,5 +434,7 @@ int main()
         check_model(report);
         check_gradients(report);
         check_safeguard(report);
+        check_guard(report);
+        check_coherence_near_convergence(report);
     });
 }

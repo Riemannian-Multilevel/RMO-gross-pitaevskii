@@ -32,6 +32,27 @@ public:
 };
 
 
+/**
+ * @brief Projection onto the tangent space \f$ T_x = \{ v : x^\top M v = 0 \} \f$ of a sphere
+ * \f$ \{ x : x^\top M x = 1 \} \f$, orthogonal in the metric \f$ G \f$ of kind() (implementations: gpe/metric.h).
+ *
+ * It belongs to the metric, not to the manifold: the tangent space is that of the constraint, the orthogonal complement
+ * that of \f$ G \f$. Used by TangentProjectedTransport to make a restriction the \f$ G \f$-adjoint of its
+ * prolongation on the whole space.
+ */
+class TangentProjectionBase
+{
+public:
+    virtual ~TangentProjectionBase() = default;
+
+    //! dst = the G-orthogonal projection of v onto T_x
+    virtual void project(const Vector<double>& x, const Vector<double>& v, Vector<double>& dst) const = 0;
+
+    //! The metric G of the projection
+    [[nodiscard]] virtual MetricKind kind() const = 0;
+};
+
+
 //! Metric of an operator G, which is referenced (not owned) and may be updated after construction.
 template <typename Operator>
 class OperatorMetric : public MetricBase

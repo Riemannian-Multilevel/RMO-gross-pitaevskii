@@ -13,6 +13,7 @@
 #include <rmo/ropt/oracle_coarse.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 
@@ -512,7 +513,9 @@ enum class DensityGradient : std::uint8_t { MASS, FROBENIUS, ENERGY_MODEL, ENERG
  *   projection of \f$ A^{-1} \nabla q \f$; no positivity bound.
  *
  * update() recomputes \f$ W \f$ (and \f$ \sigma \f$) from the state of the CoarseOracleBase, and counts the points at
- * which a row sum of \f$ \hat A(z) \f$ is not positive (where ENERGY_MODEL is not guaranteed positive definite).
+ * which a row sum of \f$ \hat A(z) \f$ is not positive (where ENERGY_MODEL is not guaranteed positive definite). It
+ * throws if \f$ w_j / y_j \f$ is not finite (\f$ y_j = 0 \f$, or underflow of \f$ y_j \f$ in the point restriction):
+ * the restriction must keep \f$ y \f$ positive, see LogThresholdManifoldTransfer.
  */
 template <typename System, DensityGradient G>
 class DensityCoarseOracle : public OracleBase
@@ -604,6 +607,10 @@ public:
         bool dominant = true;
         for (unsigned j = 0; j < z.size(); ++j) {
             const double rate = state.w[j] / state.y[j];
+            AssertThrow(state.y[j] > 0 && std::isfinite(rate),
+                        dealii::ExcMessage("DensityCoarseOracle: w_j / y_j is not finite at a coarse node (y_j = 0 "
+                                           "or underflow); the point restriction must keep y bounded away from "
+                                           "zero, e.g. LogThresholdManifoldTransfer"));
             W_vec[j] = -d[j] * rate;
             shift = std::max(shift, rate - row_sum0[j]);
             // Row sum of A_hat(z) / d_j: V_j + beta z_j^2 - w_j / y_j (for a Neumann boundary)

@@ -4,7 +4,8 @@
  * positive sphere") on nested finite element spaces, with \f$ \tilde P \f$ the embedding of LinearTransferMG
  * (to_fine_mesh(), transpose Tfine()), lumped masses \f$ d_h, d_H \f$ and Neumann boundary, for a positive point
  * \f$ x \f$ with Gaussian tails (radius 10; the point maps also at radius 22, tails below \f$ 10^{-154} \f$, where
- * squares and products of components underflow), and the thresholded log maps (LogThresholdManifoldTransfer):
+ * squares and products of components underflow), the thresholded log maps (LogThresholdManifoldTransfer), and the
+ * restriction adjoint on the whole space (TangentProjectedTransport, check_projected_transports()):
  *
  * - partition of unity \f$ \tilde P \onebb = \onebb \f$ and mass consistency \f$ \tilde P^\top d_h = d_H \f$;
  * - point restriction by full weighting of the densities, \f$ y = (\tilde P^\top(d_h x^2) / d_H)^{1/2} \f$: on the
@@ -811,6 +812,139 @@ void check_threshold_transfers(CheckReport& report, const Discretization& disc, 
     }
 }
 
+/**
+ * Restriction adjoint on the whole space (TangentProjectedTransport, md/positive_multilevel_benchmark.md, step 3c): for
+ * every adjoint transport, with the projection of the metric \f$ G \f$ of its adjoint, and point map, the Galerkin
+ * condition \f$ \langle P v, g \rangle_G = \langle v, R g \rangle_G \f$ for tangent \f$ v \f$ and a non-tangent
+ * \f$ g \f$ (a multiple of \f$ x \f$ added): it fails for the transport by the size of the normal part and holds to
+ * rounding for the decorated transport; the decorated prolongation, and the restriction of a tangent \f$ g \f$, are
+ * those of the transport. The projections are \f$ G \f$-orthogonal and idempotent.
+ */
+void check_projected_transports(CheckReport& report, const Discretization& disc, unsigned n_levels)
+{
+    using Lin = ManifoldTransfer<MassMatrix, DiagonalMassInverse>;
+    using Log = LogManifoldTransfer<MassMatrix, DiagonalMassInverse>;
+    using Threshold = LogThresholdManifoldTransfer<MassMatrix, DiagonalMassInverse>;
+    using MassAdjoint = AdjointDifferentialTransport<MassMatrix, DiagonalMassInverse>;
+    const auto tag = [&](const std::string& s) { return fmt::format("{} projected restriction: {}", disc.name, s); };
+
+    const Level fine(disc, n_levels), coarse(disc, n_levels - 1);
+    const fe::LinearTransferMG<dim> embedding(coarse.package.get_dofs(), fine.package.get_dofs(),
+                                              coarse.package.get_constraints(), fine.package.get_constraints());
+    const auto& d_h = fine.d();
+    const auto& d_H = coarse.d();
+    const DiagonalMassInverse M_inv_H{d_H};
+    const metric::mass::TangentProjection<MassMatrix> mass_fine(fine.D());
+    const metric::frobenius::TangentProjection<MassMatrix> frob_fine(fine.D());
+
+    auto x = at_support_points(fine, [](const Point<dim>& p) {
+        return std::exp(-0.5 * p.norm_square()) * (1 + 0.3 * std::sin(p[0]) * std::cos(0.7 * p[1]));
+    });
+    x /= std::sqrt(d_inner(d_h, x, x));
+    const auto tangent_at = [](const Vector<double>& dd, const Vector<double>& z, double freq) {
+        Vector<double> v(z.size());
+        for (unsigned i = 0; i < z.size(); ++i) {
+            v[i] = z[i] * std::cos(freq * i);
+        }
+        v.add(-d_inner(dd, z, v) / d_inner(dd, z, z), z);
+        return v;
+    };
+    const Vector<double> g_t = tangent_at(d_h, x, 1.1);
+    Vector<double> g(g_t);
+    g.add(0.3 * std::sqrt(d_inner(d_h, g_t, g_t)), x);  // normal part 0.3 |g_t|_D
+
+    // Projections: onto T_x, G-orthogonal (the removed part is G-orthogonal to T_x), idempotent
+    for (const auto& [proj, name] : std::vector<std::pair<const TangentProjectionBase*, std::string>>{
+             {&mass_fine, "mass"}, {&frob_fine, "Frobenius"}}) {
+        Vector<double> pg(d_h.size()), ppg(d_h.size()), res(g);
+        proj->project(x, g, pg);
+        proj->project(x, pg, ppg);
+        res -= pg;
+        const bool mass = proj->kind() == MetricKind::MASS;
+        const auto inner = [&](const Vector<double>& a, const Vector<double>& b) {
+            return mass ? d_inner(d_h, a, b) : a * b;
+        };
+        const double tang = std::abs(d_inner(d_h, x, pg)) / std::sqrt(d_inner(d_h, pg, pg));
+        const double orth = std::abs(inner(res, g_t)) / std::sqrt(inner(res, res) * inner(g_t, g_t));
+        Vector<double> diff(ppg);
+        diff -= pg;
+        const double idem = std::sqrt(inner(diff, diff) / inner(pg, pg));
+        report.check(tang < 1e-14 && orth < 1e-14 && idem < 1e-15,
+                     tag(name + " TangentProjection: tangent, G-orthogonal, idempotent"),
+                     fmt::format("tangency {}, orthogonality {}, idempotency {}", sci(tang), sci(orth), sci(idem)));
+    }
+    report.check(mass_fine.kind() == MetricKind::MASS && frob_fine.kind() == MetricKind::FROBENIUS,
+                 tag("TangentProjection::kind()"), "");
+
+    // Transports with the point map of the base point y = r(x) and the projection of the metric of the adjoint (the
+    // metric of the Galerkin condition)
+    const Lin lin(embedding, coarse.D(), fine.D(), M_inv_H);
+    const Log log(embedding, coarse.D(), fine.D(), M_inv_H);
+    const Threshold thr(embedding, coarse.D(), fine.D(), M_inv_H);
+    const MassAdjoint ad_lin(embedding, lin, coarse.D(), fine.D(), M_inv_H);
+    const MassAdjoint ad_log(embedding, log, coarse.D(), fine.D(), M_inv_H);
+    const MassAdjoint ad_thr(embedding, thr, coarse.D(), fine.D(), M_inv_H);
+    const AdjointRestrictionTransport<MassMatrix, DiagonalMassInverse> ar(embedding, coarse.D(), fine.D(), M_inv_H);
+    const FrobeniusProjectionTransport<MassMatrix> fp(embedding, coarse.D(), fine.D());
+    const FrobeniusAdjointDifferentialTransport<MassMatrix> fad_lin(embedding, lin, coarse.D(), fine.D());
+    struct Case
+    {
+        std::string name;
+        const VectorTransportBase* transport;
+        const ManifoldTransferBase* point_map;
+        const TangentProjectionBase* projection;
+    };
+    const std::vector<Case> cases{
+        {"AdjointDifferentialTransport, linear maps", &ad_lin, &lin, &mass_fine},
+        {"AdjointDifferentialTransport, log maps", &ad_log, &log, &mass_fine},
+        {"AdjointDifferentialTransport, threshold maps", &ad_thr, &thr, &mass_fine},
+        {"AdjointRestrictionTransport", &ar, &lin, &mass_fine},
+        {"FrobeniusProjectionTransport", &fp, &lin, &frob_fine},
+        {"FrobeniusAdjointDifferentialTransport, linear maps", &fad_lin, &lin, &frob_fine},
+    };
+    for (const auto& c : cases) {
+        const auto t = [&](const std::string& s) { return tag(c.name + ": " + s); };
+        const bool mass = c.projection->kind() == MetricKind::MASS;
+        const auto inner_h = [&](const Vector<double>& a, const Vector<double>& b) {
+            return mass ? d_inner(d_h, a, b) : a * b;
+        };
+        const auto inner_H = [&](const Vector<double>& a, const Vector<double>& b) {
+            return mass ? d_inner(d_H, a, b) : a * b;
+        };
+        Vector<double> y(d_H.size());
+        c.point_map->restriction(x, y);
+        const Vector<double> v = tangent_at(d_H, y, 0.37);
+        const TangentProjectedTransport projected(*c.transport, *c.projection);
+
+        Vector<double> Pv(d_h.size()), Pv_proj(d_h.size());
+        c.transport->vector_prolongation(x, y, v, Pv);
+        projected.vector_prolongation(x, y, v, Pv_proj);
+        const auto defect = [&](const VectorTransportBase& tr, const Vector<double>& gg) {
+            Vector<double> rg(d_H.size());
+            tr.vector_restriction(y, x, gg, rg);
+            return std::abs(inner_h(Pv, gg) - inner_H(v, rg)) / std::sqrt(inner_h(Pv, Pv) * inner_h(gg, gg));
+        };
+        // Without the projection the defect is <v, R g_n> = <Q v, g_n> for the normal part g_n, with Q the prolongation
+        // before the projection onto T_x (Dp(y) or I_H^h): Dp(y) v is tangent at p(y), so for the differential
+        // transports the defect scales with |x - p(r(x))| (smallest for the linear maps on P1, ~2e-4)
+        const double raw = defect(*c.transport, g), proj = defect(projected, g), tangent = defect(*c.transport, g_t);
+        report.check(raw > 1e-6 && proj < 1e-14 && tangent < 1e-14,
+                     t("Galerkin for g with normal part: fails without, holds with the projection"),
+                     fmt::format("defect without {}, with {}; for tangent g without {}", sci(raw), sci(proj),
+                                 sci(tangent)));
+
+        Vector<double> Rg(d_H.size()), Rg_proj(d_H.size());
+        c.transport->vector_restriction(y, x, g_t, Rg);
+        projected.vector_restriction(y, x, g_t, Rg_proj);
+        Pv_proj -= Pv;
+        Rg_proj -= Rg;
+        const double same_P = Pv_proj.linfty_norm(), same_R = Rg_proj.linfty_norm() / Rg.linfty_norm();
+        report.check(same_P == 0 && same_R < 1e-14, t("decorated P unchanged, R unchanged for tangent g"),
+                     fmt::format("|P_proj v - P v|_inf {}, relative |R_proj g - R g|_inf {}", sci(same_P),
+                                 sci(same_R)));
+    }
+}
+
 } // namespace
 
 
@@ -831,6 +965,7 @@ int main()
             // Tails below 1e-154 (min x ~ 1e-210), where squares and products of components underflow
             check_point_transfers(report, disc, disc.degree == 1 ? 5 : 4, 22.0);
             check_threshold_transfers(report, disc, disc.degree == 1 ? 5 : 4);
+            check_projected_transports(report, disc, disc.degree == 1 ? 5 : 4);
         }
     });
 }

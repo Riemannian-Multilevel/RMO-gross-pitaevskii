@@ -2,6 +2,7 @@
 #define RMO_GPE_METRIC_H
 
 #include <rmo/ropt/manifold.h>
+#include <rmo/ropt/metric.h>
 #include <rmo/util/random.h>
 
 /**
@@ -123,6 +124,32 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
     mass::project_onto_tangent_space(x, M, tmp, v);
 }
 
+/**
+ * @brief \f$ M \f$-orthogonal projection onto \f$ T_x \f$ as TangentProjectionBase:
+ * \f$ \mathrm{dst} = v - \frac{x^\top M v}{x^\top M x} \, x \f$ (exact also for a point off the sphere).
+ */
+template <typename MatrixType>
+class TangentProjection : public TangentProjectionBase
+{
+public:
+    explicit TangentProjection(const MatrixType& M) : M(M) {}
+
+    void project(const Vector<double>& x, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        Vector<double> Mx(x.size());
+        M.vmult(Mx, x);
+        const double xMv = Mx * v, xMx = Mx * x;
+        AssertThrow(xMx > 0, dealii::ExcInternalError("x' M x <= 0"));
+        dst = v;
+        dst.add(-xMv / xMx, x);
+    }
+
+    [[nodiscard]] MetricKind kind() const override { return MetricKind::MASS; }
+
+private:
+    const MatrixType& M;
+};
+
 } // namespace metric::mass
 
 
@@ -168,6 +195,27 @@ void random_tangent_vector(const Vector<double>& x, const MatrixType& M,
     // 2. project orthogonally onto tangent space at x, wrt. the Frobenius metric
     frobenius::project_onto_tangent_space(x, M, tmp, v);
 }
+
+/**
+ * @brief Euclidean (F-metric) orthogonal projection onto \f$ T_x \f$ as TangentProjectionBase, see
+ * project_onto_tangent_space(): \f$ \mathrm{dst} = v - \frac{x^\top M v}{x^\top M^2 x} \, M x \f$.
+ */
+template <typename MatrixType>
+class TangentProjection : public TangentProjectionBase
+{
+public:
+    explicit TangentProjection(const MatrixType& M) : M(M) {}
+
+    void project(const Vector<double>& x, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        frobenius::project_onto_tangent_space(x, M, v, dst);
+    }
+
+    [[nodiscard]] MetricKind kind() const override { return MetricKind::FROBENIUS; }
+
+private:
+    const MatrixType& M;
+};
 
 } // namespace metric::frobenius
 
