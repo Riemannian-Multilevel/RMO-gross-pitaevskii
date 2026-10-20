@@ -3,7 +3,8 @@
  * @brief Checks of the transfers of the positive unit-mass sphere (tex/pos_sphere_variants.tex, "Transfers for the
  * positive sphere") on nested finite element spaces, with \f$ \tilde P \f$ the embedding of LinearTransferMG
  * (to_fine_mesh(), transpose Tfine()), lumped masses \f$ d_h, d_H \f$ and Neumann boundary, for a positive point
- * \f$ x \f$ with Gaussian tails (radius 10):
+ * \f$ x \f$ with Gaussian tails (radius 10; the point maps also at radius 22, tails below \f$ 10^{-154} \f$, where
+ * squares and products of components underflow):
  *
  * - partition of unity \f$ \tilde P \onebb = \onebb \f$ and mass consistency \f$ \tilde P^\top d_h = d_H \f$;
  * - point restriction by full weighting of the densities, \f$ y = (\tilde P^\top(d_h x^2) / d_H)^{1/2} \f$: on the
@@ -58,12 +59,12 @@ struct Discretization
     bool nonnegative;  // the embedding of the coarse into the fine space has nonnegative entries
 };
 
-GPE_Options gpe_options(const Discretization& disc)
+GPE_Options gpe_options(const Discretization& disc, double radius = 10.0)
 {
     GPE_Options options{};
     options.dimension    = dim;
     options.degree       = disc.degree;
-    options.radius       = 10.0;
+    options.radius       = radius;
     options.beta         = 100.0;
     options.order        = Ordering::DEFAULT;
     options.bc           = BoundaryCondition::NEUMANN;
@@ -75,8 +76,8 @@ GPE_Options gpe_options(const Discretization& disc)
 
 struct Level
 {
-    Level(const Discretization& disc, unsigned n_levels)
-        : package(gpe_options(disc), n_levels)
+    Level(const Discretization& disc, unsigned n_levels, double radius = 10.0)
+        : package(gpe_options(disc, radius), n_levels)
         , system(package.system<System>(V))
     {}
 
@@ -441,14 +442,16 @@ struct DiagonalMassInverse
  * ManifoldTransfer (linear interpolation, needs a nonnegative embedding) and LogManifoldTransfer (interpolation of
  * logarithms), with AdjointDifferentialTransport (adjoint from ManifoldTransferBase::diff_prolongation_adjoint()).
  */
-void check_point_transfers(CheckReport& report, const Discretization& disc, unsigned n_levels)
+void check_point_transfers(CheckReport& report, const Discretization& disc, unsigned n_levels, double radius = 10.0)
 {
-    const Level fine(disc, n_levels), coarse(disc, n_levels - 1);
+    const Level fine(disc, n_levels, radius), coarse(disc, n_levels - 1, radius);
     const fe::LinearTransferMG<dim> embedding(coarse.package.get_dofs(), fine.package.get_dofs(),
                                               coarse.package.get_constraints(), fine.package.get_constraints());
     const auto& d_h = fine.d();
     const auto& d_H = coarse.d();
-    const auto tag = [&](const std::string& s) { return fmt::format("{} point maps: {}", disc.name, s); };
+    const auto tag = [&](const std::string& s) {
+        return fmt::format("{} point maps{}: {}", disc.name, radius == 10.0 ? "" : fmt::format(" (radius {})", radius), s);
+    };
     const DiagonalMassInverse M_inv_H{d_H};
 
     report.check(is_nonnegative(embedding) == disc.nonnegative, tag("is_nonnegative(I_H^h)"),
@@ -492,19 +495,25 @@ void check_point_transfers(CheckReport& report, const Discretization& disc, unsi
         report.check(min_y > 0 && min_xp > 0 && norm_err < 1e-13, t("r(x), p(y) positive and on the spheres"),
                      fmt::format("min {}, {}; |norm - 1| {}", sci(min_y), sci(min_xp), sci(norm_err)));
 
-        // Differentials against central differences (h small against the relative size of v)
+        // Differentials against central differences, componentwise relative to the value of the map at the base point:
+        // the relative derivatives (Dp v)_i / p_i are O(1) at any magnitude, and the rounding of p(y +- h v) is
+        // eps / h relative to p_i. (An error relative to the largest entry fails on Q1 at radius 22, where the bulk
+        // of y is one coarse node: |Dr u| / |r| ~ 3e-7, below the rounding of r in the difference quotient.)
         const Vector<double> v = tangent_at(d_H, y, 0.37), u = tangent_at(d_h, x, 0.53);
         const auto fd_error = [&](auto&& map, const Vector<double>& base, const Vector<double>& dir,
                                   const Vector<double>& diff, double h) {
-            Vector<double> bp(base), bm(base), fp, fm;
+            Vector<double> bp(base), bm(base), fp, fm, f0;
             bp.add(h, dir);
             bm.add(-h, dir);
             map(bp, fp);
             map(bm, fm);
-            fp -= fm;
-            fp /= 2 * h;
-            fp -= diff;
-            return fp.linfty_norm() / diff.linfty_norm();
+            map(base, f0);
+            double err = 0, scale = 0;
+            for (unsigned i = 0; i < f0.size(); ++i) {
+                err = std::max(err, std::abs((fp[i] - fm[i]) / (2 * h) - diff[i]) / f0[i]);
+                scale = std::max(scale, std::abs(diff[i]) / f0[i]);
+            }
+            return err / scale;
         };
         Vector<double> dp(d_h.size()), dr(d_H.size());
         pt->diff_prolongation(y, v, dp);
@@ -513,10 +522,20 @@ void check_point_transfers(CheckReport& report, const Discretization& disc, unsi
         const auto r_map = [&](const Vector<double>& a, Vector<double>& b) { b.reinit(d_H.size()); pt->restriction(a, b); };
         const double ep1 = fd_error(p_map, y, v, dp, 1e-3), ep2 = fd_error(p_map, y, v, dp, 1e-4);
         const double er1 = fd_error(r_map, x, u, dr, 1e-3), er2 = fd_error(r_map, x, u, dr, 1e-4);
-        report.check(ep2 < 1e-6 && (ep2 < 1e-10 || ep1 / ep2 > 50), t("Dp(y) (central differences)"),
-                     fmt::format("relative error {}, ratio {}", sci(ep2), sci(ep1 / ep2)));
-        report.check(er2 < 1e-6 && (er2 < 1e-10 || er1 / er2 > 50), t("Dr(x) (central differences)"),
-                     fmt::format("relative error {}, ratio {}", sci(er2), sci(er1 / er2)));
+        // Rounding floor of the difference quotient at h = 1e-4: a map evaluated in logarithms has the relative
+        // rounding error eps |log f_i| per component (|log f_i| ~ 480 at radius 22), the linear maps eps
+        const auto floor_at = [](const Vector<double>& f) {
+            double m = 1;
+            for (const double a : f) {
+                m = std::max(m, std::abs(std::log(a)));
+            }
+            return 10 * std::numeric_limits<double>::epsilon() * m / 1e-4;
+        };
+        const double fp = floor_at(xp), fr = floor_at(y);
+        report.check(ep2 < 1e-6 && (ep2 < fp || ep1 / ep2 > 50), t("Dp(y) (central differences)"),
+                     fmt::format("relative error {}, ratio {}, rounding floor {}", sci(ep2), sci(ep1 / ep2), sci(fp)));
+        report.check(er2 < 1e-6 && (er2 < fr || er1 / er2 > 50), t("Dr(x) (central differences)"),
+                     fmt::format("relative error {}, ratio {}, rounding floor {}", sci(er2), sci(er1 / er2), sci(fr)));
 
         // Transport: tangency and Galerkin; Dp(y) itself is tangent at p(y), not at x
         const AdjointDifferentialTransport<MassMatrix, DiagonalMassInverse> transport(embedding, *pt, coarse.D(),
@@ -546,6 +565,28 @@ void check_point_transfers(CheckReport& report, const Discretization& disc, unsi
         }
         report.info(t("p(r(x)) / x in [min, max]; max |P v| / x (max |v/y| = 1)"),
                     fmt::format("[{}, {}]; {}", sci(lo), sci(hi), sci(pv_rel)));
+
+        // Entrywise accuracy of the adjoint Dp(y)^* g: the map is linear, and the scaling by F = 2^1000 is exact, so
+        // Dp(y)^*(F g) / F is a reference without underflow of the products x_hat_i d_i g_i (for x_i >= 1e-300)
+        Vector<double> adj(d_H.size()), adj_ref(d_H.size()), g_scaled(g);
+        pt->diff_prolongation_adjoint(y, g, adj);
+        const double F = std::ldexp(1.0, 1000);
+        g_scaled *= F;
+        pt->diff_prolongation_adjoint(y, g_scaled, adj_ref);
+        adj_ref /= F;
+        double adj_err = 0;
+        unsigned n_zero = 0, n_ref = 0;
+        for (unsigned j = 0; j < d_H.size(); ++j) {
+            if (adj_ref[j] != 0) {
+                n_ref++;
+                adj_err = std::max(adj_err, std::abs(adj[j] - adj_ref[j]) / std::abs(adj_ref[j]));
+                n_zero += adj[j] == 0 ? 1 : 0;
+            }
+        }
+        // Known limitation (tex/drafts/positive_multilevel.tex, adjoint in log space): the products underflow for
+        // x_i below about 1e-154, so this is reported, not checked
+        report.info(t("adjoint Dp(y)^* g entrywise: max relative error; entries 0 instead of nonzero"),
+                    fmt::format("{}; {} of {}", sci(adj_err), n_zero, n_ref));
     }
 
     // Injection: the log restriction is the unit-sphere restriction
@@ -574,6 +615,8 @@ int main()
                 check_transfers(report, disc, 4, true);
             }
             check_point_transfers(report, disc, disc.degree == 1 ? 5 : 4);
+            // Tails below 1e-154 (min x ~ 1e-210), where squares and products of components underflow
+            check_point_transfers(report, disc, disc.degree == 1 ? 5 : 4, 22.0);
         }
     });
 }
