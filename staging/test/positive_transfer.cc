@@ -26,6 +26,7 @@
 #include <rmo/fe/interpolate.h>
 #include <rmo/gpe/gpe.h>
 #include <rmo/gpe/manifold.h>
+#include <rmo/gpe/transport.h>
 
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/lac/full_matrix.h>
@@ -420,6 +421,142 @@ void check_transfers(CheckReport& report, const Discretization& disc, unsigned n
     }
 }
 
+
+//! Diagonal inverse of a lumped mass matrix, with the interface the transports expect (vmult, set_tol)
+struct DiagonalMassInverse
+{
+    const Vector<double>& d;
+    void vmult(Vector<double>& dst, const Vector<double>& src) const
+    {
+        dst.reinit(src.size(), true);
+        for (unsigned i = 0; i < src.size(); ++i) {
+            dst[i] = src[i] / d[i];
+        }
+    }
+    void set_tol(double) const {}
+};
+
+/**
+ * Point maps of the positive sphere (tex/drafts/positive_multilevel.tex, (U1)-(U3), (E1)-(E3)): the unit-sphere
+ * ManifoldTransfer (linear interpolation, needs a nonnegative embedding) and LogManifoldTransfer (interpolation of
+ * logarithms), with AdjointDifferentialTransport (adjoint from ManifoldTransferBase::diff_prolongation_adjoint()).
+ */
+void check_point_transfers(CheckReport& report, const Discretization& disc, unsigned n_levels)
+{
+    const Level fine(disc, n_levels), coarse(disc, n_levels - 1);
+    const fe::LinearTransferMG<dim> embedding(coarse.package.get_dofs(), fine.package.get_dofs(),
+                                              coarse.package.get_constraints(), fine.package.get_constraints());
+    const auto& d_h = fine.d();
+    const auto& d_H = coarse.d();
+    const auto tag = [&](const std::string& s) { return fmt::format("{} point maps: {}", disc.name, s); };
+    const DiagonalMassInverse M_inv_H{d_H};
+
+    report.check(is_nonnegative(embedding) == disc.nonnegative, tag("is_nonnegative(I_H^h)"),
+                 is_nonnegative(embedding) ? "nonnegative" : "negative entries");
+
+    auto x = at_support_points(fine, [](const Point<dim>& p) {
+        return std::exp(-0.5 * p.norm_square()) * (1 + 0.3 * std::sin(p[0]) * std::cos(0.7 * p[1]));
+    });
+    x /= std::sqrt(d_inner(d_h, x, x));
+
+    const ManifoldTransfer<MassMatrix, DiagonalMassInverse> lin(embedding, coarse.D(), fine.D(), M_inv_H);
+    const LogManifoldTransfer<MassMatrix, DiagonalMassInverse> log(embedding, coarse.D(), fine.D(), M_inv_H);
+    std::vector<std::pair<const ManifoldTransferBase*, std::string>> maps{{&log, "log"}};
+    if (disc.nonnegative) {
+        maps.insert(maps.begin(), {&lin, "linear"});
+    }
+
+    const auto rel_max = [](const Vector<double>& a, const Vector<double>& b) {
+        double m = 0;
+        for (unsigned i = 0; i < a.size(); ++i) {
+            m = std::max(m, std::abs(a[i] / b[i] - 1));
+        }
+        return m;
+    };
+    const auto tangent_at = [](const Vector<double>& dd, const Vector<double>& z, double freq) {
+        Vector<double> v(z.size());
+        for (unsigned i = 0; i < z.size(); ++i) {
+            v[i] = z[i] * std::cos(freq * i);
+        }
+        v.add(-d_inner(dd, z, v), z);
+        return v;
+    };
+
+    for (const auto& [pt, name] : maps) {
+        const auto t = [&](const std::string& s) { return tag(name + ": " + s); };
+        Vector<double> y(d_H.size()), xp(d_h.size());
+        pt->restriction(x, y);
+        pt->prolongation(y, xp);
+        const double min_y = *std::ranges::min_element(y), min_xp = *std::ranges::min_element(xp);
+        const double norm_err = std::max(std::abs(d_inner(d_H, y, y) - 1), std::abs(d_inner(d_h, xp, xp) - 1));
+        report.check(min_y > 0 && min_xp > 0 && norm_err < 1e-13, t("r(x), p(y) positive and on the spheres"),
+                     fmt::format("min {}, {}; |norm - 1| {}", sci(min_y), sci(min_xp), sci(norm_err)));
+
+        // Differentials against central differences (h small against the relative size of v)
+        const Vector<double> v = tangent_at(d_H, y, 0.37), u = tangent_at(d_h, x, 0.53);
+        const auto fd_error = [&](auto&& map, const Vector<double>& base, const Vector<double>& dir,
+                                  const Vector<double>& diff, double h) {
+            Vector<double> bp(base), bm(base), fp, fm;
+            bp.add(h, dir);
+            bm.add(-h, dir);
+            map(bp, fp);
+            map(bm, fm);
+            fp -= fm;
+            fp /= 2 * h;
+            fp -= diff;
+            return fp.linfty_norm() / diff.linfty_norm();
+        };
+        Vector<double> dp(d_h.size()), dr(d_H.size());
+        pt->diff_prolongation(y, v, dp);
+        pt->diff_restriction(x, u, dr);
+        const auto p_map = [&](const Vector<double>& a, Vector<double>& b) { b.reinit(d_h.size()); pt->prolongation(a, b); };
+        const auto r_map = [&](const Vector<double>& a, Vector<double>& b) { b.reinit(d_H.size()); pt->restriction(a, b); };
+        const double ep1 = fd_error(p_map, y, v, dp, 1e-3), ep2 = fd_error(p_map, y, v, dp, 1e-4);
+        const double er1 = fd_error(r_map, x, u, dr, 1e-3), er2 = fd_error(r_map, x, u, dr, 1e-4);
+        report.check(ep2 < 1e-6 && (ep2 < 1e-10 || ep1 / ep2 > 50), t("Dp(y) (central differences)"),
+                     fmt::format("relative error {}, ratio {}", sci(ep2), sci(ep1 / ep2)));
+        report.check(er2 < 1e-6 && (er2 < 1e-10 || er1 / er2 > 50), t("Dr(x) (central differences)"),
+                     fmt::format("relative error {}, ratio {}", sci(er2), sci(er1 / er2)));
+
+        // Transport: tangency and Galerkin; Dp(y) itself is tangent at p(y), not at x
+        const AdjointDifferentialTransport<MassMatrix, DiagonalMassInverse> transport(embedding, *pt, coarse.D(),
+                                                                                      fine.D(), M_inv_H);
+        const Vector<double> g = tangent_at(d_h, x, 1.1);
+        Vector<double> Pv(d_h.size()), Rg(d_H.size());
+        transport.vector_prolongation(x, y, v, Pv);
+        transport.vector_restriction(y, x, g, Rg);
+        const double tang_P = std::abs(d_inner(d_h, x, Pv)) / std::sqrt(d_inner(d_h, Pv, Pv));
+        const double tang_R = std::abs(d_inner(d_H, y, Rg)) / std::sqrt(d_inner(d_H, Rg, Rg));
+        const double lhs = d_inner(d_h, Pv, g), rhs = d_inner(d_H, v, Rg);
+        const double galerkin = std::abs(lhs - rhs) / std::abs(lhs);
+        report.check(tang_P < 1e-13 && tang_R < 1e-13, t("P v, R g tangent"), sci(tang_P) + ", " + sci(tang_R));
+        report.check(galerkin < 1e-12, t("Galerkin <P v, g>_h = <v, R g>_H"), "relative error " + sci(galerkin));
+        report.info(t("tangency of Dp(y) v at x (without Pi_x)"),
+                    sci(std::abs(d_inner(d_h, x, dp)) / std::sqrt(d_inner(d_h, dp, dp))));
+
+        // Tails: p(r(x)) / x and max |P v| / x
+        double pv_rel = 0;
+        for (unsigned i = 0; i < d_h.size(); ++i) {
+            pv_rel = std::max(pv_rel, std::abs(Pv[i]) / x[i]);
+        }
+        double lo = std::numeric_limits<double>::infinity(), hi = 0;
+        for (unsigned i = 0; i < d_h.size(); ++i) {
+            lo = std::min(lo, xp[i] / x[i]);
+            hi = std::max(hi, xp[i] / x[i]);
+        }
+        report.info(t("p(r(x)) / x in [min, max]; max |P v| / x (max |v/y| = 1)"),
+                    fmt::format("[{}, {}]; {}", sci(lo), sci(hi), sci(pv_rel)));
+    }
+
+    // Injection: the log restriction is the unit-sphere restriction
+    if (disc.nonnegative) {
+        Vector<double> y_lin(d_H.size()), y_log(d_H.size());
+        lin.restriction(x, y_lin);
+        log.restriction(x, y_log);
+        report.check(rel_max(y_log, y_lin) < 1e-13, tag("r^e = r (injection)"), sci(rel_max(y_log, y_lin)));
+    }
+}
+
 } // namespace
 
 
@@ -436,6 +573,7 @@ int main()
             if (!disc.nonnegative) {
                 check_transfers(report, disc, 4, true);
             }
+            check_point_transfers(report, disc, disc.degree == 1 ? 5 : 4);
         }
     });
 }

@@ -6,6 +6,9 @@
 
 #include <rmo/ropt/transport.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <type_traits>
 
 /**
@@ -33,7 +36,7 @@
  *   \f$ \mathcal{R} v = \frac1n \Pi^F_y (I_H^h)^\top \big( v - \frac{\tilde y^\top v}{n^2} M_h \tilde y \big) \f$.
  *
  * The restriction of AdjointDifferentialTransport is ManifoldTransferBase::diff_prolongation_adjoint() of the point
- * transfer (ManifoldTransfer with the inverse coarse mass matrix).
+ * transfer (ManifoldTransfer with the inverse coarse mass matrix, LogManifoldTransfer).
  *
  * For the differential transports, \f$ \mathcal{R} \f$ is not the adjoint of \f$ \mathcal{P} \f$: both are
  * differentials of independent point maps.
@@ -524,8 +527,8 @@ public:
 
     /**
      * @brief \f$ \mathcal{R} v = \Pi_y \mathrm{D}p(y)^* v \f$, the \f$ M \f$-adjoint of vector_prolongation() on
-     * \f$ T_x \f$, from ManifoldTransferBase::diff_prolongation_adjoint() of the point transfer
-     * (ManifoldTransfer).
+     * \f$ T_x \f$, from ManifoldTransferBase::diff_prolongation_adjoint() of the point transfer (ManifoldTransfer,
+     * LogManifoldTransfer).
      */
     void vector_restriction(const Vector<double>& y_coarse, const Vector<double>& /*x_fine*/,
                             const Vector<double>& v_fine, Vector<double>& dst) const override
@@ -617,6 +620,137 @@ private:
     const MatrixType& M_fine;
 };
 
+
+/**
+ * @brief Point maps of the positive sphere by linear interpolation of logarithms (tex/drafts/positive_multilevel.tex,
+ * (E1)-(E2)): \f$ r(x) = N_H(e^{I_h^H \log x}) \f$, \f$ p(y) = N_h(e^{I_H^h \log y}) \f$ with the normalization
+ * \f$ N(a) = a / \|a\|_M \f$. Positive for any linear transfer (also with negative weights); exact for exponential
+ * tails. For the injection \f$ I_h^H \f$ of LinearTransferMG, \f$ r \f$ is the restriction of ManifoldTransfer.
+ * Evaluated in logarithms shifted by their maximum; components below the smallest normal number are raised to it.
+ */
+template <typename MatrixType, typename InverseMatrixType>
+class LogManifoldTransfer : public ManifoldTransferBase
+{
+public:
+    LogManifoldTransfer(const LinearTransferBase& transfer, const MatrixType& M_coarse, const MatrixType& M_fine,
+                        const InverseMatrixType& M_inv_coarse)
+        : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine), M_inv_coarse(M_inv_coarse)
+    {}
+
+    /** @brief \f$ y = r(x) = N_H(e^{I_h^H \log x}) \f$ */
+    void restriction(const Vector<double>& x_fine, Vector<double>& y_coarse) const override
+    {
+        Vector<double> s(x_fine.size());
+        log_of(x_fine, s);
+        transfer.to_coarse_mesh(s, y_coarse);
+        exp_normalized(M_coarse, y_coarse);
+    }
+
+    /** @brief \f$ x = p(y) = N_h(e^{I_H^h \log y}) \f$ */
+    void prolongation(const Vector<double>& y_coarse, Vector<double>& x_fine) const override
+    {
+        Vector<double> s(y_coarse.size());
+        log_of(y_coarse, s);
+        transfer.to_fine_mesh(s, x_fine);
+        exp_normalized(M_fine, x_fine);
+    }
+
+    /** @brief \f$ \mathrm{D}r(x)[v] = \Pi_{\hat y} (\hat y \circ I_h^H (v / x)) \f$, \f$ \hat y = r(x) \f$ */
+    void diff_restriction(const Vector<double>& x_fine, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        Vector<double> y_hat(transfer.n_coarse());
+        restriction(x_fine, y_hat);
+        Vector<double> rel(v.size());
+        for (unsigned i = 0; i < v.size(); ++i) {
+            rel[i] = v[i] / x_fine[i];
+        }
+        Vector<double> t(transfer.n_coarse());
+        transfer.to_coarse_mesh(rel, t);
+        t.scale(y_hat);
+        metric::mass::project_onto_tangent_space(y_hat, M_coarse, t, dst);
+    }
+
+    /** @brief \f$ \mathrm{D}p(y)[v] = \Pi_{\hat x} (\hat x \circ I_H^h (v / y)) \f$, \f$ \hat x = p(y) \f$ */
+    void diff_prolongation(const Vector<double>& y_coarse, const Vector<double>& v, Vector<double>& dst) const override
+    {
+        Vector<double> x_hat(transfer.n_fine());
+        prolongation(y_coarse, x_hat);
+        Vector<double> rel(v.size());
+        for (unsigned j = 0; j < v.size(); ++j) {
+            rel[j] = v[j] / y_coarse[j];
+        }
+        Vector<double> t(transfer.n_fine());
+        transfer.to_fine_mesh(rel, t);
+        t.scale(x_hat);
+        metric::mass::project_onto_tangent_space(x_hat, M_fine, t, dst);
+    }
+
+    /** @brief \f$ \mathrm{D}p(y)^* u = Y^{-1} M_H^{-1} (I_H^h)^\top \hat X M_h \Pi_{\hat x} u \f$ (lumped \f$ M_H \f$) */
+    void diff_prolongation_adjoint(const Vector<double>& y_coarse, const Vector<double>& u,
+                                   Vector<double>& dst) const override
+    {
+        Vector<double> x_hat(transfer.n_fine());
+        prolongation(y_coarse, x_hat);
+        Vector<double> proj(u.size()), M_proj(u.size());
+        metric::mass::project_onto_tangent_space(x_hat, M_fine, u, proj);
+        M_fine.vmult(M_proj, proj);
+        M_proj.scale(x_hat);
+        Vector<double> dual(transfer.n_coarse());
+        transfer.Tfine(M_proj, dual);
+        M_inv_coarse.set_tol(0.0);  // relative tolerance, as in ManifoldTransfer (shared inverse)
+        dst.reinit(transfer.n_coarse());
+        M_inv_coarse.vmult(dst, dual);
+        for (unsigned j = 0; j < dst.size(); ++j) {
+            dst[j] /= y_coarse[j];
+        }
+    }
+
+private:
+    static void log_of(const Vector<double>& x, Vector<double>& s)
+    {
+        AssertThrow(std::all_of(x.begin(), x.end(), [](double a) { return a > 0; }),
+                    dealii::ExcMessage("LogManifoldTransfer: point has a non-positive component"));
+        s.reinit(x.size(), true);
+        for (unsigned i = 0; i < x.size(); ++i) {
+            s[i] = std::log(x[i]);
+        }
+    }
+
+    //! a <- N(exp(a)), with the logarithms a shifted by their maximum against overflow
+    static void exp_normalized(const MatrixType& M, Vector<double>& a)
+    {
+        const double a_max = *std::max_element(a.begin(), a.end());
+        for (auto& ai : a) {
+            ai = std::exp(ai - a_max);
+        }
+        ellipsoid::retract_by_norm(M, a);
+        ellipsoid_positive::threshold(a, std::numeric_limits<double>::min());
+    }
+
+    const MatrixType& M_coarse;
+    const MatrixType& M_fine;
+    const InverseMatrixType& M_inv_coarse;
+};
+
+
+/**
+ * @brief Whether the prolongation \f$ I_H^h \f$ of @p transfer has no entry below \f$ -\mathrm{tol} \f$, from its
+ * columns \f$ I_H^h e_j \f$ (\f$ n_H \f$ prolongations): then ManifoldTransfer maps the positive sphere into itself
+ * (with the injection as restriction). Fails for the \f$ Q_2 \f$ embedding (entries \f$ -1/8 \f$).
+ */
+inline bool is_nonnegative(const LinearTransferBase& transfer, double tol = 1e-14)
+{
+    Vector<double> e(transfer.n_coarse()), col(transfer.n_fine());
+    for (unsigned j = 0; j < transfer.n_coarse(); ++j) {
+        e = 0.0;
+        e[j] = 1.0;
+        transfer.to_fine_mesh(e, col);
+        if (*std::min_element(col.begin(), col.end()) < -tol) {
+            return false;
+        }
+    }
+    return true;
+}
 
 } // namespace rmo::gpe
 
