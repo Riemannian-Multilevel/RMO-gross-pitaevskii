@@ -140,6 +140,13 @@ struct MG_Options
     std::vector<unsigned> v_levels;
 };
 
+// Control of the coarse corrections of FullApproximationScheme, in addition to the coarse condition and eps.
+// NONE: none (default). BACKOFF: after a fallback (the prolonged correction is not a descent direction) the coarse
+// condition is not evaluated at the next `backoff` due iterations (every coarse_every), doubled on each further
+// failure and reset by an accepted correction. RATIO: BACKOFF, where an accepted correction also fails if the model
+// does not decrease or rho = (f(x) - f(x+)) / (q(y) - q(z)) < ratio_eta; a diagnostic, rho is reported per correction.
+enum class CorrectionControl : std::uint8_t { NONE, BACKOFF, RATIO };
+
 // Parameters of the FAS cycle itself, which is problem-independent;
 // choice of oracles and transfer operators is problem-specific, see e.g. gpe::CoarseModelOptions
 struct FAS_Options
@@ -148,6 +155,9 @@ struct FAS_Options
     double eps;             // minimum norm of restricted gradient
     unsigned coarse_every;  // minimum number of fine steps before coarse step is taken
     bool coarse_energy_adaptive;  // solve coarse model with energy-adaptive gradient descent
+    CorrectionControl control = CorrectionControl::NONE;
+    unsigned backoff = 1;   // initial number of due coarse conditions skipped after a failure (BACKOFF, RATIO)
+    double ratio_eta = 0.1; // minimal decrease ratio of an accepted correction (RATIO)
 };
 
 // Output of solutions, independent of the problem

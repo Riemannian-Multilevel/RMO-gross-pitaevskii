@@ -10,7 +10,10 @@
  *    and per level accepted + rejected + fallback = attempted (CorrectionStats against the iteration table);
  * 2. the supporting inequality \f$ \langle \grad f_h(x), d \rangle \le q(\tilde z) - q(y) \f$ of one correction
  *    \f$ d = P \mathcal{L}^m_y(\tilde z) \f$ (outside FAS, which does not expose the model values);
- * 3. coarse max_iter = 0: \f$ \tilde z = y \f$, \f$ d = 0 \f$, every attempt is a fallback, the run equals single level.
+ * 3. coarse max_iter = 0: \f$ \tilde z = y \f$, \f$ d = 0 \f$, every attempt is a fallback, the run equals single level;
+ * 4. CorrectionControl::BACKOFF on case 3: the same iterates, logarithmically many attempts (each failure skips
+ *    1, 2, 4, ... due evaluations of the coarse condition);
+ * 5. CorrectionControl::RATIO: on case 3 as 4; on case 1 the decrease ratio of the early corrections.
  */
 #include "check.h"
 
@@ -228,6 +231,16 @@ Counts corrections(const std::vector<CycleInfo>& rows)
     return c;
 }
 
+double extra_value(const CycleInfo& row, const std::string& name)
+{
+    for (const auto& [key, value] : row.extra) {
+        if (key == name) {
+            return value;
+        }
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
 std::string name_of(const std::vector<unsigned>& levels, double radius)
 {
     std::string s;
@@ -324,12 +337,17 @@ void check_supporting_inequality(CheckReport& report)
     }
 }
 
-//! Case 3: coarse max_iter = 0, every attempt a fallback
+//! Cases 3-5: coarse max_iter = 0, without control, with BACKOFF and with RATIO
 void check_empty_corrections(CheckReport& report)
 {
     Hierarchy h({4, 5}, 6.0, 0);
     const auto sl = run_single(h);
-    const Run none = run_fas(h, fas_options());
+    FAS_Options options = fas_options();
+    const Run none = run_fas(h, options);
+    options.control = CorrectionControl::BACKOFF;
+    const Run backoff = run_fas(h, options);
+    options.control = CorrectionControl::RATIO;
+    const Run ratio = run_fas(h, options);
 
     auto same_iterates = [&](const std::vector<CycleInfo>& a, const std::vector<CycleInfo>& b) {
         if (a.size() != b.size()) {
@@ -348,6 +366,52 @@ void check_empty_corrections(CheckReport& report)
                  same_iterates(none.fine(5), sl), "coarse max_iter = 0: every attempt a fallback, iterates of "
                  "single level", fmt::format("attempted {}, fallback {}, iterations {} (single level {})",
                                              s.attempted, s.fallback, none.fine(5).size() - 1, sl.size() - 1));
+
+    const auto& b = backoff.stats[5];
+    const unsigned n_iter = backoff.fine(5).size() - 1;
+    // Attempts at iterations 1, 5, 11, 21, 39, ... (coarse_every 2, backoff 1: 1, 2, 4, ... due evaluations skipped)
+    const auto bound = static_cast<unsigned>(std::ceil(std::log2(n_iter / 2.0))) + 2;
+    report.check(same_iterates(backoff.fine(5), sl) && b.attempted <= bound && b.failed == b.fallback &&
+                 b.skipped >= b.attempted - 1, "BACKOFF on empty corrections: same iterates, logarithmically many "
+                 "attempts, each failure skips at least one due evaluation",
+                 fmt::format("attempted {} (bound {}), failed {}, skipped {}", b.attempted, bound, b.failed,
+                             b.skipped));
+
+    const auto& r = ratio.stats[5];
+    report.check(same_iterates(ratio.fine(5), backoff.fine(5)) && r.attempted == b.attempted &&
+                 r.failed == b.failed && r.skipped == b.skipped, "RATIO on empty corrections: as BACKOFF",
+                 fmt::format("attempted {}, failed {}, skipped {}", r.attempted, r.failed, r.skipped));
+}
+
+//! Case 5 (second part): RATIO on the 2-level run of case 1
+void check_ratio(CheckReport& report)
+{
+    Hierarchy h({4, 5}, 6.0, 4);
+    FAS_Options options = fas_options();
+    options.control = CorrectionControl::RATIO;
+    const Run ratio = run_fas(h, options);
+    const auto& rows = ratio.fine(5);
+    double min_early = std::numeric_limits<double>::infinity();
+    bool finite_early = true, nan_fine = true;
+    std::string values;
+    for (unsigned k = 1; k < rows.size(); ++k) {
+        if (rows[k].coarse && rows[k].step > 0) {
+            const double rho = extra_value(rows[k], "ratio");
+            values += sci(rho) + " ";
+            if (rows[k - 1].residual > 1e-4) {
+                min_early = std::min(min_early, rho);
+                finite_early = finite_early && std::isfinite(rho);
+            }
+        }
+        else if (!rows[k].coarse) {
+            nan_fine = nan_fine && std::isnan(extra_value(rows[k], "ratio"));
+        }
+    }
+    report.check(rows.back().residual < 1e-9 && finite_early && min_early >= 0.5 && nan_fine,
+                 "RATIO: decrease ratio >= 0.5 (finite) for the corrections at residual > 1e-4, NaN in fine-step rows, "
+                 "converged",
+                 fmt::format("ratios {}; failed {}, skipped {}", values, ratio.stats[5].failed,
+                             ratio.stats[5].skipped));
 }
 
 } // namespace
@@ -362,5 +426,6 @@ int main()
         }
         check_supporting_inequality(report);
         check_empty_corrections(report);
+        check_ratio(report);
     });
 }

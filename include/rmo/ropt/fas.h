@@ -16,9 +16,13 @@
 #include <rmo/ropt/solver.h>
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 /**
  * @file
@@ -40,6 +44,8 @@ struct CorrectionStats
 {
     unsigned attempted = 0;  // coarse condition true: coarse solve
     unsigned fallback  = 0;  // no descent direction (Df(x)[d] >= 0): fine step instead
+    unsigned failed    = 0;  // failures counted by FAS_Options::control (BACKOFF, RATIO)
+    unsigned skipped   = 0;  // coarse condition due but not evaluated (back-off)
 };
 
 
@@ -229,10 +235,35 @@ public:
         info.step      = 0.0;   // no step taken yet
         info.elapsed   = timer.cpu_time();
 
-        info.extra = {{"grad_norm", 0.0}, {"grad_restr_norm", 0.0}};  // this level has a coarser one: report the condition norms
+        // Control of the corrections, see FAS_Options::control
+        const bool control = options_fas.control != CorrectionControl::NONE;
+        const bool ratio   = options_fas.control == CorrectionControl::RATIO;
+        unsigned skip = options_fas.backoff;  // due evaluations of the coarse condition skipped after the next failure
+        unsigned next_check = 0;              // first iteration in which the coarse condition is evaluated again
+        auto fail = [&](unsigned i) {
+            if (control) {
+                // Failures happen at due iterations, and the condition is due every coarse_every iterations:
+                // skip the next skip due evaluations
+                next_check = i + (skip + 1) * options_fas.coarse_every;
+                skip *= 2;
+                m_stats[level].failed++;
+            }
+        };
+        // This level has a coarser one: report the condition norms (and, for RATIO, the decrease ratio of corrections)
+        auto extra = [&](double grad_norm, double grad_restr_norm, double rho) {
+            std::vector<std::pair<std::string, double>> e{{"grad_norm", grad_norm}, {"grad_restr_norm", grad_restr_norm}};
+            if (ratio) {
+                e.emplace_back("ratio", rho);
+            }
+            return e;
+        };
 
-        // Residual at x, passed to the next fine-step gradient (inner tolerance)
-        double residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
+        constexpr double no_ratio = std::numeric_limits<double>::quiet_NaN();  // rows without a correction
+        info.extra = extra(0.0, 0.0, no_ratio);
+
+        // Residual and energy at x; the residual is passed to the next fine-step gradient (inner tolerance)
+        double residual, energy;
+        std::tie(residual, energy) = cycle_eval(O_level, R_level, x, m_observer, info);
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
@@ -252,7 +283,12 @@ public:
             double cond_grad_norm       = 0.0;
             double cond_grad_restr_norm = 0.0;
 
-            if (check_coarse_cond && (i == 1 || (i-1) % options_fas.coarse_every == 0)) {
+            const bool due = i == 1 || (i-1) % options_fas.coarse_every == 0;
+            if (check_coarse_cond && due && i < next_check) {
+                m_stats[level].skipped++;
+            }
+
+            if (check_coarse_cond && due && i >= next_check) {
                 // Update coarse model for current level estimate x
                 // -> runs T_coarse.update(y) <-> m_objective_mg[level-1]->update(y)
                 // TODO: fixed (absolute) tolerance for the model gradients, see CoarseOracleBase::update_model()
@@ -276,12 +312,21 @@ public:
 
                     // Initialize coarse trial point as the restricted fine point
                     Vector<double> zk = state.y;
+                    // Model value at y (the coarse functional is at y after update_model())
+                    const double q_y = ratio ? qk.value(state.y) : 0.0;
 
                     // Solve the coarse model q_k(zk)
                     // TODO: pass on ostream (-> callback strategy)
                     //       throw/catch exception when we do not have a descent direction on the fine level
                     this->template cycle<TiltOracleType, TiltCoarseOracleType, CoarseModelType, CoarseResidualType>(
                         qk, qk_m, rk, zk, coarse_level_idx, std::cerr);
+
+                    // Model value at the coarse solution (the coarse oracle may be at a rejected trial point)
+                    double q_z = 0.0;
+                    if (ratio) {
+                        qk.update(zk);
+                        q_z = qk.value(zk);
+                    }
 
 #ifdef CPU_TIME
                     std::cerr << "[" << timer.cpu_time() << "] coarse: inverse retraction\n";
@@ -303,6 +348,7 @@ public:
                         std::cerr << "falling back to gradient step" << std::endl;
 
                         m_stats[level].fallback++;
+                        fail(i);
                         goto fine_step;
                     }
 
@@ -314,9 +360,28 @@ public:
                     info.coarse    = true;
                     info.lac_iter  = 0;
                     info.level     = level;
-                    info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
 
-                    residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
+                    // Decrease ratio of the correction (RATIO): actual decrease over the decrease of the model;
+                    // NaN in the table if the model did not decrease (or the step was rejected)
+                    double rho = std::numeric_limits<double>::quiet_NaN();
+                    bool failed = false;
+                    if (ratio && info.step > 0.0) {
+                        const double decrease_model = q_y - q_z;
+                        if (decrease_model > 0) {
+                            rho = (energy - O_level.value(x)) / decrease_model;
+                        }
+                        failed = decrease_model <= 0 || rho < options_fas.ratio_eta;
+                    }
+                    info.extra = extra(cond_grad_norm, cond_grad_restr_norm, rho);
+
+                    std::tie(residual, energy) = cycle_eval(O_level, R_level, x, m_observer, info);
+
+                    if (failed) {
+                        fail(i);
+                    }
+                    else if (info.step > 0.0) {
+                        skip = options_fas.backoff;
+                    }
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
@@ -364,9 +429,9 @@ fine_step:
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
-                info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
+                info.extra     = extra(cond_grad_norm, cond_grad_restr_norm, no_ratio);
 
-                residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
+                std::tie(residual, energy) = cycle_eval(O_level, R_level, x, m_observer, info);
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {

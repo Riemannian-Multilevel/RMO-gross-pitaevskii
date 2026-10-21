@@ -29,7 +29,7 @@ BOOST_DESCRIBE_STRUCT(MG_Options, (),
 BOOST_DESCRIBE_STRUCT(OutputOptions, (),
     (output_bin, bin_filename, output_vtk, vtk_filename, output_every));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
-    (kappa, eps, coarse_every));
+    (kappa, eps, coarse_every, control, backoff, ratio_eta));
 
 
 BOOST_DESCRIBE_ENUM(Ordering, DEFAULT, RANDOM, CUTHILL_MCKEE, KING, MIN_DEG);
@@ -38,6 +38,7 @@ BOOST_DESCRIBE_ENUM(SolverMethod, GMRES, MINRES, CG);
 BOOST_DESCRIBE_ENUM(Precondition, NONE, DIAGONAL, SPARSE_ILU, AMG);
 BOOST_DESCRIBE_ENUM(MeshKind, QUADRILATERAL, SIMPLEX);
 BOOST_DESCRIBE_ENUM(MetricKind, NONE, FROBENIUS, MASS, ENERGY_ADAPTIVE);
+BOOST_DESCRIBE_ENUM(CorrectionControl, NONE, BACKOFF, RATIO);
 BOOST_DESCRIBE_ENUM(ManifoldKind, MASS_UNIT_SPHERE, MASS_UNIT_SPHERE_POSITIVE, SIMPLEX, POSITIVE_ORTHANT);
 BOOST_DESCRIBE_ENUM(LineSearchReference, MONOTONE, MAX, AVERAGE);
 BOOST_DESCRIBE_ENUM(InitialStep, FIXED, BB1, BB2, ALTERNATING);
@@ -237,6 +238,10 @@ inline void apply_fas_options(const po::variables_map& vm, FAS_Options& options_
     options_fas.kappa        = vm["kappa"].as<double>();
     options_fas.eps          = vm["eps"].as<double>();
     options_fas.coarse_every = vm["coarse-every"].as<unsigned>();
+    options_fas.control      = string_to_enum<CorrectionControl>(upper(vm["correction-control"].as<std::string>()));
+    options_fas.backoff      = vm["backoff"].as<unsigned>();
+    options_fas.ratio_eta    = vm["ratio-eta"].as<double>();
+    AssertThrow(options_fas.backoff > 0, dealii::ExcMessage("--backoff must be positive"));
     // options_fas.coarse_energy_adaptive = vm["coarse-energy-adaptive"].as<bool>();
 }
 
@@ -249,7 +254,14 @@ inline po::options_description fas_cli_options()
         ("eps", po::value<double>()->default_value(2e-8),
             "minimum norm of restricted gradient")
         ("coarse-every", po::value<unsigned>()->default_value(2),
-            "minimum number of fine steps before coarse step is taken");
+            "minimum number of fine steps before coarse step is taken")
+        ("correction-control", po::value<std::string>()->default_value("none"),
+            "control of the coarse corrections (none|backoff|ratio)")
+        ("backoff", po::value<unsigned>()->default_value(1),
+            "due coarse conditions skipped after the first failed correction, doubled per failure "
+            "(backoff, ratio)")
+        ("ratio-eta", po::value<double>()->default_value(0.1),
+            "minimal ratio of actual to model decrease of a correction (ratio)");
         // ("coarse-energy-adaptive", po::value<bool>()->default_value(false)->implicit_value(true),
         //     "solve coarse model with energy-adaptive gradient")
     return d;
