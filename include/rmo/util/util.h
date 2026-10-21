@@ -143,7 +143,7 @@ void dump_options(const T& obj, std::ostream& out)
             out << value;
         }
 
-        out << std::endl;
+        out << '\n';
     });
 }
 

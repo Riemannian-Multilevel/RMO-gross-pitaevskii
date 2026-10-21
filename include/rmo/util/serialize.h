@@ -5,7 +5,10 @@
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/fe/mapping.h>
+#include <deal.II/lac/diagonal_matrix.h>
+#include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/vector.h>
+#include <deal.II/numerics/data_out.h>
 
 #include <cstdint>
 #include <fstream>
@@ -135,7 +138,7 @@ inline void write_matrix_market(const dealii::SparseMatrix<double>& A, const std
     }
 }
 
-inline void write_matrix_market(const dealii::DiagonalMatrix<Vector<double>>& A, const std::string& filename)
+inline void write_matrix_market(const dealii::DiagonalMatrix<dealii::Vector<double>>& A, const std::string& filename)
 {
     std::ofstream out(filename + ".mtx");
     AssertThrow(out, dealii::ExcMessage("could not open " + filename));
