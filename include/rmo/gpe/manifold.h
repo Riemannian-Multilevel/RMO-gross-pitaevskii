@@ -405,8 +405,10 @@ inline void retract_inv_by_density(Vector<double>& v, const Vector<double>& x)
     const unsigned n = x.size();
     AssertDimension(n, v.size());
 
+    // Factored form: exact zero for v_i = x_i, no cancellation of v_i^2 - x_i^2 (which a contracted FMA evaluates to
+    // the rounding error of x_i^2)
     for (unsigned i = 0; i < n; i++) {
-        v[i] = (v[i]*v[i] - x[i]*x[i]) / (2*x[i]);
+        v[i] = (v[i] - x[i]) * (v[i] + x[i]) / (2*x[i]);
     }
 }
 

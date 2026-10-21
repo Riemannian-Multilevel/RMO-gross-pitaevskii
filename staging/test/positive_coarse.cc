@@ -15,7 +15,12 @@
  *   ENERGY_MODEL_SHIFT step \f$ \eta = -\grad q \f$ satisfies \f$ \eta > -z \f$; the shift \f$ \sigma \f$, the
  *   ENERGY_MODEL step bound, and the number of updates at which \f$ \hat A(z) \f$ has a non-positive row sum are
  *   reported;
- * - guard: update() throws if \f$ w_j / y_j \f$ is not finite (\f$ y_j = 0 \f$, from a fine point with zero tails);
+ * - guard: update() and the evaluations throw if \f$ w_j / y_j \f$ is not finite (\f$ y_j = 0 \f$, from a fine point
+ *   with zero tails);
+ * - the model is read from the state: after CoarseOracleBase::update_model() at a second fine point, without an
+ *   update() of the oracle, coherence and \f$ q(y) = f_H(y) \f$ hold at the new \f$ y \f$; two models composed as on a
+ *   middle level of FAS (levels 3, 4, 5): the gradient of the tilt oracle of level 4 at \f$ y \f$ is the restricted
+ *   fine gradient;
  * - coherence near convergence: at a fine ground state the computed \f$ g = \grad_M f_h(x) \f$ has a normal part
  *   from rounding; with AdjointDifferentialTransport (linear and thresholded log point maps) the Galerkin condition
  *   for this \f$ g \f$ holds to rounding only with the projected restriction (TangentProjectedTransport); the
@@ -299,10 +304,10 @@ void check_safeguard(CheckReport& report)
     }
     report.info("ENERGY_MODEL: min (eta + z) / z (large w)", sci(min_model));
     report.info("ENERGY_MODEL: row sum of A_hat(z) not positive",
-                fmt::format("{} of {} updates", q_model.get_n_not_dominant(), q_model.get_n_updates()));
+                fmt::format("{} of {} gradients", q_model.get_n_not_dominant(), q_model.get_n_gradients()));
 }
 
-//! Guard of update(): a coarse node with y_j = 0 (injection of a fine point with zero tails) throws
+//! Guard of update() and the evaluations: a coarse node with y_j = 0 (injection of a fine point with zero tails) throws
 void check_guard(CheckReport& report)
 {
     TwoLevel tl(100.0);
@@ -318,14 +323,21 @@ void check_guard(CheckReport& report)
     const auto n_zero = std::ranges::count(y, 0.0);
 
     DensityCoarseOracle<System, DensityGradient::MASS> q(tl.base, solver_options());
-    bool thrown = false;
-    try {
-        q.update(y);
-    } catch (const dealii::ExceptionBase&) {
-        thrown = true;
-    }
-    report.check(n_zero > 0 && thrown, "guard: update() throws if w_j / y_j is not finite",
-                 fmt::format("{} of {} coarse nodes with y_j = 0, thrown: {}", n_zero, y.size(), thrown));
+    auto throws = [](auto&& f) {
+        try {
+            f();
+        } catch (const dealii::ExceptionBase&) {
+            return true;
+        }
+        return false;
+    };
+    // update() before the residual, which divides by y_j unchecked (an assertion of deal.II in a debug build);
+    // value() without an update() (the tilt oracle of a middle level); T_coarse is at y
+    const bool thrown_update = throws([&] { q.update(y); });
+    const bool thrown_value  = throws([&] { (void)q.value(y); });
+    report.check(n_zero > 0 && thrown_update && thrown_value, "guard: update() and value() throw if w_j / y_j is not "
+                 "finite", fmt::format("{} of {} coarse nodes with y_j = 0, thrown: update {}, value {}", n_zero,
+                                       y.size(), thrown_update, thrown_value));
 }
 
 //! Diagonal inverse of a lumped mass matrix, with the interface the point transfers expect (vmult, set_tol)
@@ -425,6 +437,79 @@ void check_coherence_near_convergence(CheckReport& report)
     }
 }
 
+
+//! Relative D-norm distance of a and b
+double rel_dist(const Vector<double>& d, const Vector<double>& a, const Vector<double>& b)
+{
+    Vector<double> e(a);
+    e -= b;
+    return std::sqrt(d_inner(d, e, e) / d_inner(d, b, b));
+}
+
+/**
+ * The oracle reads the model from the state: q and q_s are updated at y_1, then the model is rebuilt at a second
+ * fine point x_2 without an update() of the oracles. Then two models composed as on a middle level of FAS: the tilt
+ * oracle of level 4 (built before the update of its model, as in FullApproximationScheme::cycle()) is the fine tilt
+ * oracle of a model on level 3; its gradient at y (the w of level 3) must be the restricted fine gradient of level 5.
+ */
+void check_update_model(CheckReport& report)
+{
+    TwoLevel tl(100.0);
+    const Vector<double>& d = tl.coarse.d();
+    DensityCoarseOracle<System, DensityGradient::MASS> q(tl.base, solver_options());
+    DensityCoarseOracle<System, DensityGradient::ENERGY_MODEL_SHIFT> q_s(tl.base, solver_options());
+    const Vector<double> y1 = tl.base.get_state().y;
+    q.update(y1);
+    q_s.update(y1);
+    Vector<double> g(d.size());
+    q_s.gradient(y1, g);
+
+    const Vector<double> x2 = positive_point(tl.fine, 3.0, 0.5);
+    tl.T_fine.update(x2);
+    tl.base.update_model(x2);
+    const auto& state = tl.base.get_state();
+    const Vector<double>& y2 = state.y;  // T_coarse (the coarse functional) is at y2
+
+    q.gradient(y2, g);
+    const double err_coh = rel_dist(d, g, state.x_grad_restr);
+    report.check(err_coh < 1e-10, "after update_model() without update(): grad_M q(y_2) = R grad_M f_h(x_2)",
+                 "relative error " + sci(err_coh));
+    const double fy = tl.T_coarse.value(y2);
+    const double err_y = std::abs(q.value(y2) - fy) / std::abs(fy);
+    report.check(err_y < 1e-13, "after update_model() without update(): q(y_2) = f_H(y_2)",
+                 "relative error " + sci(err_y));
+
+    DensityCoarseOracle<System, DensityGradient::ENERGY_MODEL_SHIFT> q_new(tl.base, solver_options());
+    q_new.update(y2);
+    Vector<double> g_new(d.size());
+    q_new.gradient(y2, g_new);
+    q_s.gradient(y2, g);
+    const double err_s = rel_dist(d, g, g_new);
+    const double err_sigma = std::abs(q_s.get_sigma() - q_new.get_sigma()) / std::max(q_new.get_sigma(), 1e-300);
+    report.check(err_s < 1e-12 && err_sigma < 1e-12, "after update_model() without update(): ENERGY_MODEL_SHIFT "
+                 "gradient and sigma equal those of a new oracle",
+                 fmt::format("gradient {}, sigma {} (sigma = {})", sci(err_s), sci(err_sigma), sci(q_new.get_sigma())));
+
+    // Middle level: level 3 below the model of level 4
+    Level level3(3);
+    Functional func_3(level3.system, 100.0, solver_options());
+    MassOracle<System> T_3(func_3, solver_options());
+    const fe::LinearTransferMG<dim> transfer43(level3.package.get_dofs(), tl.coarse.package.get_dofs(),
+                                               level3.package.get_constraints(), tl.coarse.package.get_constraints());
+    const ManifoldTransfer<Operator> point43(transfer43, func_3.get_M(), tl.func_c.get_M());
+    const MassProjectionTransport<Operator> vector43(transfer43, func_3.get_M(), tl.func_c.get_M());
+    const PosUnitMassSphere<MassMatrix> manifold3(level3.D());
+
+    DensityCoarseOracle<System, DensityGradient::MASS> qk_m(tl.base, solver_options());  // before update_model()
+    tl.T_fine.update(tl.x);
+    tl.base.update_model(tl.x);
+    CoarseOracleBase inner(qk_m, T_3, manifold3, point43, vector43);
+    inner.update_model(tl.base.get_state().y);
+    const double err_mid = rel_dist(d, inner.get_state().x_grad, tl.base.get_state().x_grad_restr);
+    report.check(err_mid < 1e-10, "middle level: the tilt oracle of level 4 gives grad_M q(y) = R grad_M f_5(x)",
+                 "relative error " + sci(err_mid));
+}
+
 } // namespace
 
 
@@ -435,6 +520,7 @@ int main()
         check_gradients(report);
         check_safeguard(report);
         check_guard(report);
+        check_update_model(report);
         check_coherence_near_convergence(report);
     });
 }

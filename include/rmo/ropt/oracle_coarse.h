@@ -154,7 +154,10 @@ protected:
 
 
 // Contract for the coarse oracles handed to FullApproximationScheme::cycle():
-// an OracleBase built on top of the problem-independent CoarseOracleBase.
+// an OracleBase built on top of the problem-independent CoarseOracleBase. A coarse oracle keeps no copy of the
+// CoarseState: update(z) updates the coarse functional only, and the evaluations read y and w from get_state(), so
+// that CoarseOracleBase::update_model() takes effect without an update() (FAS updates only the descent oracle of a
+// level, not its tilt oracle).
 template <typename T>
 concept CoarseOracle = std::derived_from<T, OracleBase>
                     && std::constructible_from<T, CoarseOracleBase&, SolverOptions>;

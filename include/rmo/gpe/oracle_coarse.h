@@ -512,10 +512,18 @@ enum class DensityGradient : std::uint8_t { MASS, FROBENIUS, ENERGY_MODEL, ENERG
  * - ENERGY_FINE: metric \f$ A(z) \f$ of \f$ f_H \f$ (as MassCoarseOracleEnergyAdaptive), the \f$ A \f$-orthogonal
  *   projection of \f$ A^{-1} \nabla q \f$; no positivity bound.
  *
- * update() recomputes \f$ W \f$ (and \f$ \sigma \f$) from the state of the CoarseOracleBase, and counts the points at
- * which a row sum of \f$ \hat A(z) \f$ is not positive (where ENERGY_MODEL is not guaranteed positive definite). It
- * throws if \f$ w_j / y_j \f$ is not finite (\f$ y_j = 0 \f$, or underflow of \f$ y_j \f$ in the point restriction):
- * the restriction must keep \f$ y \f$ positive, see LogThresholdManifoldTransfer.
+ * As the other coarse oracles, it keeps no copy of the model: update() updates the coarse functional only, and every
+ * evaluation reads \f$ y, w \f$ from the state of the CoarseOracleBase, so that CoarseOracleBase::update_model()
+ * takes effect without an update() (FullApproximationScheme updates only the descent oracle of a level, not its tilt
+ * oracle). The correction term is computed per evaluation from the state with the density lifting and its
+ * differential (ellipsoid_positive::retract_inv_by_density(), retract_inv_diff_by_density()), as the unit-sphere
+ * kernels with the normalization lifting; for ENERGY_MODEL and ENERGY_MODEL_SHIFT, gradient() sets the metric
+ * \f$ \hat A_{(\sigma)} \f$ and its preconditioner before the solve.
+ *
+ * gradient() counts the points at which a row sum of \f$ \hat A(z) \f$ is not positive (where ENERGY_MODEL is not
+ * guaranteed positive definite). update() and the evaluations throw if \f$ w_j / y_j \f$ is not finite (\f$ y_j = 0 \f$, or
+ * underflow of \f$ y_j \f$ in the point restriction): the restriction must keep \f$ y \f$ positive, see
+ * LogThresholdManifoldTransfer.
  */
 template <typename System, DensityGradient G>
 class DensityCoarseOracle : public OracleBase
@@ -555,7 +563,6 @@ public:
         , A_coarse(gp_coarse.get_A())
         , d(M_coarse.diagonal())
         , row_sum0(d.size())
-        , W(Vector<double>(d.size()))
         , W_metric(Vector<double>(d.size()))
         , m_res(model, func)
         , A_metric_inv(A_metric, options)
@@ -563,11 +570,7 @@ public:
         AssertThrow(model.coarse().metric().kind() == model_t,
                     dealii::ExcMessage("DensityCoarseOracle: the coarse model must be built in the mass metric"));
 
-        // A_hat = A_0 + beta M_pp(z) + W, and its metric version with W_metric = W + sigma D
-        A_hat.add_component(1.0, func.get_A0());
-        A_hat.add_component(func.get_beta(), func.get_Mpp());
-        A_hat.add_component(1.0, W);
-        A_hat.reinit(d);
+        // Metric A_hat + sigma D = A_0 + beta M_pp(z) + W_metric, W_metric = W + sigma D (set in gradient())
         A_metric.add_component(1.0, func.get_A0());
         A_metric.add_component(func.get_beta(), func.get_Mpp());
         A_metric.add_component(1.0, W_metric);
@@ -593,51 +596,29 @@ public:
         }
     }
 
-    // The operators refer to the members W, W_metric
+    // The operator A_metric refers to the member W_metric
     DensityCoarseOracle(const DensityCoarseOracle&) = delete;
     DensityCoarseOracle& operator=(const DensityCoarseOracle&) = delete;
 
+    //! Updates the coarse functional to z (M_pp(z)); the model is read from the state in the evaluations. Checks the
+    //! model as the evaluations do: FullApproximationScheme evaluates DensityCoarseResidual (which divides by y
+    //! unchecked) after update() and before any evaluation of the oracle.
     void update(const Vector<double>& z) override
     {
-        gp_coarse.update(z);  // M_pp(z)
-
-        const auto& state = m_model.get_state();
-        auto& W_vec = W.get_vector();
-        double shift = 0.0;
-        bool dominant = true;
-        for (unsigned j = 0; j < z.size(); ++j) {
-            const double rate = state.w[j] / state.y[j];
-            AssertThrow(state.y[j] > 0 && std::isfinite(rate),
-                        dealii::ExcMessage("DensityCoarseOracle: w_j / y_j is not finite at a coarse node (y_j = 0 "
-                                           "or underflow); the point restriction must keep y bounded away from "
-                                           "zero, e.g. LogThresholdManifoldTransfer"));
-            W_vec[j] = -d[j] * rate;
-            shift = std::max(shift, rate - row_sum0[j]);
-            // Row sum of A_hat(z) / d_j: V_j + beta z_j^2 - w_j / y_j (for a Neumann boundary)
-            dominant = dominant && row_sum0[j] + func.get_beta() * z[j] * z[j] - rate > 0;
-        }
-        n_updates++;
-        n_not_dd += dominant ? 0 : 1;
-
-        sigma = G == DensityGradient::ENERGY_MODEL_SHIFT ? shift : 0.0;
-        sigma_max = std::max(sigma_max, sigma);
-        auto& Wm_vec = W_metric.get_vector();
-        for (unsigned j = 0; j < z.size(); ++j) {
-            Wm_vec[j] = W_vec[j] + sigma * d[j];
-        }
-        if constexpr (model_metric) {
-            A_metric_inv.update_dynamic(A_metric.diagonal());
-        }
+        check_model();
+        gp_coarse.update(z);
     }
 
-    //! \f$ q(z) = f_H(z) + \frac12 z^\top W z \f$ (the oracle is at z)
+    //! \f$ q(z) = f_H(z) - \langle w, \mathcal{L}^m_y(z) \rangle_D \f$ (the oracle is at z), as
+    //! kernels::coarse_mass_value() with the density lifting
     [[nodiscard]] double value(const Vector<double>& z) const override
     {
-        double correction = 0.0;
-        for (unsigned j = 0; j < z.size(); ++j) {
-            correction += W.get_vector()[j] * z[j] * z[j];
-        }
-        return gp_coarse.value(z) + 0.5 * correction;
+        const auto& state = check_model();
+        Vector<double> v(z);
+        ellipsoid_positive::retract_inv_by_density(v, state.y);
+        Vector<double> Dv(z.size());
+        M_coarse.vmult(Dv, v);
+        return gp_coarse.value(z) - state.w * Dv;
     }
 
     [[nodiscard]] double directional_derivative(const Vector<double>& z, const Vector<double>& v) const override
@@ -652,6 +633,7 @@ public:
         dealii::Timer timer;
         GradInfo info{};
         timer.start();
+        update_metric(z);
         const Vector<double> g = euclidean_gradient(z);
 
         if constexpr (G == DensityGradient::MASS) {
@@ -703,24 +685,85 @@ public:
 
     [[nodiscard]] unsigned n_dofs() const override { return gp_coarse.n_dofs(); }
 
+    //! For ENERGY_MODEL and ENERGY_MODEL_SHIFT: the metric \f$ \hat A_{(\sigma)} \f$ with the model term and \f$ \sigma \f$
+    //! of the last gradient() (\f$ M_{\phi\phi} \f$ is that of the coarse functional, at the last update()). After
+    //! CoarseOracleBase::update_model() it is current only after the next gradient(). FullApproximationScheme does not
+    //! use it (its coarse condition takes the metric of the tilt oracle), nor does GradientDescent except for
+    //! Barzilai-Borwein steps, which follow a gradient() at the same point.
     [[nodiscard]] const MetricBase& metric() const override { return *m_metric; }
 
     const DensityCoarseResidual<System>& get_residual() const { return m_res; }
 
-    //! Shift of the last update() (0 unless ENERGY_MODEL_SHIFT), and its maximum over all updates
+    //! Shift of the last gradient() (0 unless ENERGY_MODEL_SHIFT), and its maximum over all gradients
     [[nodiscard]] double get_sigma() const { return sigma; }
     [[nodiscard]] double get_sigma_max() const { return sigma_max; }
-    //! Number of update() calls, and of those at which a row sum of \f$ \hat A(z) \f$ was not positive
-    [[nodiscard]] unsigned get_n_updates() const { return n_updates; }
+    //! Number of gradient() calls, and of those at which a row sum of \f$ \hat A(z) \f$ was not positive
+    [[nodiscard]] unsigned get_n_gradients() const { return n_gradients; }
     [[nodiscard]] unsigned get_n_not_dominant() const { return n_not_dd; }
 
 private:
-    //! \f$ \nabla q(z) = \hat A(z) z = A(z) z + W z \f$
+    //! The current model (CoarseOracleBase::get_state()); throws unless \f$ w_j / y_j \f$ is finite for all j
+    const CoarseState& check_model() const
+    {
+        const auto& state = m_model.get_state();
+        for (unsigned j = 0; j < d.size(); ++j) {
+            AssertThrow(state.y[j] > 0 && std::isfinite(state.w[j] / state.y[j]),
+                        dealii::ExcMessage("DensityCoarseOracle: w_j / y_j is not finite at a coarse node (y_j = 0 "
+                                           "or underflow); the point restriction must keep y bounded away from "
+                                           "zero, e.g. LogThresholdManifoldTransfer"));
+        }
+        return state;
+    }
+
+    /**
+     * Before each gradient: the row-sum test of \f$ \hat A(z) \f$ (counted), \f$ \sigma \f$ and, for the model metric,
+     * \f$ W_\sigma = W + \sigma D \f$, \f$ W = -D \operatorname{diag}(w/y) \f$, and the preconditioner of
+     * \f$ \hat A_{(\sigma)}(z) = A_0 + \beta M_{\phi\phi}(z) + W_\sigma \f$. The unit-sphere oracles have no such step:
+     * their energy-adaptive metric is \f$ A(z) \f$ of the coarse functional, kept current by its update(); here the
+     * metric contains the model term \f$ W \f$, so the oracle owns the operator and its preconditioner.
+     */
+    void update_metric(const Vector<double>& z) const
+    {
+        const auto& state = check_model();
+        Vector<double> rate(z.size());
+        for (unsigned j = 0; j < z.size(); ++j) {
+            rate[j] = state.w[j] / state.y[j];
+        }
+        double shift = 0.0;
+        bool dominant = true;
+        for (unsigned j = 0; j < z.size(); ++j) {
+            shift = std::max(shift, rate[j] - row_sum0[j]);
+            // Row sum of A_hat(z) / d_j: V_j + beta z_j^2 - w_j / y_j (for a Neumann boundary)
+            dominant = dominant && row_sum0[j] + func.get_beta() * z[j] * z[j] - rate[j] > 0;
+        }
+        n_gradients++;
+        n_not_dd += dominant ? 0 : 1;
+
+        sigma = G == DensityGradient::ENERGY_MODEL_SHIFT ? shift : 0.0;
+        sigma_max = std::max(sigma_max, sigma);
+        if constexpr (model_metric) {
+            auto& Wm_vec = W_metric.get_vector();
+            for (unsigned j = 0; j < z.size(); ++j) {
+                Wm_vec[j] = -d[j] * rate[j] + sigma * d[j];
+            }
+            A_metric_inv.update_dynamic(A_metric.diagonal());
+        }
+    }
+
+    /**
+     * \f$ \nabla q(z) = A(z) z - D \, \mathrm{D}\mathcal{L}^m_y(z)^* w \f$, as kernels::coarse_mass_dir_deriv() with the
+     * density lifting: \f$ \mathrm{D}\mathcal{L}^m_y(z)^* w = (z / y) \circ w \f$ (the differential is diagonal, hence
+     * \f$ D \f$-self-adjoint), i.e. \f$ \hat A(z) z \f$ with \f$ W = -D \operatorname{diag}(w/y) \f$.
+     */
     [[nodiscard]] Vector<double> euclidean_gradient(const Vector<double>& z) const
     {
+        const auto& state = check_model();
+        Vector<double> u(z.size()), Du(z.size());
+        ellipsoid_positive::retract_inv_diff_by_density(state.y, z, state.w, u);
+        M_coarse.vmult(Du, u);
         Vector<double> g(z.size());
         A_coarse.vmult(g, z);
-        W.vmult_add(g, z);
+        g -= Du;
         return g;
     }
 
@@ -733,14 +776,14 @@ private:
     Vector<double> d;         // lumped masses
     Vector<double> row_sum0;  // (A_0 1)_j / d_j
 
-    MassMatrix W, W_metric;   // -D diag(w/y), and + sigma D
-    Operator A_hat, A_metric;
+    mutable MassMatrix W_metric;  // W + sigma D, W = -D diag(w/y) (model metric; set in gradient())
+    Operator A_metric;
     DensityCoarseResidual<System> m_res;
     mutable InverseA A_metric_inv;
     std::unique_ptr<MetricBase> m_metric;
 
-    double sigma = 0.0, sigma_max = 0.0;
-    unsigned n_updates = 0, n_not_dd = 0;
+    mutable double sigma = 0.0, sigma_max = 0.0;
+    mutable unsigned n_gradients = 0, n_not_dd = 0;
 };
 
 } // namespace rmo::gpe
