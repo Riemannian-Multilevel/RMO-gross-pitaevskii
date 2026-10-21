@@ -34,6 +34,14 @@ using dealii::MGLevelObject;
 // Non-owning: an OperatorMetric refers to the operator of the level functional and must not outlive it.
 using LevelMetric = std::shared_ptr<const MetricBase>;
 
+//! Coarse corrections on one level of FullApproximationScheme, counted over one solve (cycle() on the finest level).
+//! Accepted and rejected corrections are the rows with `coarse` of the iteration table (step > 0, step = 0).
+struct CorrectionStats
+{
+    unsigned attempted = 0;  // coarse condition true: coarse solve
+    unsigned fallback  = 0;  // no descent direction (Df(x)[d] >= 0): fine step instead
+};
+
 
 /**
  * @brief Multilevel Riemannian optimization: descent on each level, with coarse corrections from coarse models
@@ -89,6 +97,8 @@ public:
         AssertIndexRange(min_level, level_indices.front()+1);  // open range
         AssertIndexRange(max_level, level_indices.back() +1);
 
+        m_stats.resize(min_level, max_level);
+
     }
 
     // TiltOracleType:       The oracle used to evaluate the coarse objective and build 'w' (e.g. MassOracle)
@@ -115,6 +125,9 @@ public:
         // Clear and start the clock on finest level
         if (level_idx == level_indices.size() - 1) {
             timer.restart();
+            for (unsigned l = min_level; l <= max_level; ++l) {
+                m_stats[l] = CorrectionStats{};
+            }
         }
         // Clear table for (W-)cycle
         if (m_observer != nullptr) {
@@ -259,6 +272,8 @@ public:
 
                 // Different values of kappa for different levels?
                 if (norm_coarse >= options_fas.kappa * norm_level && norm_level > options_fas.eps) {
+                    m_stats[level].attempted++;
+
                     // Initialize coarse trial point as the restricted fine point
                     Vector<double> zk = state.y;
 
@@ -287,6 +302,7 @@ public:
                                   << std::setprecision(12) << ")" << std::endl;
                         std::cerr << "falling back to gradient step" << std::endl;
 
+                        m_stats[level].fallback++;
                         goto fine_step;
                     }
 
@@ -403,6 +419,9 @@ fine_step:
 
     const auto& history() const { return x_hist; }
 
+    //! Coarse corrections per level of the last solve
+    const MGLevelObject<CorrectionStats>& correction_stats() const { return m_stats; }
+
 private:
     double cond_norm(unsigned level, const OracleBase& T, const Vector<double>& v) const
     {
@@ -419,6 +438,7 @@ private:
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
     MGLevelObject<std::shared_ptr<VectorTransportBase>>   m_vector_transport_mg;
     MGLevelObject<LevelMetric>                            m_cond_metric_mg;
+    MGLevelObject<CorrectionStats>                        m_stats;
     MGLevelObject<std::shared_ptr<Functional>>            m_objective_mg;
     MGLevelObject<DescentOptions>                         options_descent_mg;
     MGLevelObject<SolverOptions>                          options_solver_mg;
