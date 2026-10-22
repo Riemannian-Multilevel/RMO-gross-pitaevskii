@@ -86,6 +86,7 @@ add_rmo_executable(main_matrix LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(pos_sphere_study SOURCE staging/pos_sphere_study.cc LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(transfer_study SOURCE staging/transfer_study.cc LINK_LIBS Boost::program_options fmt::fmt)
 add_rmo_executable(pos_sphere_ml SOURCE staging/pos_sphere_ml.cc LINK_LIBS Boost::program_options fmt::fmt)
+add_rmo_executable(main_coarse_lumping SOURCE staging/main_coarse_lumping.cc LINK_LIBS Boost::program_options fmt::fmt)
 
 # --- Create targets for tests
 enable_testing()

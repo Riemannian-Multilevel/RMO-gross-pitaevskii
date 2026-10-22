@@ -6,6 +6,8 @@ Plan and design: `md/positive_multilevel_benchmark.md` (drafts), section 3 (stag
 | file | role |
 |---|---|
 | `pos_sphere_ml` (target, `staging/pos_sphere_ml.cc`) | one run: FAS (two or more levels) or single level (one level); writes `summary.csv`, `iter.csv` to `--out` |
+| `pos_sphere_ml.h` | shared by `pos_sphere_ml` and `main_coarse_lumping`: positive-sphere options, transfer prototypes, level hierarchy |
+| `main_coarse_lumping` (target, `staging/main_coarse_lumping.cc`) | one run with the options of `pos_sphere_ml` (no `--out`) and the outputs of `main_coarse`: finest-level table on stdout, coarse tables and cycle log on stderr, `--output-bin`, `--output-vtk`; not used by the stages |
 | `pos_sphere_ml.sh` | the runs of one stage (`STAGE`, `CONFIGS`, `BLOCKS`, `SMOKE`), on `pos_sphere_lib.sh` |
 | `pos_sphere_cpu.sh` | repeats of a stage into `rep<k>/`, `WAIT_LOAD` |
 | `main_coarse_summary.py` | one unit-sphere run of `main_coarse`, written like `pos_sphere_ml` (the reference block) |
