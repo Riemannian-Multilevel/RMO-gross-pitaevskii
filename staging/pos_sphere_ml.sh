@@ -13,7 +13,7 @@
 # line: `<config id> <level counts> [<size>]`, level counts as `2,3` (1: single level), size 4225 (default) or 16641.
 #
 # A configuration is `<smoother>[__<factor>=<value>...]`, e.g. ea-armijo-floor__cg=mass__kappa=0.5. Smoothers:
-# ea-armijo-floor, ea-armijo-clip, ea-exact-floor, mass-exact-floor. Factor values: pt=log, cg=<coarse gradient>,
+# ea-armijo-floor, ea-armijo-clip, ea-exact-floor, mass-exact-floor. Factor values: pt=log, pt=restriction, cg=<coarse gradient>,
 # cr=plain, cmi=<coarse iterations>, inner=default, kappa=<value>, ctrl=ratio. Fixed settings: those of section 3.
 #
 # Sizes: level counts are compared at the same number of DoFs on the finest level. 4225 DoFs: Q1 fine level 7, P1
@@ -83,6 +83,8 @@ config_args() {
     for word in "${words[@]:1}"; do
         case $word in
             pt=log) config_args+=(--point-transfer log-threshold) ;;
+            pt=restriction) config_args+=(--point-transfer restriction) ;;
+            pt=restriction-transpose) config_args+=(--point-transfer restriction-transpose) ;;
             cg=*) config_args+=(--coarse-grad "${word#cg=}") ;;
             cr=plain) config_args+=(--coarse-retraction plain) ;;
             cmi=*) config_args+=(--coarse-max-iter "${word#cmi=}") ;;

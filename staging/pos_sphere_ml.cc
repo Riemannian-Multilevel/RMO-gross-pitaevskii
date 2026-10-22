@@ -101,6 +101,192 @@ struct Recorder : IterationObserver<CycleInfo>
     std::vector<CycleInfo> rows;
 };
 
+/**
+ * Prototype of the restriction-based transfer, Version I (tex/drafts/positive_multilevel.tex, "Restriction-based
+ * transfers"): point restriction by full weighting of the densities, r(x) = (D_H^{-1} I^T D_h x^2)^{1/2} (unit mass,
+ * no normalization; the prolongation interpolates squares and is not used by FAS) ...
+ */
+class DensityFullWeighting : public ManifoldTransferBase
+{
+public:
+    DensityFullWeighting(const LinearTransferBase& transfer, const MassMatrix& M_coarse, const MassMatrix& M_fine)
+        : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    void restriction(const Vector<double>& x, Vector<double>& y) const override
+    {
+        Vector<double> sq(x), Dsq(x.size());
+        sq.scale(x);
+        M_fine.vmult(Dsq, sq);
+        y.reinit(transfer.n_coarse());
+        transfer.Tfine(Dsq, y);
+        const auto& d_H = M_coarse.get_vector();
+        for (unsigned j = 0; j < y.size(); ++j) {
+            y[j] = std::sqrt(y[j] / d_H[j]);
+        }
+    }
+
+    void prolongation(const Vector<double>& y, Vector<double>& x) const override
+    {
+        Vector<double> sq(y);
+        sq.scale(y);
+        x.reinit(transfer.n_fine());
+        transfer.to_fine_mesh(sq, x);
+        for (auto& e : x) {
+            e = std::sqrt(e);
+        }
+        ellipsoid::retract_by_norm(M_fine, x);
+    }
+
+private:
+    const MassMatrix& M_coarse;
+    const MassMatrix& M_fine;
+};
+
+/**
+ * ... and the vector transfer P = Dr(x)^*, R = Dr(x) (mass metric): P v = x o I(v / y), R g = D_H^{-1} I^T D_h
+ * (x o Pi_x g) / y. With y = r(x) both are tangent and adjoint (the projections only against rounding), and with the
+ * density lifting the correction is x_new^2 = x^2 o (1 + alpha (I(z^2 / y^2) - 1)): no base point x_hat.
+ */
+class RestrictionTransport : public VectorTransportBase
+{
+public:
+    RestrictionTransport(const LinearTransferBase& transfer, const MassMatrix& M_coarse, const MassMatrix& M_fine)
+        : transfer(transfer), M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    void vector_prolongation(const Vector<double>& x, const Vector<double>& y, const Vector<double>& v,
+                             Vector<double>& dst) const override
+    {
+        Vector<double> rel(v.size()), t(transfer.n_fine());
+        for (unsigned j = 0; j < v.size(); ++j) {
+            rel[j] = v[j] / y[j];
+        }
+        transfer.to_fine_mesh(rel, t);
+        t.scale(x);
+        metric::mass::project_onto_tangent_space(x, M_fine, t, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y, const Vector<double>& x, const Vector<double>& g,
+                            Vector<double>& dst) const override
+    {
+        Vector<double> q(g.size()), Dq(g.size()), t(transfer.n_coarse());
+        metric::mass::project_onto_tangent_space(x, M_fine, g, q);
+        q.scale(x);
+        M_fine.vmult(Dq, q);
+        transfer.Tfine(Dq, t);
+        const auto& d_H = M_coarse.get_vector();
+        for (unsigned j = 0; j < t.size(); ++j) {
+            t[j] /= d_H[j] * y[j];
+        }
+        metric::mass::project_onto_tangent_space(y, M_coarse, t, dst);
+    }
+
+private:
+    const LinearTransferBase& transfer;
+    const MassMatrix& M_coarse;
+    const MassMatrix& M_fine;
+};
+
+/**
+ * Comparison prototype: the density restriction with the plain transpose, W = I^T instead of D_H^{-1} I^T D_h:
+ * r(x) = N_H(s), s = (I^T x^2)^{1/2}, n = |s|_{D_H}; R g = Dr(x)[Pi_x g] = n^{-1} Pi_y(I^T(x o Pi_x g) / s),
+ * P v = Pi_x Dr(x)^* v = Pi_x(n^{-1} x o D_h^{-1} I(d_H o Pi_y v / s)) (mass-metric adjoint).
+ */
+class DensityTransposeRestriction : public ManifoldTransferBase
+{
+public:
+    DensityTransposeRestriction(const LinearTransferBase& transfer, const MassMatrix& M_coarse, const MassMatrix& M_fine)
+        : ManifoldTransferBase(transfer), M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    void restriction(const Vector<double>& x, Vector<double>& y) const override
+    {
+        Vector<double> sq(x);
+        sq.scale(x);
+        y.reinit(transfer.n_coarse());
+        transfer.Tfine(sq, y);
+        for (auto& e : y) {
+            e = std::sqrt(e);
+        }
+        ellipsoid::retract_by_norm(M_coarse, y);
+    }
+
+    void prolongation(const Vector<double>& y, Vector<double>& x) const override
+    {
+        Vector<double> sq(y);
+        sq.scale(y);
+        x.reinit(transfer.n_fine());
+        transfer.to_fine_mesh(sq, x);
+        for (auto& e : x) {
+            e = std::sqrt(e);
+        }
+        ellipsoid::retract_by_norm(M_fine, x);
+    }
+
+private:
+    const MassMatrix& M_coarse;
+    const MassMatrix& M_fine;
+};
+
+class TransposeRestrictionTransport : public VectorTransportBase
+{
+public:
+    TransposeRestrictionTransport(const LinearTransferBase& transfer, const MassMatrix& M_coarse,
+                                  const MassMatrix& M_fine)
+        : transfer(transfer), M_coarse(M_coarse), M_fine(M_fine)
+    {}
+
+    void vector_prolongation(const Vector<double>& x, const Vector<double>& y, const Vector<double>& v,
+                             Vector<double>& dst) const override
+    {
+        const auto [s, n] = root(x);
+        Vector<double> pv(v.size()), t(transfer.n_fine());
+        metric::mass::project_onto_tangent_space(y, M_coarse, v, pv);
+        const auto& d_H = M_coarse.get_vector();
+        const auto& d_h = M_fine.get_vector();
+        for (unsigned j = 0; j < pv.size(); ++j) {
+            pv[j] *= d_H[j] / s[j];
+        }
+        transfer.to_fine_mesh(pv, t);
+        for (unsigned i = 0; i < t.size(); ++i) {
+            t[i] *= x[i] / (d_h[i] * n);
+        }
+        metric::mass::project_onto_tangent_space(x, M_fine, t, dst);
+    }
+
+    void vector_restriction(const Vector<double>& y, const Vector<double>& x, const Vector<double>& g,
+                            Vector<double>& dst) const override
+    {
+        const auto [s, n] = root(x);
+        Vector<double> q(g.size()), t(transfer.n_coarse());
+        metric::mass::project_onto_tangent_space(x, M_fine, g, q);
+        q.scale(x);
+        transfer.Tfine(q, t);
+        for (unsigned j = 0; j < t.size(); ++j) {
+            t[j] /= s[j] * n;
+        }
+        metric::mass::project_onto_tangent_space(y, M_coarse, t, dst);
+    }
+
+private:
+    std::pair<Vector<double>, double> root(const Vector<double>& x) const
+    {
+        Vector<double> sq(x), s(transfer.n_coarse()), Ms(transfer.n_coarse());
+        sq.scale(x);
+        transfer.Tfine(sq, s);
+        for (auto& e : s) {
+            e = std::sqrt(e);
+        }
+        M_coarse.vmult(Ms, s);
+        return {s, std::sqrt(s * Ms)};
+    }
+
+    const LinearTransferBase& transfer;
+    const MassMatrix& M_coarse;
+    const MassMatrix& M_fine;
+};
+
 std::shared_ptr<ManifoldBase> make_manifold(const std::string& name, const MassMatrix& D, double floor)
 {
     if (name == "floor") return std::make_shared<FlooredPosSphere<MassMatrix>>(D, floor, true);
@@ -146,6 +332,16 @@ public:
             if (opts.point_transfer == "linear") {
                 point_transfers[l] = std::make_shared<ManifoldTransfer<MassMatrix, InverseM>>(*transfers[l], Mc, Mf,
                                                                                                Mc_inv);
+            }
+            else if (opts.point_transfer == "restriction-transpose") {
+                point_transfers[l] = std::make_shared<DensityTransposeRestriction>(*transfers[l], Mc, Mf);
+                transports[l] = std::make_shared<TransposeRestrictionTransport>(*transfers[l], Mc, Mf);
+                continue;
+            }
+            else if (opts.point_transfer == "restriction") {
+                point_transfers[l] = std::make_shared<DensityFullWeighting>(*transfers[l], Mc, Mf);
+                transports[l] = std::make_shared<RestrictionTransport>(*transfers[l], Mc, Mf);
+                continue;
             }
             else {
                 point_transfers[l] = std::make_shared<LogThresholdManifoldTransfer<MassMatrix, InverseM>>(
@@ -482,7 +678,7 @@ int main(int argc, char* argv[])
                 "retraction of the finest level and of the correction (floor|plain|e-cap-up|clip-e-cap-up)")
             ("coarse-retraction", po::value<std::string>()->default_value("floor"),
                 "retraction of the coarse levels, with the density lifting (floor|plain)")
-            ("point-transfer", po::value<std::string>()->default_value("linear"), "point maps (linear|log-threshold)")
+            ("point-transfer", po::value<std::string>()->default_value("linear"), "point maps (linear|log-threshold), or restriction: the restriction-based transfer (prototype)")
             ("coarse-grad", po::value<std::string>()->default_value("model"),
                 "gradient of the coarse model (model|model-shift|fine|mass|frobenius)")
             ("coarse-max-iter", po::value<unsigned>()->default_value(4), "iterations per coarse solve")
@@ -520,7 +716,7 @@ int main(int argc, char* argv[])
         using namespace std::string_literals;
         check_value("smoother", opts.smoother, {"floor"s, "plain"s, "e-cap-up"s, "clip-e-cap-up"s});
         check_value("coarse-retraction", opts.coarse_retraction, {"floor"s, "plain"s});
-        check_value("point-transfer", opts.point_transfer, {"linear"s, "log-threshold"s});
+        check_value("point-transfer", opts.point_transfer, {"linear"s, "log-threshold"s, "restriction"s, "restriction-transpose"s});
         check_value("coarse-grad", opts.coarse_grad, {"model"s, "model-shift"s, "fine"s, "mass"s, "frobenius"s});
         if (opts.metric_smooth != MetricKind::ENERGY_ADAPTIVE && opts.metric_smooth != MetricKind::MASS) {
             throw std::invalid_argument("--metric-smooth: energy_adaptive or mass");
