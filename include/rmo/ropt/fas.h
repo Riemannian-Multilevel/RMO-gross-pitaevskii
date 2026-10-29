@@ -223,7 +223,9 @@ public:
 
         // Plot history of iterates
         if (level_idx == level_indices.size() - 1) {
-            x_hist.emplace_back(x);
+            if (m_keep_history) {
+                x_hist.emplace_back(x);
+            }
 
             // Residual check on finest level
             if (residual < options_descent_mg[level].tol_residual) {
@@ -304,7 +306,9 @@ public:
 
                     // Plot history of iterates
                     if (level_idx == level_indices.size() - 1) {
-                        x_hist.emplace_back(x);
+                        if (m_keep_history) {
+                            x_hist.emplace_back(x);
+                        }
 
                         // Residual check on finest level
                         if (residual < options_descent_mg[level].tol_residual) {
@@ -354,7 +358,9 @@ fine_step:
 
                 // Plot history of iterates
                 if (level_idx == level_indices.size() - 1) {
-                    x_hist.emplace_back(x);
+                    if (m_keep_history) {
+                        x_hist.emplace_back(x);
+                    }
 
                     // Residual check on finest level
                     if (residual < options_descent_mg[level].tol_residual) {
@@ -401,7 +407,9 @@ fine_step:
         return level_log;
     }
 
+    //! Iterates of the finest level, kept only if keep_history(true) (default): one vector per iteration
     const auto& history() const { return x_hist; }
+    void keep_history(bool keep) { m_keep_history = keep; }
 
 private:
     double cond_norm(unsigned level, const OracleBase& T, const Vector<double>& v) const
@@ -424,6 +432,7 @@ private:
     MGLevelObject<SolverOptions>                          options_solver_mg;
     FAS_Options                                           options_fas;
 
+    bool m_keep_history = true;
     std::vector<Vector<double>> x_hist;
 };
 

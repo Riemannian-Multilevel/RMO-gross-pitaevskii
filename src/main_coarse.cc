@@ -121,7 +121,7 @@ public:
     void distribute(Vector<double>& x) const { builder->distribute(x); }
     Vector<double> initial_value() const { return builder->initial_value(); }
 
-    void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
+    void run(Vector<double>& x0, MetricKind metric_t, bool keep_history, std::ostream& os)
     {
         std::unique_ptr<GrossPitaevskiiOracle<System>> oracle;
 
@@ -142,6 +142,7 @@ public:
         // 3. Execute the single-level gradient descent cycle
         solver = std::make_unique<GradientDescent>(*oracle, oracle->get_residual(), *manifold, options_gd);
         solver->set_observer(conv_observer);
+        solver->keep_history(keep_history);
         solver->cycle(x0, os);
     }
 
@@ -275,8 +276,10 @@ public:
     void distribute(Vector<double>& x) const { builders_mg[max_level]->distribute(x); }
     Vector<double> initial_value() const { return builders_mg[max_level]->initial_value(); }
 
-    void run(Vector<double>& x0, MetricKind metric_t, std::ostream& os)
+    void run(Vector<double>& x0, MetricKind metric_t, bool keep_history, std::ostream& os)
     {
+        fas_solver->keep_history(keep_history);
+
         // Execute the cycle on the finest level
         EnergyOracle<System> O_fine(*objective_mg[max_level], options_solver_mg[max_level]);
 
@@ -380,6 +383,7 @@ static void run_experiment(const ProgramOptions& opts)
     constexpr int dim = System::dimension;
     const unsigned n_levels = opts.mg.n_levels;
     auto potential_v = potential::get_potential<dim>(opts.gpe.potential, opts.gpe.potential_expr);
+    const bool keep_history = opts.output.output_bin || opts.output.output_vtk;  // iterates only for the output
 
     if (opts.coarse_model.metric_t == MetricKind::NONE || opts.mg.v_levels.size() == 1) {
         // Run standard single-level Riemannian gradient descent on the finest level
@@ -393,7 +397,7 @@ static void run_experiment(const ProgramOptions& opts)
         // Starting value on the sphere
         ellipsoid::retract_by_norm(context.get_M(), x0);
 
-        context.run(x0, MetricKind::ENERGY_ADAPTIVE, std::cout);
+        context.run(x0, MetricKind::ENERGY_ADAPTIVE, keep_history, std::cout);
 
         if (opts.output.output_bin) {
             const std::string basename = opts.output.bin_filename.empty()
@@ -418,7 +422,7 @@ static void run_experiment(const ProgramOptions& opts)
         // Starting value on the sphere
         ellipsoid::retract_by_norm(context.get_M(), x0);
 
-        context.run(x0, opts.coarse_model.metric_t, std::cout);
+        context.run(x0, opts.coarse_model.metric_t, keep_history, std::cout);
         context.log(std::cerr);
 
         if (opts.output.output_bin) {

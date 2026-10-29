@@ -192,7 +192,9 @@ public:
         // Residual at x, passed to the next gradient (inner tolerance)
         double residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
         x_hist.clear();
-        x_hist.emplace_back(x);
+        if (m_keep_history) {
+            x_hist.emplace_back(x);
+        }
 
         if (residual < options_gd.tol_residual) {
             return;
@@ -219,7 +221,9 @@ public:
             info.level     = 0;
 
             residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
-            x_hist.emplace_back(x);
+            if (m_keep_history) {
+                x_hist.emplace_back(x);
+            }
 
             if (residual < options_gd.tol_residual) {
                 // trick so that convergence_table is updated for last step
@@ -244,7 +248,9 @@ public:
         }
     }
 
+    //! Iterates, kept only if keep_history(true) (default): one vector per iteration
     const auto& history() const { return x_hist; }
+    void keep_history(bool keep) { m_keep_history = keep; }
 
 private:
     dealii::Timer timer;
@@ -254,6 +260,7 @@ private:
     const ManifoldBase& manifold;
     DescentOptions options_gd;
 
+    bool m_keep_history = true;
     std::vector<Vector<double>> x_hist;
 };
 
