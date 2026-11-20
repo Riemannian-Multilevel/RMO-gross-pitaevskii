@@ -28,28 +28,14 @@
 namespace rmo
 {
 
-// TODO: use in GradientDescent::cycle()
-enum class SolverStatus {
-    CONVERGED,          // iterative method, converged for given tolerance
-    NOT_CONVERGED,      // iterative method, not converged for given tolerance
-    SOLUTION,           // non-iterative method
-    ERROR               // solver error
+// NONE:  default value for unitialized values
+// STEP:  an outcome was produced, with or without fulfilling conditions
+// ERROR: a specified condition was not fulfilled
+enum class CycleStatus {
+    NONE,
+    STEP,
+    ERROR
 };
-
-// TODO: use in Oracle::run() (package of value(), update() and gradient())
-struct SolverInfo {
-    SolverStatus status;
-    size_t num_iter;
-    Vector<double> solution;
-    size_t elapsed_time;
-};
-
-// enum class SolverNorm {
-//     L1,
-//     L2,
-//     LINF,
-//     UNKNOWN
-// };
 
 //! One evaluated iterate of a (multilevel) descent method. The described fields are reported by
 //! every solver; optional values go into `extra`.
@@ -64,6 +50,9 @@ struct CycleInfo
     double   step      = 0.0;
     double   min_value = 0.0;
     double   elapsed   = 0.0;
+
+    //! Algorithmic outcome, generic
+    CycleStatus status = CycleStatus::NONE;
 
     //! Optional values, reported as additional columns (e.g. coarse condition norms)
     std::vector<std::pair<std::string, double>> extra;
@@ -97,6 +86,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
                        DescentOptions options_gd)
 {
     double step_size = options_gd.step_size;
+    auto status = CycleStatus::STEP;
 
     // Update point (fixed step or line search)
     if (options_gd.line_search) {
@@ -110,6 +100,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
 
         if (step_size == 0.0) {
             std::cerr << "  -> Step rejected by line search." << std::endl;
+            status = CycleStatus::ERROR;
         }
     }
     else {
@@ -124,15 +115,16 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         O_fine.update(x);
     }
 
-    return {.step = step_size, .elapsed = timer.cpu_time(), .extra = {}};
+    return {.step = step_size, .elapsed = timer.cpu_time(), .status = status, .extra = {}};
 }
 
 
 // Evaluates and reports the residual (of R) and the energy (of O) at the iterate y
+// Cycle status (STEP or ERROR, rejected step size, is not stored)
 template <typename Oracle>
 std::pair<double,double>
-cycle_eval(const Oracle& O, const ResidualBase& R, const Vector<double>& y, IterationObserver<CycleInfo>* observer,
-           CycleInfo info)
+cycle_eval(const Oracle& O, const ResidualBase& R, const Vector<double>& y,
+           IterationObserver<CycleInfo>* observer, CycleInfo info)
 {
     const double residual = R.residual(y);
     const double energy   = O.value(y);
@@ -192,7 +184,9 @@ public:
         // Residual at x, passed to the next gradient (inner tolerance)
         double residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
         x_hist.clear();
-        x_hist.emplace_back(x);
+        if (m_keep_history) {
+            x_hist.emplace_back(x);
+        }
 
         if (residual < options_gd.tol_residual) {
             return;
@@ -219,7 +213,9 @@ public:
             info.level     = 0;
 
             residual = cycle_eval(O_fine, R_fine, x, m_observer, info).first;
-            x_hist.emplace_back(x);
+            if (m_keep_history) {
+                x_hist.emplace_back(x);
+            }
 
             if (residual < options_gd.tol_residual) {
                 // trick so that convergence_table is updated for last step
@@ -228,7 +224,9 @@ public:
             }
 
             // Avoid a stalling line search where the solution x does not change
-            if (options_gd.line_search && info.step == 0.0) {
+            // XXX: this checks a generic CycleStatus::ERROR, but the message assumes options_gd.line_search
+            // is enabled (stalled line search)
+            if (info.status == CycleStatus::ERROR) {
                 std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
                 break;
             }
@@ -244,7 +242,9 @@ public:
         }
     }
 
+    //! Iterates, kept only if keep_history(true) (default): one vector per iteration
     const auto& history() const { return x_hist; }
+    void keep_history(bool keep) { m_keep_history = keep; }
 
 private:
     dealii::Timer timer;
@@ -254,6 +254,7 @@ private:
     const ManifoldBase& manifold;
     DescentOptions options_gd;
 
+    bool m_keep_history = true;
     std::vector<Vector<double>> x_hist;
 };
 

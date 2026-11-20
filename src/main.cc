@@ -61,6 +61,7 @@ static void solve(const ProgramOptions& opts)
         GradientDescent solver(oracle, oracle.get_residual(), manifold, opts.descent);
         ConvergenceTableObserver<CycleInfo> conv_observer;
         solver.set_observer(conv_observer);
+        solver.keep_history(opts.output.output_vtk);
 
         Vector<double> x(x0);
         solver.cycle(x, std::cout);
