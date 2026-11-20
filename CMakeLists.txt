@@ -38,6 +38,8 @@ endif()
 
 # Find all .h (header) files in the include/ directory
 file(GLOB_RECURSE HEADER_ALL "include/*.h")
+# Exclude Emacs lock files (.#name.h): dangling symlinks, break generation
+list(FILTER HEADER_ALL EXCLUDE REGEX "/\\.#[^/]*$")
 
 function(add_rmo_executable TARGET_NAME)
     # Parse the arguments
