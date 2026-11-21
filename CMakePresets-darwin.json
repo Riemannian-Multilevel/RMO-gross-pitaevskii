@@ -4,10 +4,10 @@
     {
       "name": "mac-base",
             "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
+      "binaryDir": "${sourceParentDir}/build-${sourceDirName}-${presetName}",
       "hidden": true,
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": ":ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "deal.II_DIR": "/Applications/deal.II.app/Contents/Resources/Libraries/lib/cmake/deal.II",
         "Boost_DIR": "/Applications/deal.II.app/Contents/Resources/Libraries/lib/cmake/Boost-1.83.0"
       }
