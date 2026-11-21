@@ -100,8 +100,8 @@ struct Eigenpairs
 //! @brief Eigenpairs of A0 u = lambda M u closest to zero, by ARPACK in shift-and-invert mode with shift 0.
 //!
 //! ARPACK finds the largest eigenvalues 1/lambda of A0^{-1} M, i.e. the smallest lambda. @p A_inv applies A0^{-1}.
-template <int dim>
-Eigenpairs smallest_eigenpairs(const GrossPitaevskiiSystem<dim>& system, const InverseOpType& A_inv, unsigned n_eigen)
+template <int dim, typename Inverse>
+Eigenpairs smallest_eigenpairs(const GrossPitaevskiiSystem<dim>& system, const Inverse& A_inv, unsigned n_eigen)
 {
     SolverControl control(system.n_dofs(), 1e-12, false, false);
     // ARPACK requires more than 2 * n_eigen + 1 Arnoldi vectors
@@ -152,9 +152,8 @@ void check_linear_minimizer(CheckReport& report, const Config& config)
     solver.cycle(x, std::cout);
 
     // For beta = 0, A = A0, so A_inv applies A0^{-1}; its accuracy limits that of ARPACK
-    auto& A_inv = objective.get_A_inv();
-    A_inv.set_tol(1e-13);
-    const Eigenpairs pairs = smallest_eigenpairs<dim>(system, A_inv, config.n_eigen);
+    const auto& A_inv = objective.get_A_inv();
+    const Eigenpairs pairs = smallest_eigenpairs<dim>(system, with_tol(A_inv, AbsTol{1e-13}), config.n_eigen);
     const auto   i_min     = std::ranges::min_element(pairs.lambda) - pairs.lambda.begin();
     const double lambda_1  = pairs.lambda[i_min];
 

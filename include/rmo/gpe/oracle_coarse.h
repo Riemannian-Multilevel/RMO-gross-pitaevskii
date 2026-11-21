@@ -88,15 +88,12 @@ public:
         dealii::Timer timer;
         GradInfo info{};
 
-        if (residual > 0)
-        {
-            M_inv_coarse.set_tol(residual * options.tol_inner_res);
-        }
 
         timer.start();
         const auto& coarse_step = this->m_model.get_state();
 
-        kernels::coarse_mass_grad(M_coarse, M_inv_coarse, A_coarse, x, coarse_step.y, coarse_step.w, output);
+        kernels::coarse_mass_grad(M_coarse, with_tol(M_inv_coarse, AbsTol{residual * options.tol_inner_res}),
+            A_coarse, x, coarse_step.y, coarse_step.w, output);
         timer.stop();
 
         info.num_iter = M_inv_coarse.control().last_step();
@@ -201,15 +198,12 @@ public:
         dealii::Timer timer;
         GradInfo info{};
 
-        if (residual > 0)
-        {
-            A_inv_coarse.set_tol(residual * options.tol_inner_res);
-        }
 
         timer.start();
         const auto& coarse_step = this->m_model.get_state();
 
-        kernels::coarse_mass_grad_energy_adaptive(M_coarse, A_inv_coarse, x, coarse_step.y, coarse_step.w, output);
+        kernels::coarse_mass_grad_energy_adaptive(M_coarse, with_tol(A_inv_coarse, AbsTol{residual * options.tol_inner_res}),
+            x, coarse_step.y, coarse_step.w, output);
         timer.stop();
 
         info.num_iter = A_inv_coarse.control().last_step();
@@ -349,7 +343,7 @@ private:
 
     GPOracle& gp_coarse;
     const Operator &M_coarse, &A_coarse;
-    GrossPitaevskiiCoarseResidual<System> m_coarse_res;  // no inner solver: only checks the residual passed to gradient()
+    GrossPitaevskiiCoarseResidual<System> m_coarse_res;  // no inner solver
 
     EuclideanMetric m_metric;
 };
@@ -408,15 +402,12 @@ public:
         dealii::Timer timer;
         GradInfo info{};
 
-        if (residual > 0)
-        {
-            A_inv_coarse.set_tol(residual * options.tol_inner_res);
-        }
 
         timer.start();
         const auto& coarse_step = this->m_model.get_state();
 
-        kernels::coarse_frobenius_grad_energy_adaptive(this->M_coarse, A_inv_coarse, this->A_coarse,
+        kernels::coarse_frobenius_grad_energy_adaptive(this->M_coarse,
+            with_tol(A_inv_coarse, AbsTol{residual * options.tol_inner_res}), this->A_coarse,
             x, coarse_step.y, coarse_step.w, output);
         timer.stop();
 

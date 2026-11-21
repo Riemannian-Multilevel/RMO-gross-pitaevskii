@@ -121,13 +121,9 @@ public:
         GradInfo info{};
         InverseM& M_inv = this->get_M_inv();
 
-        if (residual > 0)
-        {
-            M_inv.set_tol(residual * options.tol_inner_res);
-        }
 
         timer.start();
-        kernels::grad_mass(M_inv, this->get_A(), this->get_M(), x, output);
+        kernels::grad_mass(with_tol(M_inv, AbsTol{residual * options.tol_inner_res}), this->get_A(), this->get_M(), x, output);
 
         info.num_iter = M_inv.control().last_step();
         info.tolerance = M_inv.control().tolerance();
@@ -186,13 +182,9 @@ public:
         GradInfo info{};
         InverseA& A_inv = this->get_A_inv();
 
-        if (residual > 0)
-        {
-            A_inv.set_tol(residual * options.tol_inner_res);
-        }
 
         timer.start();
-        kernels::grad_energy_adaptive(A_inv, this->get_M(), x, output);
+        kernels::grad_energy_adaptive(with_tol(A_inv, AbsTol{residual * options.tol_inner_res}), this->get_M(), x, output);
 
         info.num_iter = A_inv.control().last_step();
         info.tolerance = A_inv.control().tolerance();

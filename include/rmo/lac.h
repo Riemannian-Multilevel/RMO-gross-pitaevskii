@@ -6,6 +6,7 @@
 #define SOLVER_MAX_TOL 1e-2
 
 #include "option_types.h"
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -31,11 +32,14 @@
  * InverseMatrix (one Krylov solve per application), PreconditionInverse (solver and preconditioner selected
  * by SolverOptions).
  *
- * Inner tolerance of a solve: the absolute tolerance from `set_tol(tol)` if set, otherwise
- * `SolverOptions::tol_inner` relative to the norm of the right-hand side; capped at SOLVER_MAX_TOL.
+ * Inner tolerance: `vmult(dst, rhs)` uses `SolverOptions::tol_inner` relative to the norm of rhs,
+ * `vmult(dst, rhs, AbsTol{t})` the absolute tolerance t; both capped at SOLVER_MAX_TOL.
  */
 namespace rmo
 {
+//! Absolute tolerance of an inner solve; must be positive.
+struct AbsTol { double value; };
+
 // TODO: use aliases for Trilinos, PETSc, ... matrices
 using dealii::Vector;
 using dealii::SparseMatrix;
@@ -253,20 +257,50 @@ public:
         , m_control(m_max_iter, SOLVER_MAX_TOL)
     {}
 
-    /** @brief Absolute tolerance of the following solves; 0 selects the relative tolerance. */
-    void set_tol(double tol) const { m_tol = tol; }
-
     /**
      * @brief Solves \f$ matrix \cdot dst = rhs \f$, starting from zero.
      * @throws std::invalid_argument for an unknown SolverMethod.
      */
     template <typename VectorType>
+    void vmult(const OperatorType& matrix, VectorType &dst, const VectorType &rhs, const AbsTol tol) const
+    {
+        AssertThrow(tol.value > 0, dealii::ExcMessage("AbsTol must be positive"));
+        solve(matrix, dst, rhs, tol.value);
+    }
+
+    /** @brief As above, with the relative tolerance `SolverOptions::tol_inner`. */
+    template <typename VectorType>
     void vmult(const OperatorType& matrix, VectorType &dst, const VectorType &rhs) const
     {
+        solve(matrix, dst, rhs, m_reltol * rhs.l2_norm());
+    }
+
+    /** @brief \f$ dst = A^{-1} rhs \f$, with the relative tolerance `SolverOptions::tol_inner`. */
+    template <typename VectorType>
+    void vmult(VectorType& dst, const VectorType& rhs) const { vmult(m_matrix, dst, rhs); }
+
+    /** @brief \f$ dst = A^{-1} rhs \f$, with the absolute tolerance @p tol. */
+    template <typename VectorType>
+    void vmult(VectorType& dst, const VectorType& rhs, const AbsTol tol) const { vmult(m_matrix, dst, rhs, tol); }
+
+    /** @brief \f$ dst = A^{-\top} rhs \f$ */
+    template <typename VectorType>
+    void Tvmult(VectorType& dst, const VectorType& rhs) const
+    {
+        // solve() applies vmult(), so we need to use a vmult() -> Tvmult() wrapper
+        vmult(TransposeMatrix(m_matrix), dst, rhs);
+    }
+
+    /** @brief Solver statistics of the last solve. */
+    const SolverControl& control() const { return m_control; }
+
+
+private:
+    template <typename VectorType>
+    void solve(const OperatorType& matrix, VectorType &dst, const VectorType &rhs, const double tol) const
+    {
         dst = 0.0;
-        const double rhs_norm = rhs.l2_norm();
-        const double tol = std::min(m_tol > 0 ? m_tol : m_reltol * rhs_norm, SOLVER_MAX_TOL);
-        m_control = SolverControl(m_max_iter, tol);
+        m_control = SolverControl(m_max_iter, std::min(tol, SOLVER_MAX_TOL));
 
         // TODO: continue on a partial solve with diagnostic, instead of throwing an exception
         switch (m_method) {
@@ -293,26 +327,6 @@ public:
         }
     }
 
-    /** @brief \f$ dst = A^{-1} rhs \f$ */
-    template <typename VectorType>
-    void vmult(VectorType& dst, const VectorType& rhs) const
-    {
-        vmult(m_matrix, dst, rhs);
-    }
-
-    /** @brief \f$ dst = A^{-\top} rhs \f$ */
-    template <typename VectorType>
-    void Tvmult(VectorType& dst, const VectorType& rhs) const
-    {
-        // solve() applies vmult(), so we need to use a vmult() -> Tvmult() wrapper
-        vmult(TransposeMatrix(m_matrix), dst, rhs);
-    }
-
-    /** @brief Solver statistics of the last solve. */
-    const SolverControl& control() const { return m_control; }
-
-
-private:
     const OperatorType &m_matrix;  // TODO: m_oper?
     const PrecondType &m_precond;
 
@@ -323,7 +337,6 @@ private:
     // Mutable: relative tolerance changes depending on rhs
     // in every (logically constant) vmult()
     mutable SolverControl m_control;
-    mutable double m_tol = 0.0;
 };
 
 
@@ -390,30 +403,24 @@ public:
         }
     }
 
-    /** @brief Solves \f$ matrix \cdot dst = src \f$ with the configured solver and preconditioner. */
+    /** @brief Solves \f$ matrix \cdot dst = src \f$ with the configured solver and preconditioner, and the relative
+     *  tolerance `SolverOptions::tol_inner`. */
     void vmult(const OperatorType& matrix, VectorType& dst, const VectorType& src) const
     {
-        // Type erasure: select solve_with template argument, based on preconditioner argument
-        switch (m_precond_type) {
-            case Precondition::SPARSE_ILU:
-                solve_with(matrix, dst, src, ilu_precond);
-                break;
-            case Precondition::DIAGONAL:
-                solve_with(matrix, dst, src, jacobi_precond);
-                break;
-            case Precondition::NONE:
-                solve_with(matrix, dst, src, dealii::PreconditionIdentity());
-                break;
-            default:
-                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
-        }
+        dispatch(matrix, dst, src, std::nullopt);
     }
 
-    /** @brief \f$ dst = A^{-1} src \f$ */
-    void vmult(VectorType& dst, const VectorType& src) const
+    /** @brief As above, with the absolute tolerance @p tol. */
+    void vmult(const OperatorType& matrix, VectorType& dst, const VectorType& src, const AbsTol tol) const
     {
-        vmult(m_op, dst, src);
+        dispatch(matrix, dst, src, tol);
     }
+
+    /** @brief \f$ dst = A^{-1} src \f$, with the relative tolerance `SolverOptions::tol_inner`. */
+    void vmult(VectorType& dst, const VectorType& src) const { vmult(m_op, dst, src); }
+
+    /** @brief \f$ dst = A^{-1} src \f$, with the absolute tolerance @p tol. */
+    void vmult(VectorType& dst, const VectorType& src, const AbsTol tol) const { vmult(m_op, dst, src, tol); }
 
     /** @brief \f$ dst = A^{-\top} src \f$ */
     void Tvmult(VectorType& dst, const VectorType& src) const
@@ -424,20 +431,38 @@ public:
     /** @brief Solver statistics of the last solve. */
     const SolverControl& control() const { return m_control; }
 
-    /** @brief Absolute tolerance of the following solves; 0 selects the relative tolerance. */
-    void set_tol(double tol) const { m_tol = tol; }
-
 
 private:
+    //! @p tol: absent for the relative tolerance `SolverOptions::tol_inner`.
+    void dispatch(const OperatorType& matrix, VectorType& dst, const VectorType& src,
+                  const std::optional<AbsTol> tol) const
+    {
+        // Type erasure: select solve_with template argument, based on preconditioner argument
+        switch (m_precond_type) {
+            case Precondition::SPARSE_ILU:
+                solve_with(matrix, dst, src, ilu_precond, tol);
+                break;
+            case Precondition::DIAGONAL:
+                solve_with(matrix, dst, src, jacobi_precond, tol);
+                break;
+            case Precondition::NONE:
+                solve_with(matrix, dst, src, dealii::PreconditionIdentity(), tol);
+                break;
+            default:
+                throw dealii::ExcNotImplemented(__PRETTY_FUNCTION__);
+        }
+    }
+
     template <typename VectorType, typename PrecondType>
     void solve_with(const OperatorType& matrix, VectorType& dst, const VectorType& src,
-                    const PrecondType& precond) const
+                    const PrecondType& precond, const std::optional<AbsTol> tol) const
     {
         const InverseMatrix<OperatorType, PrecondType> inv(matrix, m_options, precond);
-        if (m_tol > 0) {
-            inv.set_tol(m_tol);
+        if (tol) {
+            inv.vmult(dst, src, *tol);
+        } else {
+            inv.vmult(dst, src);
         }
-        inv.vmult(dst, src);
         m_control = inv.control();
     }
 
@@ -451,8 +476,25 @@ private:
 
     // Stores the state of the most recent solve_with() call
     mutable SolverControl m_control;
-    mutable double m_tol = 0.0;
 };
+
+//! An inverse with a fixed tolerance, for code that calls `vmult(dst, rhs)` (the kernels). Holds a reference.
+template <typename Inverse>
+struct WithTolerance
+{
+    const Inverse& inv;
+    AbsTol tol;
+
+    template <typename VectorType>
+    void vmult(VectorType& dst, const VectorType& rhs) const { inv.vmult(dst, rhs, tol); }
+};
+
+template <typename Inverse>
+[[nodiscard]] WithTolerance<Inverse> with_tol(const Inverse& inv, const AbsTol tol) { return {inv, tol}; }
+
+// No view of a temporary inverse: it would dangle
+template <typename Inverse>
+WithTolerance<Inverse> with_tol(const Inverse&& inv, AbsTol tol) = delete;
 
 //! Operator and inverse of the consistent (sparse) Gross-Pitaevskii system.
 using OperatorType  = LinearCombination<Vector<double>, SparseMatrix<double>>;
