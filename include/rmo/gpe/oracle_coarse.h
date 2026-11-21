@@ -85,8 +85,6 @@ public:
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
-        AssertResidualAt(m_coarse_res, x, residual);
-
         dealii::Timer timer;
         GradInfo info{};
 
@@ -200,8 +198,6 @@ public:
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
-        AssertResidualAt(m_coarse_res, x, residual);
-
         dealii::Timer timer;
         GradInfo info{};
 
@@ -315,7 +311,6 @@ public:
     // Frobenius: no-op since no matrix inversion is involved
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
-        AssertResidualAt(m_coarse_res, x, residual);
         return gradient(x, output); // No matrix inversion
     }
 
@@ -410,8 +405,6 @@ public:
     // Wrapper method for providing residual*TOL to matrix solver
     GradInfo gradient(const Vector<double>& x, Vector<double>& output, const double residual) const override
     {
-        AssertResidualAt(m_coarse_res, x, residual);
-
         dealii::Timer timer;
         GradInfo info{};
 

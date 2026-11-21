@@ -32,6 +32,8 @@ using dealii::MGLevelObject;
 // Metric on one level for the coarse condition ||R g||_{l-1} >= kappa ||g||_l of FullApproximationScheme;
 // nullptr: metric of the tilt oracle on that level.
 // Non-owning: an OperatorMetric refers to the operator of the level functional and must not outlive it.
+// This metric is independent of the metric used for evaluating the DE(x)[v] = <grad_x, v>_x in a line search.
+
 using LevelMetric = std::shared_ptr<const MetricBase>;
 
 
@@ -122,6 +124,8 @@ public:
         }
 
         // Fine descent direction (level)
+        // Can be in a different metric than state.x_grad (e.g. grad_M for w_k in mass coarse model,
+        // grad_A for fine gradient.)
         Vector<double> x_grad(x.size());
         // Coarse descent direction (level-1 -> level)
         Vector<double> dk(x.size());
@@ -150,11 +154,14 @@ public:
             for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
                 level_log.push_back(level);
 
+                AssertResidualAt(R_level, x, residual);
+
                 auto info_grad = O_level.gradient(x, x_grad, residual);
                 dk  = x_grad;
                 dk *= -1.0;
 
-                double dir_deriv = O_level.directional_derivative(x, dk);
+                // Avoid sign issues by evaluating DF(x)[d] = <g, d>_x for Riemannian gradient g and tangent d
+                const double dir_deriv = O_level.metric().inner(x_grad, dk);
 
                 // Pass level manifold into cycle_smooth()
                 // -> runs O_level.update(x)
@@ -282,7 +289,7 @@ public:
 
                     // Fallback to gradient descent in case of ascend direction
                     // TODO: skip coarse steps for remainder of the cycle?
-                    double dir_deriv = O_level.directional_derivative(x, dk);
+                    const double dir_deriv = T_level.metric().inner(state.x_grad, dk);
 
                     if (dir_deriv >= 0) {
                         std::cerr << "warning: not a descent direction (" << dir_deriv
@@ -316,10 +323,14 @@ public:
                         }
                     }
 
-                    // Avoid a stalling line search where the solution x does not change
+                    // Avoid a stalling line search where the solution x does not change.
+                    // Instead of terminating the entire cycle when a coarse direction caused a stall (`break`),
+                    // continue with a fine step on this level.
                     if (info.status == CycleStatus::ERROR) {
-                        std::cerr << "  -> no progress possible (line search stalled), stopping early" << std::endl;
-                        break;
+                        std::cerr << "  -> no progress possible (line search stalled)" << std::endl;
+                        std::cerr << "falling back to gradient step" << std::endl;
+
+                        goto fine_step;
                     }
 
                     // TODO: residual check on coarser levels?
@@ -335,6 +346,9 @@ public:
 fine_step:
                 // Record that a fine step was taken on this level
                 level_log.push_back(level_indices.at(level_idx));
+
+                AssertResidualAt(R_level, x, residual);
+
                 // Update gradient
                 auto info_grad = O_level.gradient(x, x_grad, residual);
                 dk  = x_grad;
@@ -342,7 +356,7 @@ fine_step:
 
                 // TODO: this can still be an ascend direction for coarser levels (numerical issues?)
                 //       return early from the cycle in this case?
-                double dir_deriv = O_level.directional_derivative(x, dk);
+                const double dir_deriv = O_level.metric().inner(x_grad, dk);
 
                 // Pass fine_manifold into cycle_smooth
                 // -> runs O_fine.update(x)
