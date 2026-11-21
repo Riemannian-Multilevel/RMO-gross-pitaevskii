@@ -73,8 +73,12 @@ public:
     // Compute parameters for coarse model
     // Note that unlike the coarse models - which take a coarse vector as argument - this takes a fine vector.
     // Models are based on the difference w of coarse gradients, and restricted fine gradients.
-    // TODO: optional absolute tolerance (model_tol) for the gradients defining the model; this needs its own
-    //       entry point, since gradient(x, output, residual) expects the residual at x
+
+    // The vector w_k is the difference between coarse gradient grad y, at the restricted point y = r(x),
+    // and the restricted gradient R grad x. The latter goes to zero, the former does not. Therefore,
+    // the coarse residual res(y) is too loose for computing an accurate grad y resp. w_k.
+    // Use the restricted gradient norm as relative tolerance instead.
+
     void update_model(const Vector<double>& x_fine)
     {
         AssertDimension(x_fine.size(), n_fine);
@@ -93,27 +97,29 @@ public:
 #endif
         T_coarse.update(m_state.y);
 
-        // Compute coarse (F or M)-gradient
-#ifdef CPU_TIME
-        std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_coarse.id() << "-coarse gradient\n";
-#endif
-        T_coarse.gradient(m_state.y, m_state.y_grad);  // tolerance from the residual of the coarse objective
-        AssertDimension(m_state.y_grad.size(), n_coarse);
-
         // Compute fine (F or M)-gradient
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_fine.id() << "-fine gradient\n";
 #endif
-        T_fine.gradient(m_state.x, m_state.x_grad);  // tolerance from the residual of the fine objective
+        // tolerance from the residual of the fine objective
+        T_fine.gradient(m_state.x, m_state.x_grad);
 
         AssertDimension(m_state.x_grad.size(), n_fine);
 
-        // Compute restricted gradient
+        // Compute restricted (F or M)-gradient
 #ifdef CPU_TIME
         std::cerr << "[" << timer.cpu_time() << "] coarse: M-vector restriction\n";
 #endif
         vector_transport.vector_restriction(m_state.y, m_state.x, m_state.x_grad, m_state.x_grad_restr);
         AssertDimension(m_state.x_grad_restr.size(), n_coarse);
+
+        // Compute coarse (F or M)-gradient
+#ifdef CPU_TIME
+        std::cerr << "[" << timer.cpu_time() << "] coarse: " << T_coarse.id() << "-coarse gradient\n";
+#endif
+        // tolerance from the norm of the restricted gradient (see update_model() comment)
+        T_coarse.gradient(m_state.y, m_state.y_grad, T_coarse.metric().norm(m_state.x_grad_restr));
+        AssertDimension(m_state.y_grad.size(), n_coarse);
 
         // Compute correction term
         m_state.w = m_state.y_grad;

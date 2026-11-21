@@ -94,7 +94,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         std::cerr << "[" << timer.cpu_time() << "] " << "fine: line search" << std::endl;
 #endif
         double Ex = O_fine.value(x);
-        //double dir_deriv = O_fine.directional_derivative(x, eta);
+
         // Runs O_fine.update(x)
         step_size = armijo_line_search(O_fine, manifold, x, eta, Ex, dir_deriv, options_gd);
 
@@ -198,11 +198,14 @@ public:
 #ifdef CPU_TIME
             std::cerr << "[" << timer.cpu_time() << "] fine: A-gradient\n";
 #endif
+            AssertResidualAt(R_fine, x, residual);
+
             auto info_grad = O_fine.gradient(x, x_grad, residual);
             dk  = x_grad;
             dk *= -1.0;
 
-            double dir_deriv = O_fine.directional_derivative(x, dk);
+            // Avoid sign issues by evaluating DF(x)[d] = <g, d>_x for Riemannian gradient g and tangent d
+            const double dir_deriv = O_fine.metric().inner(x_grad, dk);
 
             // Evaluate directional derivative in A-norm
             // -> runs OracleBase::update()
