@@ -37,7 +37,8 @@ double armijo_line_search(OracleType& oracle,
 {
     if (dir_deriv >= 0) {
         std::cerr << "warning: not a descent direction (" << dir_deriv
-                  << std::setprecision(12) << ")" << std::endl;
+                  << std::setprecision(12) << "), no step" << std::endl;
+        return 0.0;
     }
     double alpha = options.ls.alpha;
     Vector<double> x_trial(x);
