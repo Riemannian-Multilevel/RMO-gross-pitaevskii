@@ -10,12 +10,19 @@
  *   each row of \f$ R \f$ is \f$ [1] \f$ (injection); in particular, \f$ R \neq P^\top \f$.
  * - Tfine() is \f$ P^\top \f$. Its row sums are up to \f$ 2^d \f$, those of \f$ R \f$ are 1, so the transports must
  *   not mix up the two restrictions.
+ * - Galerkin identity \f$ P^\top M_h P = M_H \f$ for the consistent mass matrices (nested spaces, exact quadrature),
+ *   which makes AdjointRestrictionTransport and AdjointDifferentialTransport coincide.
  */
 #include "check.h"
 
 #include <rmo/fe/interpolate.h>
 
+#include <deal.II/base/quadrature_lib.h>
 #include <deal.II/dofs/dof_handler.h>
+#include <deal.II/dofs/dof_tools.h>
+#include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/lac/sparse_matrix.h>
+#include <deal.II/numerics/matrix_creator.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/tria.h>
@@ -136,6 +143,30 @@ bool rows_are_averages(const FullMatrix<double>& A, const std::vector<unsigned>&
     return true;
 }
 
+//! Consistent Q1 mass matrix, QGauss(2) is exact for products of Q1 functions on the (affine) cells.
+FullMatrix<double> mass_matrix(const DoFHandler<dim>& dofs)
+{
+    DynamicSparsityPattern dsp(dofs.n_dofs());
+    DoFTools::make_sparsity_pattern(dofs, dsp);
+    SparsityPattern sparsity;
+    sparsity.copy_from(dsp);
+
+    SparseMatrix<double> M(sparsity);
+    MatrixCreator::create_mass_matrix(dofs, QGauss<dim>(2), M);
+
+    FullMatrix<double> F(dofs.n_dofs());
+    F.copy_from(M);
+    return F;
+}
+
+//! Galerkin product \f$ P^\top M P \f$.
+FullMatrix<double> galerkin(const FullMatrix<double>& P, const FullMatrix<double>& M)
+{
+    FullMatrix<double> G(P.n());
+    G.triple_product(M, P, P, true, false);
+    return G;
+}
+
 bool is_bilinear_interpolation(const FullMatrix<double>& P) { return rows_are_averages(P, {1, 2, 4}); }
 bool is_injection(const FullMatrix<double>& R) { return rows_are_averages(R, {1}); }
 
@@ -169,5 +200,10 @@ int main()
         report.check(max_diff(T_mg, P_t) < tol, "LinearTransferMG::Tfine is P^T", "max diff " + sci(max_diff(T_mg, P_t)));
         report.info("largest row sums", "to_coarse_mesh " + std::to_string(max_row_sum(R))
                                       + ", Tfine " + std::to_string(max_row_sum(T_mg)));
+
+        const auto M_c = mass_matrix(m.dofs_coarse);
+        const auto M_f = mass_matrix(m.dofs_fine);
+        const auto G   = galerkin(P_mg, M_f);
+        report.check(max_diff(G, M_c) < tol, "P^T M_h P = M_H (consistent mass)", "max diff " + sci(max_diff(G, M_c)));
     });
 }
