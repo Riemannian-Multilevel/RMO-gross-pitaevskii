@@ -11,7 +11,8 @@
  * - Tfine() is \f$ P^\top \f$. Its row sums are up to \f$ 2^d \f$, those of \f$ R \f$ are 1, so the transports must
  *   not mix up the two restrictions.
  * - Galerkin identity \f$ P^\top M_h P = M_H \f$ for the consistent mass matrices (nested spaces, exact quadrature),
- *   which makes AdjointRestrictionTransport and AdjointDifferentialTransport coincide.
+ *   which makes AdjointRestrictionTransport and AdjointDifferentialTransport coincide; it fails for the lumped
+ *   mass matrices.
  */
 #include "check.h"
 
@@ -159,6 +160,18 @@ FullMatrix<double> mass_matrix(const DoFHandler<dim>& dofs)
     return F;
 }
 
+//! Lumped mass matrix: diagonal of the row sums of @p M.
+FullMatrix<double> lumped(const FullMatrix<double>& M)
+{
+    FullMatrix<double> L(M.m());
+    for (unsigned i = 0; i < M.m(); i++) {
+        for (unsigned j = 0; j < M.n(); j++) {
+            L(i, i) += M(i, j);
+        }
+    }
+    return L;
+}
+
 //! Galerkin product \f$ P^\top M P \f$.
 FullMatrix<double> galerkin(const FullMatrix<double>& P, const FullMatrix<double>& M)
 {
@@ -204,6 +217,9 @@ int main()
         const auto M_c = mass_matrix(m.dofs_coarse);
         const auto M_f = mass_matrix(m.dofs_fine);
         const auto G   = galerkin(P_mg, M_f);
+        const auto G_L = galerkin(P_mg, lumped(M_f));
         report.check(max_diff(G, M_c) < tol, "P^T M_h P = M_H (consistent mass)", "max diff " + sci(max_diff(G, M_c)));
+        report.check(max_diff(G_L, lumped(M_c)) > 1e-3, "P^T M_L,h P != M_L,H (lumped mass)",
+                     "max diff " + sci(max_diff(G_L, lumped(M_c))));
     });
 }
