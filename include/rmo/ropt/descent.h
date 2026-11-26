@@ -44,8 +44,10 @@ double armijo_line_search(OracleType& oracle,
     Vector<double> x_trial(x);
 
     // Avoid numerical issues when close to the solution
+    // See Gill, Practical Optimization, 8.5.1.2 (factor 10-100) and
+    // 8.5.1.3 (standard lower bound on error |fl(f(x) - f(x)| < \eps_A)
     const double eps = std::numeric_limits<double>::epsilon();
-    const double noise_tol = 10.0 * eps * std::max(1.0, std::abs(fx));
+    const double noise_tol = 10.0 * eps * (1.0 + std::abs(fx));
 
     for (unsigned int ls_iter = 0; ls_iter < options.ls.max_iter; ++ls_iter) {
         // Compute tentative step alpha*eta_x and retract
