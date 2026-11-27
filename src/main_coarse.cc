@@ -121,7 +121,7 @@ public:
     void distribute(Vector<double>& x) const { builder->distribute(x); }
     Vector<double> initial_value() const { return builder->initial_value(); }
 
-    void run(Vector<double>& x0, MetricKind metric_t, bool keep_history, std::ostream& os)
+    void run(Vector<double>& x0, MetricKind metric_t, bool keep_history, bool simple_table, std::ostream& os)
     {
         std::unique_ptr<GrossPitaevskiiOracle<System>> oracle;
 
@@ -141,7 +141,8 @@ public:
 
         // 3. Execute the single-level gradient descent cycle
         solver = std::make_unique<GradientDescent>(*oracle, oracle->get_residual(), *manifold, options_gd);
-        solver->set_observer(conv_observer);
+        observer = make_table_observer<CycleInfo>(simple_table, os);
+        solver->set_observer(*observer);
         solver->keep_history(keep_history);
         solver->cycle(x0, os);
     }
@@ -158,7 +159,7 @@ private:
     SolverOptions  options_slv;
     DescentOptions options_gd;
 
-    ConvergenceTableObserver<CycleInfo> conv_observer;
+    std::unique_ptr<IterationObserver<CycleInfo>> observer;
     std::unique_ptr<GradientDescent> solver;
 };
 
@@ -193,7 +194,6 @@ public:
         , vector_transport_mg (min_level, max_level)
         , options_descent_mg  (min_level, max_level)
         , options_solver_mg   (min_level, max_level)
-        , table_observer       (min_level, max_level)
     {
         // TODO: duplicate effort with min_element, max_element
         // sort in ascending order, coarse -> fine
@@ -266,7 +266,6 @@ public:
             manifold_mg, point_transfer_mg, vector_transport_mg, objective_mg, m_levels,
             options_descent_mg, options_solver_mg, options_fas, cond_metric_mg
         );
-        fas_solver->set_observer(table_observer);
     }
 
     unsigned n_dofs() const { return builders_mg[max_level]->n_dofs(); }
@@ -276,8 +275,10 @@ public:
     void distribute(Vector<double>& x) const { builders_mg[max_level]->distribute(x); }
     Vector<double> initial_value() const { return builders_mg[max_level]->initial_value(); }
 
-    void run(Vector<double>& x0, MetricKind metric_t, bool keep_history, std::ostream& os)
+    void run(Vector<double>& x0, MetricKind metric_t, bool keep_history, bool simple_table, std::ostream& os)
     {
+        observer = make_table_observer<CycleInfo>(simple_table, os, min_level, max_level);
+        fas_solver->set_observer(*observer);
         fas_solver->keep_history(keep_history);
 
         // Execute the cycle on the finest level
@@ -341,7 +342,7 @@ private:
     MGLevelObject<DescentOptions>                                  options_descent_mg;
     MGLevelObject<SolverOptions>                                   options_solver_mg;
 
-    ConvergenceTableObserver<CycleInfo>                            table_observer;
+    std::unique_ptr<IterationObserver<CycleInfo>>                  observer;
 
     std::unique_ptr<FullApproximationScheme<Functional>> fas_solver;
 };
@@ -397,7 +398,7 @@ static void run_experiment(const ProgramOptions& opts)
         // Starting value on the sphere
         ellipsoid::retract_by_norm(context.get_M(), x0);
 
-        context.run(x0, MetricKind::ENERGY_ADAPTIVE, keep_history, std::cout);
+        context.run(x0, MetricKind::ENERGY_ADAPTIVE, keep_history, opts.output.simple_table, std::cout);
 
         if (opts.output.output_bin) {
             const std::string basename = opts.output.bin_filename.empty()
@@ -422,7 +423,7 @@ static void run_experiment(const ProgramOptions& opts)
         // Starting value on the sphere
         ellipsoid::retract_by_norm(context.get_M(), x0);
 
-        context.run(x0, opts.coarse_model.metric_t, keep_history, std::cout);
+        context.run(x0, opts.coarse_model.metric_t, keep_history, opts.output.simple_table, std::cout);
         context.log(std::cerr);
 
         if (opts.output.output_bin) {

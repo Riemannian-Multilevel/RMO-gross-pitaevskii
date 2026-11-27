@@ -7,11 +7,13 @@
 
 #include <boost/describe.hpp>
 
-#include <iosfwd>
-#include <string>
+#include <algorithm>
+#include <iostream>
+#include <optional>
 #include <utility>
 #include <vector>
 
+#include <deal.II/base/timer.h>
 #include <deal.II/numerics/data_postprocessor.h>
 
 #include <rmo/ropt/observer.h>
@@ -38,7 +40,7 @@ enum class CycleStatus {
 };
 
 //! One evaluated iterate of a (multilevel) descent method. The described fields are reported by
-//! every solver; optional values go into `extra`.
+//! every solver; unset optional fields are not reported.
 struct CycleInfo
 {
     unsigned iter      = 0;
@@ -54,12 +56,14 @@ struct CycleInfo
     //! Algorithmic outcome, generic
     CycleStatus status = CycleStatus::NONE;
 
-    //! Optional values, reported as additional columns (e.g. coarse condition norms)
-    std::vector<std::pair<std::string, double>> extra;
+    //! Coarse condition norms, set on levels with a coarser level
+    std::optional<double> grad_norm       = std::nullopt;
+    std::optional<double> grad_restr_norm = std::nullopt;
 };
 
+// grad_norm and grad_restr_norm first: column order of the tables
 BOOST_DESCRIBE_STRUCT(CycleInfo, (),
-    (iter, level, coarse, lac_iter, residual, energy, step, min_value, elapsed));
+    (grad_norm, grad_restr_norm, iter, level, coarse, lac_iter, residual, energy, step, min_value, elapsed));
 
 
 
@@ -115,7 +119,7 @@ CycleInfo cycle_smooth(Oracle& O_fine, const ManifoldBase& manifold,
         O_fine.update(x);
     }
 
-    return {.step = step_size, .elapsed = timer.cpu_time(), .status = status, .extra = {}};
+    return {.step = step_size, .elapsed = timer.cpu_time(), .status = status};
 }
 
 

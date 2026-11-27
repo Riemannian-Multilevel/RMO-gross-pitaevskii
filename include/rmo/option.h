@@ -27,7 +27,7 @@ BOOST_DESCRIBE_STRUCT(SolverOptions, (),
 BOOST_DESCRIBE_STRUCT(MG_Options, (),
     (n_levels, v_levels));
 BOOST_DESCRIBE_STRUCT(OutputOptions, (),
-    (output_bin, bin_filename, output_vtk, vtk_filename, output_every));
+    (output_bin, bin_filename, output_vtk, vtk_filename, output_every, simple_table));
 BOOST_DESCRIBE_STRUCT(FAS_Options, (),
     (kappa, eps, coarse_every));
 
@@ -215,7 +215,10 @@ inline po::options_description output_cli_options()
         ("output-vtk", po::value<std::string>()->implicit_value(""),
             "write the solution in VTK format, optionally with base name (--output-vtk=<name>)")
         ("output-every", po::value<unsigned>()->default_value(0),
-            "with --output-vtk, also write every k-th and the final iterate as a series (0: final iterate only)");
+            "with --output-vtk, also write every k-th and the final iterate as a series (0: final iterate only)")
+        ("simple-table", po::value<bool>()->default_value(false)->implicit_value(true),
+            "write the iterates of all levels as rows of one table as they are computed, without reduction "
+            "rates (default: one table per level when its cycle finishes)");
     return d;
 }
 
@@ -231,6 +234,7 @@ inline void apply_output_options(const po::variables_map& vm, OutputOptions& opt
         options_out.vtk_filename = vm["output-vtk"].as<std::string>();
     }
     options_out.output_every = vm["output-every"].as<unsigned>();
+    options_out.simple_table = vm["simple-table"].as<bool>();
 }
 
 

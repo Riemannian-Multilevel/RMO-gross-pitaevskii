@@ -120,6 +120,7 @@ struct OutputOptions
     bool output_vtk;              // write solutions in VTK format
     std::string vtk_filename;     // base name of VTK files (empty: default name)
     unsigned output_every;        // also write every k-th and the final iterate as a VTK series (0: final iterate only)
+    bool simple_table;            // write the iterates as rows of one table as they are computed (SimpleTableObserver)
 };
 
 

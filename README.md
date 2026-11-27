@@ -165,6 +165,11 @@ Output options:
   --output-every arg (=0)               with --output-vtk, also write every
                                         k-th and the final iterate as a series
                                         (0: final iterate only)
+  --simple-table [=arg(=1)] (=0)        write the iterates of all levels as
+                                        rows of one table as they are computed,
+                                        without reduction rates (default: one
+                                        table per level when its cycle
+                                        finishes)
 ```
 
 To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:

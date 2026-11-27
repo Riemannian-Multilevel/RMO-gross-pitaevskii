@@ -223,7 +223,9 @@ public:
         info.step      = 0.0;   // no step taken yet
         info.elapsed   = timer.cpu_time();
 
-        info.extra = {{"grad_norm", 0.0}, {"grad_restr_norm", 0.0}};  // this level has a coarser one: report the condition norms
+        // this level has a coarser one: report the condition norms
+        info.grad_norm = 0.0;
+        info.grad_restr_norm = 0.0;
 
         // Residual at x, passed to the next fine-step gradient (inner tolerance)
         double residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
@@ -242,8 +244,6 @@ public:
 
         // Begin (W-)cycle
         for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
-            //level_log.push_back(level_indices.at(level_idx));
-
             // Coarse-condition norms for this step; left at 0 when the condition is not evaluated
             double cond_grad_norm       = 0.0;
             double cond_grad_restr_norm = 0.0;
@@ -307,7 +307,9 @@ public:
                     info.coarse    = true;
                     info.lac_iter  = 0;
                     info.level     = level;
-                    info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
+                    // coarse condition values
+                    info.grad_norm       = cond_grad_norm;
+                    info.grad_restr_norm = cond_grad_restr_norm;
 
                     residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
@@ -366,7 +368,9 @@ fine_step:
                 info.coarse    = false;
                 info.lac_iter  = info_grad.num_iter;
                 info.level     = level;
-                info.extra     = {{"grad_norm", cond_grad_norm}, {"grad_restr_norm", cond_grad_restr_norm}};
+                // coarse condition values
+                info.grad_norm       = cond_grad_norm;
+                info.grad_restr_norm = cond_grad_restr_norm;
 
                 residual = cycle_eval(O_level, R_level, x, m_observer, info).first;
 
