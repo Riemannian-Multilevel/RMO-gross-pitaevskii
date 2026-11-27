@@ -308,20 +308,6 @@ public:
         }
     }
 
-    void log(std::ostream& os) const
-    {
-        auto levels = fas_solver->cycle_log();
-        os << "Total iterations: " << levels.size() << std::endl;
-
-        if (levels.size()) {
-            os << "[";
-            for (auto it = levels.begin(); it != levels.end()-1; ++it) {
-                os << *it << ",";
-            }
-            os << levels.back() << "]";
-        }
-    }
-
     const auto& history() const { return fas_solver->history(); }
     const typename System::MassMatrix& get_M(int level) const { return builders_mg[level]->get_system().get_M(); }
     const typename System::MassMatrix& get_M() const { return builders_mg[max_level]->get_system().get_M(); }
@@ -424,7 +410,6 @@ static void run_experiment(const ProgramOptions& opts)
         ellipsoid::retract_by_norm(context.get_M(), x0);
 
         context.run(x0, opts.coarse_model.metric_t, keep_history, opts.output.simple_table, std::cout);
-        context.log(std::cerr);
 
         if (opts.output.output_bin) {
             // TODO: Additional ML parameters in the default name?  (map for short names, e.g. OPTICAL_LATTICE -> ol)

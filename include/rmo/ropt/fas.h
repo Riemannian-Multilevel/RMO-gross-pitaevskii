@@ -152,8 +152,6 @@ public:
             // Coarse condition is always false on coarsest level
             // -> gradient descent
             for (unsigned i = 1; i <= options_descent_mg[level].max_iter; i++) {
-                level_log.push_back(level);
-
                 AssertResidualAt(R_level, x, residual);
 
                 auto info_grad = O_level.gradient(x, x_grad, residual);
@@ -346,9 +344,6 @@ public:
             }
             else {
 fine_step:
-                // Record that a fine step was taken on this level
-                level_log.push_back(level_indices.at(level_idx));
-
                 AssertResidualAt(R_level, x, residual);
 
                 // Update gradient
@@ -420,11 +415,6 @@ fine_step:
         }
     }
 
-    const std::vector<unsigned> cycle_log() const
-    {
-        return level_log;
-    }
-
     //! Iterates of the finest level, kept only if keep_history(true) (default): one vector per iteration
     const auto& history() const { return x_hist; }
     void keep_history(bool keep) { m_keep_history = keep; }
@@ -439,7 +429,6 @@ private:
     mutable dealii::Timer timer;
     unsigned min_level, max_level;
     std::vector<unsigned> level_indices;
-    std::vector<unsigned> level_log;
 
     MGLevelObject<std::shared_ptr<ManifoldBase>>          m_manifold_mg;
     MGLevelObject<std::shared_ptr<ManifoldTransferBase>>  m_point_transfer_mg;
