@@ -69,6 +69,10 @@ def load_org_table(path):
         if col == "coarse":
             continue
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # A --simple-table log holds the rows of all levels: keep the finest level
+    if "level" in df.columns:
+        df = df[df["level"] == df["level"].max()].reset_index(drop=True)
     return df
 
 

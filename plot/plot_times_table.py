@@ -44,6 +44,11 @@ def load_org(path):
             except ValueError:
                 rec[k] = None
         rows.append(rec)
+
+    # A --simple-table log holds the rows of all levels: keep the finest level
+    levels = [r["level"] for r in rows if r.get("level") is not None]
+    if levels:
+        rows = [r for r in rows if r.get("level") == max(levels)]
     return rows
 
 
