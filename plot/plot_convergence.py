@@ -36,6 +36,7 @@ Or point at them explicitly, and plot the Frobenius family instead of mass:
 import argparse
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -48,6 +49,14 @@ from matplotlib.lines import Line2D
 from orgparse.extra import Table
 
 COARSE_MARKERS = ["o", "s", "^", "D", "v", "P", "X"]
+
+
+def logs_exist(figure, series):
+    """True if the logs of all `series` exist; otherwise warns that `figure` is skipped."""
+    missing = [Path(path).name for path, *_ in series if not Path(path).exists()]
+    if missing:
+        print(f"warning: {figure} skipped, missing: {', '.join(missing)}", file=sys.stderr)
+    return not missing
 
 
 def load_org_table(path):
@@ -407,39 +416,45 @@ def main():
         (ml_path("proj", 4), "proj", "Version IV"),
         (ml_path("adj1", 4), "adj1", "Version V"),
     ]
-    ymin7 = args.fig7_residual_ymin
-    left = tikz_axis(fig7_series, "iter", "residual", xlabel_iter, ylabel_residual, name="ax1", at="(0, 0)",
-                     ymin=ymin7, xmax=multi_series_xmax(fig7_series, "iter", "residual", ymin7),
-                     coarse_steps=args.coarse_steps, legend_name="fig7legend")
-    right = tikz_axis(fig7_series, "elapsed", "residual", xlabel_elapsed, ylabel_residual, name="ax2",
-                      at="(0.48\\textwidth, 0)", ymin=ymin7,
-                      xmax=multi_series_xmax(fig7_series, "elapsed", "residual", ymin7),
-                      coarse_steps=args.coarse_steps)
-    write_tikz(tikz_figure(left, right, "fig7legend"), out_dir / f"fig7_{args.metric}.tex", compile_pdf)
+    made = 0
+    if logs_exist("figure 7", fig7_series):
+        ymin7 = args.fig7_residual_ymin
+        left = tikz_axis(fig7_series, "iter", "residual", xlabel_iter, ylabel_residual, name="ax1", at="(0, 0)",
+                         ymin=ymin7, xmax=multi_series_xmax(fig7_series, "iter", "residual", ymin7),
+                         coarse_steps=args.coarse_steps, legend_name="fig7legend")
+        right = tikz_axis(fig7_series, "elapsed", "residual", xlabel_elapsed, ylabel_residual, name="ax2",
+                          at="(0.48\\textwidth, 0)", ymin=ymin7,
+                          xmax=multi_series_xmax(fig7_series, "elapsed", "residual", ymin7),
+                          coarse_steps=args.coarse_steps)
+        write_tikz(tikz_figure(left, right, "fig7legend"), out_dir / f"fig7_{args.metric}.tex", compile_pdf)
+        made += 1
 
     # -------------------------------------------------------------------
     # Figures 8/9: single-level vs. multilevel depth scaling, fixed
     # operator; energy error (left) and residual (right) vs. iterations
     # (figure 8) and CPU time (figure 9). Filled markers: coarse steps.
     # -------------------------------------------------------------------
-    e_ref = reference_energy(sl_path())
-    print(f"reference energy (from {sl_path().name}, last row): {e_ref:.16e}")
-    cutoff = sl_convergence_point(sl_path(), e_ref, args.residual_ymin)
-    print(f"EARGD reaches residual ymin at iter={cutoff['iter']:.0f}, elapsed={cutoff['elapsed']:.3g}s")
-
     depths = [int(d) for d in args.depths.split(",")]
     fig89_series = [(sl_path(), "sl", "EARGD")] + [
         (ml_path(args.operator, d), f"depth{d}", f"{d}-level EARGD") for d in depths]
+    if logs_exist("figures 8 and 9", fig89_series):
+        e_ref = reference_energy(sl_path())
+        print(f"reference energy (from {sl_path().name}, last row): {e_ref:.16e}")
+        cutoff = sl_convergence_point(sl_path(), e_ref, args.residual_ymin)
+        print(f"EARGD reaches residual ymin at iter={cutoff['iter']:.0f}, elapsed={cutoff['elapsed']:.3g}s")
 
-    for fig, xcol, xlabel in [(8, "iter", xlabel_iter), (9, "elapsed", xlabel_elapsed)]:
-        legend = f"fig{fig}legend"
-        left = tikz_axis(fig89_series, xcol, "residual", xlabel, ylabel_energy, name="ax1", at="(0, 0)",
-                         energy_ref=e_ref, ymin=cutoff["energy_ymin"], xmax=cutoff[xcol],
-                         mark_repeat=3, legend_name=legend)
-        right = tikz_axis(fig89_series, xcol, "residual", xlabel, ylabel_residual, name="ax2",
-                          at="(0.48\\textwidth, 0)", ymin=args.residual_ymin, xmax=cutoff[xcol], mark_repeat=3)
-        write_tikz(tikz_figure(left, right, legend), out_dir / f"fig{fig}_{args.metric}.tex", compile_pdf)
+        for fig, xcol, xlabel in [(8, "iter", xlabel_iter), (9, "elapsed", xlabel_elapsed)]:
+            legend = f"fig{fig}legend"
+            left = tikz_axis(fig89_series, xcol, "residual", xlabel, ylabel_energy, name="ax1", at="(0, 0)",
+                             energy_ref=e_ref, ymin=cutoff["energy_ymin"], xmax=cutoff[xcol],
+                             mark_repeat=3, legend_name=legend)
+            right = tikz_axis(fig89_series, xcol, "residual", xlabel, ylabel_residual, name="ax2",
+                              at="(0.48\\textwidth, 0)", ymin=args.residual_ymin, xmax=cutoff[xcol], mark_repeat=3)
+            write_tikz(tikz_figure(left, right, legend), out_dir / f"fig{fig}_{args.metric}.tex", compile_pdf)
+        made += 1
 
+    if not made:
+        sys.exit("error: no figure could be made")
 
 def main_matplotlib(args, out_dir, sl_path, ml_path):
     """Original seaborn output: one PNG per panel (fig7a/b, fig8a-d)."""
@@ -459,45 +474,51 @@ def main_matplotlib(args, out_dir, sl_path, ml_path):
         (ml_path("adj1", 4), "adj1", "Version V"),
     ]
 
-    fig7_xmax_iter = multi_series_xmax(fig7_series, "iter", "residual", args.fig7_residual_ymin)
-    fig7_xmax_elapsed = multi_series_xmax(fig7_series, "elapsed", "residual", args.fig7_residual_ymin)
+    made = 0
+    if logs_exist("figure 7", fig7_series):
+        fig7_xmax_iter = multi_series_xmax(fig7_series, "iter", "residual", args.fig7_residual_ymin)
+        fig7_xmax_elapsed = multi_series_xmax(fig7_series, "elapsed", "residual", args.fig7_residual_ymin)
 
-    build_figure(fig7_series, "iter", "residual", ylabel_residual, xlabel_iter,
-                out_dir / f"fig7a_{args.metric}.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_iter,
-                coarse_steps=args.coarse_steps, dpi=args.dpi)
-    build_figure(fig7_series, "elapsed", "residual", ylabel_residual, xlabel_elapsed,
-                out_dir / f"fig7b_{args.metric}.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_elapsed,
-                coarse_steps=args.coarse_steps, dpi=args.dpi)
+        build_figure(fig7_series, "iter", "residual", ylabel_residual, xlabel_iter,
+                    out_dir / f"fig7a_{args.metric}.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_iter,
+                    coarse_steps=args.coarse_steps, dpi=args.dpi)
+        build_figure(fig7_series, "elapsed", "residual", ylabel_residual, xlabel_elapsed,
+                    out_dir / f"fig7b_{args.metric}.{ext}", ymin=args.fig7_residual_ymin, xmax=fig7_xmax_elapsed,
+                    coarse_steps=args.coarse_steps, dpi=args.dpi)
+        made += 1
 
     # -------------------------------------------------------------------
     # Figure 8: single-level vs. multilevel depth scaling, fixed operator.
     # -------------------------------------------------------------------
-    e_ref = reference_energy(sl_path)
-    print(f"reference energy (from {sl_path.name}, last row): {e_ref:.16e}")
-
-    cutoff = sl_convergence_point(sl_path, e_ref, args.residual_ymin)
-    energy_ymin = cutoff["energy_ymin"]
-    print(f"energy-error cutoff matching residual ymin {args.residual_ymin:.1e}: {energy_ymin:.6e}")
-    print(f"EARGD reaches residual ymin at iter={cutoff['iter']:.0f}, elapsed={cutoff['elapsed']:.3g}s")
-
     fig8_series = [
         (sl_path,                  "sl",     "EARGD"),
         *[(ml_path(args.operator, int(d)), f"depth{d}", f"{d}-level EARGD") for d in args.depths.split(",")],
     ]
+    if logs_exist("figure 8", fig8_series):
+        e_ref = reference_energy(sl_path)
+        print(f"reference energy (from {sl_path.name}, last row): {e_ref:.16e}")
 
-    build_figure(fig8_series, "iter", "residual", ylabel_energy, xlabel_iter,
-                out_dir / f"fig8a_{args.metric}.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["iter"],
-                coarse_steps=args.coarse_steps, dpi=args.dpi)
-    build_figure(fig8_series, "iter", "residual", ylabel_residual, xlabel_iter,
-                out_dir / f"fig8b_{args.metric}.{ext}", ymin=args.residual_ymin, xmax=cutoff["iter"],
-                coarse_steps=args.coarse_steps, dpi=args.dpi)
-    build_figure(fig8_series, "elapsed", "residual", ylabel_energy, xlabel_elapsed,
-                out_dir / f"fig8c_{args.metric}.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["elapsed"],
-                coarse_steps=args.coarse_steps, dpi=args.dpi)
-    build_figure(fig8_series, "elapsed", "residual", ylabel_residual, xlabel_elapsed,
-                out_dir / f"fig8d_{args.metric}.{ext}", ymin=args.residual_ymin, xmax=cutoff["elapsed"],
-                coarse_steps=args.coarse_steps, dpi=args.dpi)
+        cutoff = sl_convergence_point(sl_path, e_ref, args.residual_ymin)
+        energy_ymin = cutoff["energy_ymin"]
+        print(f"energy-error cutoff matching residual ymin {args.residual_ymin:.1e}: {energy_ymin:.6e}")
+        print(f"EARGD reaches residual ymin at iter={cutoff['iter']:.0f}, elapsed={cutoff['elapsed']:.3g}s")
 
+        build_figure(fig8_series, "iter", "residual", ylabel_energy, xlabel_iter,
+                    out_dir / f"fig8a_{args.metric}.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["iter"],
+                    coarse_steps=args.coarse_steps, dpi=args.dpi)
+        build_figure(fig8_series, "iter", "residual", ylabel_residual, xlabel_iter,
+                    out_dir / f"fig8b_{args.metric}.{ext}", ymin=args.residual_ymin, xmax=cutoff["iter"],
+                    coarse_steps=args.coarse_steps, dpi=args.dpi)
+        build_figure(fig8_series, "elapsed", "residual", ylabel_energy, xlabel_elapsed,
+                    out_dir / f"fig8c_{args.metric}.{ext}", energy_ref=e_ref, ymin=energy_ymin, xmax=cutoff["elapsed"],
+                    coarse_steps=args.coarse_steps, dpi=args.dpi)
+        build_figure(fig8_series, "elapsed", "residual", ylabel_residual, xlabel_elapsed,
+                    out_dir / f"fig8d_{args.metric}.{ext}", ymin=args.residual_ymin, xmax=cutoff["elapsed"],
+                    coarse_steps=args.coarse_steps, dpi=args.dpi)
+        made += 1
+
+    if not made:
+        sys.exit("error: no figure could be made")
 
 if __name__ == "__main__":
     sns.set_theme(style="whitegrid")

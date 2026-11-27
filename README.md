@@ -172,23 +172,37 @@ Output options:
                                         finishes)
 ```
 
-To replicate the paper results, copy the `study.sh` file to the `build` directory and run it:
+To replicate the paper results, run the study from the `build` directory:
 
 ```bash
 cd build
-cp ../study.sh .
-./study.sh
+python3 ../study.py
 ```
 
-The files will be generated in the current directory (`build/` in the example above.)
-The resulting data can be plotted, matching Figures 7/8/9 in the paper:
+This runs three stages, which can also be run one at a time (`python3 ../study.py study|median|figures`):
+
+- `study`: every configuration runs `--reps` times (default 3). Each study gets a new directory
+  `runs/l<level>_<potential>_<date>_<time>_<commit>/` (`-dirty` is added for uncommitted changes), with the
+  tables of the repetitions in `rep<k>/`, the source state (`commit.txt`, `dirty.txt`, `dirty.patch`), the
+  parameters (`params.txt`) and the binary used. `runs/latest` links to the last study. An existing directory
+  is never overwritten.
+- `median`: `plot/median_tables.py` writes the tables with the median CPU time over the repetitions.
+- `figures`: `plot/plot_convergence.py` writes Figures 7/8/9 of the paper for the mass and the Frobenius metric
+  to `figures/b<beta>/`, for every beta. A figure whose tables are missing is skipped.
+
+`median` and `figures` use the latest study, or another one with `--out runs/<study>`.
+
+The parameters and their defaults are listed by `python3 ../study.py --help`. Pass the same parameters to
+`median` and `figures`:
 
 ```bash
-cd build
-python3 ../plot/plot_convergence.py --format png --coarse-steps
+python3 ../study.py --beta-range 100 1000 10000 --iter-range 20 40 60 --top-level 10 --reps 1
+python3 ../study.py figures --plot-args='--format png --coarse-steps'
 ```
 
-This requires the Python packages `seaborne`, `pandas` and `orgparse`.
+`--beta-range` and `--iter-range` are paired and must have the same length.
+
+This requires the Python packages `seaborn`, `pandas` and `orgparse`.
 
 
 # AI disclosure
